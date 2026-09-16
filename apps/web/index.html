@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="pt-PT">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <!--
+      `theme-color` acompanha o verde-petróleo da marca para que a barra do browser
+      no telemóvel não contradiga a interface. O `color-scheme` é declarado em CSS;
+      aqui fica apenas o valor claro, que é o que o sistema usa antes de hidratar.
+    -->
+    <meta name="theme-color" content="#178186" />
+    <meta
+      name="description"
+      content="Zemlo — o teu veículo, sem ruído. Histórico, custos, manutenção e documentos num só lugar."
+    />
+    <!-- `apple-mobile-web-app-capable` permite acrescentar o Zemlo ao ecrã inicial. -->
+    <meta name="apple-mobile-web-app-title" content="Zemlo" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="mask-icon" href="/favicon.svg" color="#178186" />
+    <title>Zemlo</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!--
+      O `noscript` é o único ecrã que nunca muda de idioma nem de tom: se o JavaScript
+      não correr, é a única frase que o utilizador chega a ler.
+    -->
+    <noscript>
+      <p style="font-family: system-ui, sans-serif; padding: 2rem; color: #182020">
+        O Zemlo precisa de JavaScript para apresentar o teu histórico de veículo.
+      </p>
+    </noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

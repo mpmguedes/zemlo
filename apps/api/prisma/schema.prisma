@@ -1,0 +1,812 @@
+// Zemlo — schema canónico da base de dados.
+//
+// Este é o schema de PRODUÇÃO (PostgreSQL). A variante SQLite usada em desenvolvimento
+// e em testes locais é GERADA a partir deste ficheiro por
+// `apps/api/scripts/sync-sqlite-schema.mjs` e nunca deve ser editada à mão.
+//
+// Duas decisões estruturais que explicam a forma deste schema:
+//
+// 1. NÃO existem `enum` do Prisma/PostgreSQL. Todos os conjuntos fechados de valores
+//    (categorias de despesa, tipos de manutenção, ...) são `String` validada pelo
+//    registo de domínio em `@zemlo/shared/registry`. Isto mantém o schema portável
+//    entre PostgreSQL e SQLite e permite acrescentar uma categoria nova sem migração
+//    de tipo — requisito direto do princípio "crescer sem crescer em complexidade" (§62).
+//
+// 2. As datas civis (data de uma despesa, validade de um documento, data de inspeção)
+//    são `DateTime @db.Date`, não instantes. Uma despesa "de ontem" não tem hora nem
+//    fuso horário; guardá-la como instante produziria deslocamentos de um dia em
+//    relatórios e alertas. Instantes (auditoria, criação) usam `DateTime` completo.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/* ========================================================================== */
+/* Conta e autenticação (§29, §30)                                            */
+/* ========================================================================== */
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  /// Hash bcrypt. Uma password em texto nunca é armazenada (§30).
+  passwordHash String?
+  name         String?
+  locale       String    @default("pt-PT")
+  timeZone     String    @default("Europe/Lisbon")
+  distanceUnit String    @default("km")
+  volumeUnit   String    @default("l")
+  currency     String    @default("EUR")
+
+  emailVerified   Boolean   @default(false)
+  emailVerifiedAt DateTime?
+  /// Provedor de identidade federada: `google`, `apple` ou `null` para email/password.
+  authProvider    String?
+  authProviderId  String?
+  avatarUrl       String?
+
+  /// TOTP (2FA). O segredo é guardado cifrado em repouso (§30).
+  twoFactorEnabled Boolean   @default(false)
+  twoFactorSecret String?
+  twoFactorConfirmedAt DateTime?
+  /// Códigos de recuperação: apenas o hash é guardado.
+  recoveryCodeHashes Json?
+
+  acceptedTermsAt DateTime?
+  termsVersion    String?
+
+  lastLoginAt     DateTime?
+  failedLoginCount Int      @default(0)
+  lockedUntil     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  /// Eliminação de conta (§30): apagamos de facto; este campo fica para pedidos assíncronos.
+  deletedAt DateTime?
+
+  preferences      UserPreference?
+  notificationPreferences NotificationPreference[]
+  vehicles         Vehicle[]
+  sessions         Session[]
+  oneTimeTokens    OneTimeToken[]
+  expenses         Expense[]
+  fuelSessions     FuelSession[]
+  chargingSessions ChargingSession[]
+  maintenance      MaintenanceRecord[]
+  insurancePolicies InsurancePolicy[]
+  inspections      InspectionRecord[]
+  taxes            TaxRecord[]
+  documents        Document[]
+  reminders        Reminder[]
+  events           VehicleEvent[]
+  notifications    Notification[]
+  suggestionStates SuggestionState[]
+  integrations     Integration[]
+  households       HouseholdMember[]
+  organizationMembers OrganizationMember[]
+  auditLogs        AuditLog[]
+
+  @@index([authProvider, authProviderId])
+}
+
+model UserPreference {
+  userId String @id
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  reminderLeadDays        Int     @default(30)
+  reminderLeadKm          Int     @default(1000)
+  suggestionsEnabled      Boolean @default(true)
+  securityNudgeSnoozeDays Int     @default(90)
+  /// Categorias que o utilizador realmente usa, para priorizar a interface (§45).
+  frequentExpenseCategories Json?
+  /// Campos que o utilizador nunca preenche; deixam de dominar o formulário (§45).
+  hiddenFields              Json?
+  theme                     String  @default("auto")
+  /// Rotina de resumo periódico (`off`, `daily`, `weekly`).
+  digestFrequency           String  @default("weekly")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model NotificationPreference {
+  id      String @id @default(cuid())
+  userId  String
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topic   String
+  channel String
+  frequency String @default("immediate")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, topic, channel])
+  @@index([userId])
+}
+
+/// Sessões de longa duração. O Zemlo é mobile-first: a app tem de continuar
+/// autenticada depois de semanas sem abrir, e o utilizador tem de poder revogar
+/// um dispositivo perdido (§30).
+model Session {
+  id String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Hash do refresh token. O valor em claro só existe no cliente.
+  refreshTokenHash String @unique
+  userAgent         String?
+  ipAddress         String?
+  deviceLabel       String?
+  expiresAt         DateTime
+  revokedAt         DateTime?
+  lastUsedAt        DateTime?
+  createdAt         DateTime  @default(now())
+
+  @@index([userId, expiresAt])
+}
+
+/// Token de uso único para verificação de email ou reposição de password.
+model OneTimeToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purpose   String
+  tokenHash String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId, purpose])
+}
+
+/// Registo de ações sensíveis (§30): alterações de password, 2FA, exportações,
+/// eliminação de conta, criação de integrações.
+model AuditLog {
+  id     String @id @default(cuid())
+  userId String?
+  user   User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  action     String
+  entityType String?
+  entityId   String?
+  /// Metadados não sensíveis: IP, user agent, valores antes/depois redigidos.
+  metadata   Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
+}
+
+/* ========================================================================== */
+/* Veículos (§9, §10, §11)                                                    */
+/* ========================================================================== */
+
+model Vehicle {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Preparação para famílias e frotas (§32): um veículo pode pertencer a um agregado.
+  householdId String?
+  household   Household? @relation(fields: [householdId], references: [id], onDelete: SetNull)
+
+  /// Forma canónica normalizada (maiúsculas, sem separadores).
+  plate      String
+  /// Forma legível com hífenes, para não recalcular no cliente.
+  plateDisplay String
+  vin        String?
+  make       String?
+  model      String?
+  version    String?
+  year       Int?
+  vehicleType String  @default("car")
+  fuelType    String  @default("gasoline")
+  color       String?
+  nickname    String?
+
+  // Informação avançada, toda opcional (§10). Nenhum destes campos é obrigatório.
+  engineCode          String?
+  powerCv             Int?
+  engineDisplacementCc Int?
+  transmission        String?
+  drivetrain          String?
+  batteryCapacityKwh  Float?
+  usableBatteryKwh    Float?
+  rangeKm             Int?
+  tankCapacityL       Float?
+  tyreSize            String?
+  wheelSize           String?
+  weightKg            Int?
+  co2GKm              Int?
+
+  // Aquisição e propriedade. Alimentam o TCO quando o utilizador quiser (§23).
+  purchaseDate       DateTime? @db.Date
+  purchasePriceCents Int?
+  purchaseOdometerKm Int?
+  registrationDate   DateTime? @db.Date
+  firstRegistrationDate DateTime? @db.Date
+
+  /// Quilometragem atual conhecida. É um valor derivado, mantido para leitura rápida
+  /// no dashboard (§8) sem agregar todo o histórico a cada pedido.
+  odometerKm        Int?
+  odometerSource     Json?
+  odometerUpdatedAt  DateTime?
+
+  notes    String?
+  archived Boolean @default(false)
+  archivedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  odometerReadings  OdometerReading[]
+  expenses          Expense[]
+  fuelSessions      FuelSession[]
+  chargingSessions  ChargingSession[]
+  maintenance       MaintenanceRecord[]
+  insurancePolicies InsurancePolicy[]
+  inspections       InspectionRecord[]
+  taxes             TaxRecord[]
+  documents         Document[]
+  reminders         Reminder[]
+  events            VehicleEvent[]
+  integrations      Integration[]
+
+  @@unique([userId, plate])
+  @@index([userId, archived])
+}
+
+/// Histórico de leituras de odómetro. Existe separado do valor atual do veículo
+/// porque a evolução da quilometragem é a base do custo/km, das estatísticas (§23)
+/// e da deteção de conflitos entre fontes (§51).
+model OdometerReading {
+  id        String  @id @default(cuid())
+  vehicleId String
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  odometerKm Int
+  recordedAt DateTime @db.Date
+  source     Json?
+  notes      String?
+  /// Origem do registo: `manual`, `fuel`, `charging`, `maintenance`, `integration`.
+  origin     String  @default("manual")
+  /// Registos criados automaticamente a partir de outro documento não devem ser
+  /// editáveis isoladamente; apontam para a sua origem.
+  originRecordId String?
+  /// Marca de correção: quando o utilizador confirmou um recuo de quilometragem (§11).
+  isCorrection Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([vehicleId, recordedAt])
+  @@index([vehicleId, odometerKm])
+}
+
+/* ========================================================================== */
+/* Despesas (§12)                                                             */
+/* ========================================================================== */
+
+model Expense {
+  id        String  @id @default(cuid())
+  vehicleId String
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Cêntimos inteiros. Nunca vírgula flutuante (§ money.ts).
+  amountCents Int
+  vatCents    Int?
+  category    String
+  date        DateTime @db.Date
+  vendor      String?
+  odometerKm  Int?
+  description String?
+  paymentMethod String?
+  paid        Boolean @default(true)
+  /// Liga a despesa ao registo que a originou (abastecimento, manutenção, ...),
+  /// para que o custo não seja contado duas vezes nas estatísticas.
+  linkedRecordType String?
+  linkedRecordId   String?
+  notes       String?
+  source      Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([vehicleId, date])
+  @@index([userId, date])
+  @@index([vehicleId, category])
+}
+
+/* ========================================================================== */
+/* Abastecimentos (§13)                                                       */
+/* ========================================================================== */
+
+model FuelSession {
+  id        String  @id @default(cuid())
+  vehicleId String
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  date               DateTime @db.Date
+  litres             Float
+  amountCents        Int
+  pricePerLitreCents Int?
+  odometerKm         Int?
+  /// Só um depósito atestado permite calcular o consumo exato por diferença.
+  fullTank           Boolean  @default(true)
+  station            String?
+  fuelType           String?
+  latitude           Float?
+  longitude          Float?
+  paymentMethod      String?
+  notes              String?
+  source             Json?
+  /// Despesa criada automaticamente para este abastecimento, quando o utilizador
+  /// quer ver o custo no resumo financeiro (§12).
+  expenseId          String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([vehicleId, date])
+  @@index([vehicleId, odometerKm])
+}
+
+/* ========================================================================== */
+/* Carregamentos (§14)                                                        */
+/* ========================================================================== */
+
+model ChargingSession {
+  id        String  @id @default(cuid())
+  vehicleId String
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  date           DateTime @db.Date
+  energyKwh      Float
+  amountCents    Int
+  pricePerKwhCents Int?
+  odometerKm     Int?
+  location       String?
+  charger        String?
+  durationMinutes Int?
+  startSocPercent Float?
+  endSocPercent   Float?
+  powerKw         Float?
+  provider        String?
+  tariff          String?
+  isPublic        Boolean?
+  isHome          Boolean?
+  notes           String?
+  source          Json?
+  expenseId       String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([vehicleId, date])
+  @@index([vehicleId, odometerKm])
+}
+
+/* ========================================================================== */
+/* Manutenção (§15)                                                           */
+/* ========================================================================== */
+
+model MaintenanceRecord {
+  id        String  @id @default(cuid())
+  vehicleId String
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  date        DateTime @db.Date
+  type        String
+  odometerKm  Int?
+  amountCents Int?
+  partsCents  Int?
+  labourCents Int?
+  workshop    String?
+  description String?
+  warrantyMonths Int?
+  notes       String?
+  nextDueDate DateTime? @db.Date
+  nextDueOdometerKm Int?
+  source      Json?
+  expenseId   String?
+  /// Lembrete gerado a partir desta intervenção (§16).
+  reminderId  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([vehicleId, date])
+  @@index([vehicleId, type])
+}
+
+/* ========================================================================== */
+/* Seguro (§18)                                                               */
+/* ========================================================================== */
+
+model InsurancePolicy {
+  id        String  @id @default(cuid())
+  vehicleId String
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  insurer      String
+  policyNumber String?
+  startDate    DateTime @db.Date
+  endDate      DateTime @db.Date
+  premiumCents Int?
+  coverage     String?
+  deductibleCents Int?
+  contactPhone String?
+  documentId   String?
+  notes        String?
+  source       Json?
+  /// Lembrete de renovação criado automaticamente a partir da data de fim.
+  reminderId   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([vehicleId, endDate])
+}
+
+/* ========================================================================== */
+/* Inspeção (§19)                                                             */
+/* ========================================================================== */
+
+model InspectionRecord {
+  id        String  @id @default(cuid())
+  vehicleId String
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  date        DateTime @db.Date
+  result      String   @default("passed")
+  odometerKm  Int?
+  amountCents Int?
+  nextDueDate DateTime? @db.Date
+  station     String?
+  defects     String?
+  documentId  String?
+  notes       String?
+  source      Json?
+  reminderId  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([vehicleId, date])
+  @@index([vehicleId, nextDueDate])
+}
+
+/* ========================================================================== */
+/* Impostos (§20)                                                             */
+/* ========================================================================== */
+
+model TaxRecord {
+  id        String  @id @default(cuid())
+  vehicleId String
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  kind        String   @default("iuc")
+  year        Int
+  amountCents Int
+  date        DateTime? @db.Date
+  dueDate     DateTime? @db.Date
+  paid        Boolean  @default(true)
+  documentId  String?
+  notes       String?
+  source      Json?
+  reminderId  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([vehicleId, year])
+}
+
+/* ========================================================================== */
+/* Documentos (§17)                                                           */
+/* ========================================================================== */
+
+model Document {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Um documento pode não estar associado a nenhum veículo (ex.: carta de condução).
+  vehicleId String?
+  vehicle   Vehicle? @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  name      String
+  category  String
+  date      DateTime? @db.Date
+  expiresAt DateTime? @db.Date
+  fileName  String?
+  mimeType  String?
+  sizeBytes Int?
+  /// Referência opaca no armazenamento de objetos. Os bytes não passam pela API no MVP.
+  storageKey String?
+  notes     String?
+  source    Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, category])
+  @@index([vehicleId, expiresAt])
+}
+
+/* ========================================================================== */
+/* Lembretes e manutenção preventiva (§16, §21, §22)                          */
+/* ========================================================================== */
+
+model Reminder {
+  id        String  @id @default(cuid())
+  vehicleId String
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title    String
+  /// `distance`, `time` ou `both` — o evento ocorre quando qualquer condição for
+  /// atingida (§16).
+  trigger  String @default("both")
+  dueDate  DateTime? @db.Date
+  dueOdometerKm Int?
+  /// Intervalos usados para repetir automaticamente após conclusão.
+  intervalMonths Int?
+  intervalKm     Int?
+  repeat         Boolean @default(false)
+  notes          String?
+  /// Categoria temática, para escolher o canal e o ícone de notificação (§22).
+  topic          String @default("maintenance")
+  /// Origem: `manual`, `maintenance`, `insurance`, `inspection`, `tax`, `template`.
+  origin         String @default("manual")
+  originRecordId String?
+  /// Idempotência: impede lembretes duplicados gerados pelo mesmo fluxo.
+  dedupeKey      String?
+  source         Json?
+
+  completedAt DateTime?
+  /// Lembrete seguinte, quando `repeat` está ativo.
+  previousReminderId String?
+  snoozedUntil DateTime?
+  dismissedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([vehicleId, dedupeKey])
+  @@index([vehicleId, completedAt])
+  @@index([userId, dueDate])
+}
+
+/* ========================================================================== */
+/* Notificações (§22)                                                         */
+/* ========================================================================== */
+
+model Notification {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  topic      String
+  channel    String  @default("in_app")
+  title      String
+  body       String
+  href       String?
+  vehicleId  String?
+  reminderId String?
+  dedupeKey  String?
+  readAt     DateTime?
+  /// Momento em que deve ser entregue; permite agendar resumos diários/semanais.
+  scheduledFor DateTime?
+  sentAt     DateTime?
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, dedupeKey])
+  @@index([userId, readAt, createdAt])
+}
+
+/* ========================================================================== */
+/* Sugestões contextuais (§7, §45)                                            */
+/* ========================================================================== */
+
+/// Estado das sugestões. As sugestões são geradas a pedido (não persistidas) e o
+/// sistema guarda apenas aquilo que o utilizador decidiu sobre cada uma. Semear
+/// sugestões na base de dados obrigaria a uma migração sempre que a lógica mudasse.
+model SuggestionState {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Chave estável da sugestão, ex.: `vehicle.add_insurance:<vehicleId>`.
+  key      String
+  type     String
+  vehicleId String?
+  /// `done`, `dismissed`, `never`, `snoozed`.
+  status   String
+  snoozedUntil DateTime?
+  /// Quantas vezes a sugestão já foi apresentada, para não insistir (§7).
+  shownCount Int @default(0)
+  lastShownAt DateTime?
+  actedAt    DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([userId, key])
+  @@index([userId, status])
+}
+
+/* ========================================================================== */
+/* Eventos (§33)                                                              */
+/* ========================================================================== */
+
+/// Modelo de eventos. Toda a ação importante é registada aqui e é desta tabela que
+/// nascem a timeline (§24), as estatísticas (§23), as notificações (§22) e, no
+/// futuro, as automações e as integrações (§26).
+model VehicleEvent {
+  id        String  @id @default(cuid())
+  vehicleId String
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type      String
+  /// Data civil do evento (pode diferir da data do registo que o originou).
+  date      DateTime @db.Date
+  title     String
+  summary   String?
+  icon      String?
+  amountCents Int?
+  odometerKm  Int?
+  /// Tipo e identificador do registo de origem, para navegação reversa.
+  recordType String?
+  recordId   String?
+  source     Json?
+  /// Payload livre para consumidores externos (Home Assistant, automações).
+  payload    Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([vehicleId, date])
+  @@index([userId, createdAt])
+  @@index([recordType, recordId])
+}
+
+/* ========================================================================== */
+/* Integrações (§26, §27, §28)                                                */
+/* ========================================================================== */
+
+model Integration {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vehicleId String?
+  vehicle   Vehicle? @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  category String
+  provider String
+  label    String?
+  enabled  Boolean @default(true)
+  /// Configuração não sensível, devolvida ao cliente.
+  config   Json?
+  /// Segredos cifrados em repouso (§30). Nunca são devolvidos ao cliente.
+  credentials Json?
+  /// Scopes concedidos a esta integração; princípio do menor privilégio (§30).
+  scopes   Json?
+  lastSyncAt      DateTime?
+  lastSyncStatus  String  @default("never")
+  lastSyncMessage String?
+
+  entities HomeAssistantEntity[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, category, provider, vehicleId])
+  @@index([userId, category])
+}
+
+/// Publicações MQTT para o Home Assistant (§27). Uma linha por entidade publicada,
+/// para que o Zemlo saiba exatamente o que já anunciou e possa remover a entidade
+/// quando os dados deixarem de existir.
+model HomeAssistantEntity {
+  id            String @id @default(cuid())
+  integrationId String
+  integration   Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  vehicleId     String
+  entityId      String
+  /// `sensor`, `binary_sensor` ou `device_tracker`.
+  component     String
+  deviceClass   String?
+  unitOfMeasurement String?
+  stateTopic    String
+  discoveryTopic String
+  publishedState Json?
+  available     Boolean @default(true)
+  lastPublishedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([integrationId, entityId])
+  @@index([vehicleId])
+}
+
+/* ========================================================================== */
+/* Preferências do servidor                                                   */
+/* ========================================================================== */
+
+/// Chave/valor para configuração operacional que não pertence ao ambiente:
+/// versão dos termos aceites, marcos de migração, interruptores de funcionalidade.
+model AppSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+/* ========================================================================== */
+/* Preparação para famílias e frotas (§32) — fora do MVP (§40)                */
+/* ========================================================================== */
+
+model Household {
+  id        String @id @default(cuid())
+  name      String
+  ownerId   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members  HouseholdMember[]
+  vehicles Vehicle[]
+}
+
+model HouseholdMember {
+  id          String @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// `owner`, `admin`, `member`, `viewer`.
+  role        String    @default("member")
+  createdAt   DateTime  @default(now())
+
+  @@unique([householdId, userId])
+}
+
+model Organization {
+  id        String @id @default(cuid())
+  name      String
+  vatNumber String?
+  ownerId   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members OrganizationMember[]
+}
+
+model OrganizationMember {
+  id             String @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role           String       @default("member")
+  createdAt      DateTime     @default(now())
+
+  @@unique([organizationId, userId])
+}

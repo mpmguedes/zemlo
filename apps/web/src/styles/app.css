@@ -1,0 +1,2356 @@
+/*
+ * app.css — a interface do Zemlo.
+ *
+ * Organizado de fora para dentro: base → layout → componentes → ecrãs. Segue uma
+ * abordagem *mobile-first* a sério, e não apenas por convenção: todas as regras base
+ * descrevem o telemóvel e só os `@media (min-width: …)` acrescentam o que o espaço
+ * adicional permite. O que a especificação §35 exige é exatamente isto — o telemóvel
+ * privilegia ações rápidas, dashboard, timeline e introdução de dados; o ambiente de
+ * trabalho privilegia relatórios, tabelas, gráficos e gestão de vários veículos.
+ *
+ * Nada aqui depende de uma biblioteca de componentes ou de CSS utilitário: a aplicação
+ * não pode acrescentar dependências, e uma folha de estilos explícita é mais fácil de
+ * auditar contra a identidade da marca do que uma acumulação de classes utilitárias.
+ */
+
+/* ========================================================================== */
+/* 1. Base                                                                    */
+/* ========================================================================== */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  /* `-webkit-text-size-adjust` impede o Safari móvel de aumentar o texto em paisagem, o
+     que destroçaria o alinhamento de tabelas e cartões. */
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background: var(--z-bg);
+  color: var(--z-text);
+  font-family: var(--z-font);
+  font-size: var(--z-text-base);
+  line-height: var(--z-leading-normal);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Respeitar a preferência de movimento reduzido não é opcional: animações de entrada de
+   folhas modais e transições de página provocam náuseas em pessoas com perturbações
+   vestibulares. Desligamos a animação, não a funcionalidade. */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+h1,
+h2,
+h3,
+h4,
+p,
+figure {
+  margin: 0;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  color: var(--z-ink);
+  font-weight: 600;
+  line-height: var(--z-leading-tight);
+}
+
+h1 {
+  font-size: var(--z-text-2xl);
+  letter-spacing: -0.02em;
+}
+
+h2 {
+  font-size: var(--z-text-xl);
+  letter-spacing: -0.01em;
+}
+
+h3 {
+  font-size: var(--z-text-lg);
+}
+
+h4 {
+  font-size: var(--z-text-md);
+}
+
+a {
+  color: var(--z-accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+ul,
+ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Foco visível em tudo o que recebe foco por teclado. A lista de seletores é explícita
+   porque `:focus-visible` não é herdado por elementos sem estilo próprio. */
+:focus-visible {
+  outline: 2px solid var(--z-border-focus);
+  outline-offset: 2px;
+  border-radius: var(--z-radius-sm);
+}
+
+/* Só para leitores de ecrã. Usado em rótulos de ícones e em regiões `aria-live`. */
+.z-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.z-skip-link {
+  position: absolute;
+  left: var(--z-space-3);
+  top: -100px;
+  z-index: var(--z-z-toast);
+  padding: var(--z-space-3) var(--z-space-4);
+  background: var(--z-accent);
+  color: var(--z-accent-contrast);
+  border-radius: var(--z-radius);
+  font-weight: 600;
+  transition: top 0.15s ease;
+}
+
+.z-skip-link:focus {
+  top: var(--z-space-3);
+}
+
+/* ========================================================================== */
+/* 2. Logótipo                                                                */
+/* ========================================================================== */
+
+.z-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.36em;
+  color: var(--z-ink);
+}
+
+.z-logo__symbol {
+  display: block;
+  flex: none;
+}
+
+.z-logo__wordmark {
+  font-size: 1em;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  /* A palavra alinha ao centro da altura de "x", não à linha de base: o símbolo é
+     visualmente mais pesado em baixo por causa da perspetiva (BRAND §4). */
+  line-height: 1;
+  transform: translateY(-0.04em);
+}
+
+/* ========================================================================== */
+/* 3. Layout da aplicação                                                     */
+/* ========================================================================== */
+
+.z-app {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.z-main {
+  flex: 1;
+  width: 100%;
+  max-width: var(--z-content-max);
+  margin: 0 auto;
+  padding: var(--z-space-4) var(--z-space-4) calc(var(--z-tabbar-height) + var(--z-space-6));
+}
+
+/* No ambiente de trabalho a barra de separadores dá lugar a uma barra lateral fixa. */
+@media (min-width: 900px) {
+  .z-app {
+    flex-direction: row;
+  }
+
+  .z-main {
+    padding: var(--z-space-6) var(--z-space-8) var(--z-space-12);
+    margin: 0;
+    margin-left: var(--z-sidebar-width);
+    max-width: calc(var(--z-content-max) + var(--z-space-8) * 2);
+  }
+}
+
+/* --- Cabeçalho do telemóvel ----------------------------------------------- */
+
+.z-topbar {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-z-sticky);
+  display: flex;
+  align-items: center;
+  gap: var(--z-space-3);
+  min-height: 56px;
+  padding: 0 var(--z-space-4);
+  padding-top: env(safe-area-inset-top, 0);
+  background: var(--z-bg-elevated);
+  border-bottom: 1px solid var(--z-border);
+}
+
+.z-topbar__spacer {
+  flex: 1;
+}
+
+@media (min-width: 900px) {
+  .z-topbar {
+    display: none;
+  }
+}
+
+/* --- Barra lateral (ambiente de trabalho) --------------------------------- */
+
+.z-sidebar {
+  display: none;
+}
+
+@media (min-width: 900px) {
+  .z-sidebar {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: var(--z-sidebar-width);
+    padding: var(--z-space-5) var(--z-space-3);
+    background: var(--z-bg-elevated);
+    border-right: 1px solid var(--z-border);
+    overflow-y: auto;
+    z-index: var(--z-z-tabbar);
+  }
+
+  .z-sidebar__brand {
+    padding: 0 var(--z-space-2) var(--z-space-2);
+  }
+
+  .z-sidebar__tagline {
+    display: block;
+    padding: 0 var(--z-space-2) var(--z-space-5);
+    color: var(--z-text-muted);
+    font-size: var(--z-text-xs);
+  }
+
+  .z-sidebar__group {
+    margin-top: var(--z-space-5);
+  }
+
+  .z-sidebar__group-title {
+    padding: 0 var(--z-space-3) var(--z-space-2);
+    color: var(--z-text-muted);
+    font-size: var(--z-text-xs);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .z-sidebar__link {
+    display: flex;
+    align-items: center;
+    gap: var(--z-space-3);
+    min-height: var(--z-touch);
+    padding: 0 var(--z-space-3);
+    border-radius: var(--z-radius);
+    color: var(--z-text);
+    font-weight: 500;
+  }
+
+  .z-sidebar__link:hover {
+    background: var(--z-bg-sunken);
+    text-decoration: none;
+  }
+
+  .z-sidebar__link[aria-current='page'] {
+    background: var(--z-accent-soft);
+    color: var(--z-accent);
+    font-weight: 600;
+  }
+
+  .z-sidebar__icon {
+    width: 20px;
+    text-align: center;
+    font-size: 1rem;
+  }
+
+  .z-sidebar__badge {
+    margin-left: auto;
+  }
+
+  .z-sidebar__footer {
+    margin-top: auto;
+    padding-top: var(--z-space-4);
+    border-top: 1px solid var(--z-border);
+  }
+}
+
+/* --- Barra de separadores (telemóvel) ------------------------------------- */
+
+.z-tabbar {
+  position: fixed;
+  inset: auto 0 0 0;
+  z-index: var(--z-z-tabbar);
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  align-items: stretch;
+  background: var(--z-bg-elevated);
+  border-top: 1px solid var(--z-border);
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+@media (min-width: 900px) {
+  .z-tabbar {
+    display: none;
+  }
+}
+
+.z-tabbar__link {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  /* 56 px de altura, acima do alvo mínimo de 44 px (§53). */
+  min-height: 56px;
+  color: var(--z-text-muted);
+  font-size: var(--z-text-xs);
+  font-weight: 500;
+}
+
+.z-tabbar__link:hover {
+  text-decoration: none;
+}
+
+.z-tabbar__link[aria-current='page'] {
+  color: var(--z-accent);
+  font-weight: 600;
+}
+
+.z-tabbar__icon {
+  position: relative;
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.z-tabbar__badge {
+  position: absolute;
+  top: -4px;
+  right: -10px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--z-radius-pill);
+  background: var(--z-highlight);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* ========================================================================== */
+/* 4. Estrutura de página                                                     */
+/* ========================================================================== */
+
+.z-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-5);
+}
+
+.z-page__header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-1);
+}
+
+.z-page__header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--z-space-4);
+  flex-wrap: wrap;
+}
+
+.z-page__subtitle {
+  color: var(--z-text-muted);
+  font-size: var(--z-text-sm);
+}
+
+.z-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-3);
+}
+
+.z-section__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--z-space-3);
+}
+
+.z-section__title {
+  font-size: var(--z-text-md);
+  font-weight: 600;
+  color: var(--z-ink);
+}
+
+.z-section__hint {
+  color: var(--z-text-muted);
+  font-size: var(--z-text-xs);
+}
+
+/* ========================================================================== */
+/* 5. Superfícies                                                             */
+/* ========================================================================== */
+
+.z-card {
+  background: var(--z-bg-elevated);
+  border: 1px solid var(--z-border);
+  border-radius: var(--z-radius-lg);
+  box-shadow: var(--z-shadow-1);
+  padding: var(--z-space-4);
+}
+
+.z-card--flush {
+  padding: 0;
+  overflow: hidden;
+}
+
+.z-card--soft {
+  background: var(--z-bg-soft);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.z-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--z-space-3);
+  margin-bottom: var(--z-space-3);
+}
+
+.z-card__title {
+  font-size: var(--z-text-md);
+  font-weight: 600;
+  color: var(--z-ink);
+}
+
+.z-card__subtitle {
+  color: var(--z-text-muted);
+  font-size: var(--z-text-xs);
+  margin-top: 2px;
+}
+
+.z-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-3);
+}
+
+.z-stack--tight {
+  gap: var(--z-space-2);
+}
+
+.z-stack--loose {
+  gap: var(--z-space-5);
+}
+
+.z-row {
+  display: flex;
+  align-items: center;
+  gap: var(--z-space-3);
+}
+
+.z-row--between {
+  justify-content: space-between;
+}
+
+.z-row--wrap {
+  flex-wrap: wrap;
+}
+
+.z-row--end {
+  justify-content: flex-end;
+}
+
+.z-spacer {
+  flex: 1;
+}
+
+.z-divider {
+  height: 1px;
+  background: var(--z-border);
+  border: 0;
+  margin: 0;
+}
+
+.z-grid {
+  display: grid;
+  gap: var(--z-space-3);
+}
+
+.z-grid--2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.z-grid--3 {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.z-grid--4 {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+
+/* ========================================================================== */
+/* 6. Tipografia utilitária                                                   */
+/* ========================================================================== */
+
+.z-muted {
+  color: var(--z-text-muted);
+}
+
+.z-subtle {
+  color: var(--z-text-subtle);
+}
+
+.z-small {
+  font-size: var(--z-text-sm);
+}
+
+.z-xs {
+  font-size: var(--z-text-xs);
+}
+
+.z-strong {
+  font-weight: 600;
+}
+
+.z-numeric {
+  /* Números tabulares: alinhar valores monetários em colunas é o requisito mínimo de uma
+     tabela de custos. Sem isto, os dígitos dançam entre linhas. */
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+.z-mono {
+  font-family: var(--z-font-mono);
+  font-size: var(--z-text-sm);
+}
+
+.z-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.z-center {
+  text-align: center;
+}
+
+/* ========================================================================== */
+/* 7. Botões                                                                  */
+/* ========================================================================== */
+
+.z-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--z-space-2);
+  min-height: var(--z-control-height);
+  padding: 0 var(--z-space-4);
+  border: 1px solid transparent;
+  border-radius: var(--z-radius);
+  background: var(--z-bg-elevated);
+  color: var(--z-text);
+  font-family: inherit;
+  font-size: var(--z-text-base);
+  font-weight: 600;
+  line-height: 1;
+  text-align: center;
+  cursor: pointer;
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.z-btn:hover:not(:disabled) {
+  text-decoration: none;
+}
+
+.z-btn:disabled,
+.z-btn[aria-disabled='true'] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.z-btn--primary {
+  background: var(--z-accent);
+  color: var(--z-accent-contrast);
+}
+
+.z-btn--primary:hover:not(:disabled) {
+  background: var(--z-accent-hover);
+}
+
+.z-btn--primary:active:not(:disabled) {
+  background: var(--z-accent-active);
+}
+
+/* O âmbar é o botão de ação destacada — o convite a fazer algo, não a decoração do
+   cartão (§57). Só há um por ecrã. */
+.z-btn--highlight {
+  background: var(--z-highlight);
+  color: #ffffff;
+}
+
+.z-btn--highlight:hover:not(:disabled) {
+  background: var(--z-highlight-strong);
+}
+
+.z-btn--secondary {
+  background: var(--z-bg-elevated);
+  border-color: var(--z-border-strong);
+  color: var(--z-text);
+}
+
+.z-btn--secondary:hover:not(:disabled) {
+  border-color: var(--z-accent);
+  color: var(--z-accent);
+}
+
+.z-btn--ghost {
+  background: transparent;
+  color: var(--z-accent);
+}
+
+.z-btn--ghost:hover:not(:disabled) {
+  background: var(--z-accent-soft);
+}
+
+.z-btn--danger {
+  background: transparent;
+  border-color: var(--z-border-strong);
+  color: var(--z-danger);
+}
+
+.z-btn--danger:hover:not(:disabled) {
+  background: var(--z-danger-soft);
+  border-color: var(--z-danger);
+}
+
+.z-btn--sm {
+  min-height: 36px;
+  padding: 0 var(--z-space-3);
+  font-size: var(--z-text-sm);
+}
+
+.z-btn--block {
+  width: 100%;
+}
+
+.z-btn__icon {
+  font-size: 1.05em;
+  line-height: 1;
+}
+
+.z-btn__spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: z-spin 0.7s linear infinite;
+}
+
+@keyframes z-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Botão de ícone, usado no cabeçalho e nas linhas de lista. */
+.z-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--z-touch);
+  height: var(--z-touch);
+  border: 0;
+  border-radius: var(--z-radius);
+  background: transparent;
+  color: var(--z-text-subtle);
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+.z-icon-btn:hover {
+  background: var(--z-bg-sunken);
+  color: var(--z-ink);
+}
+
+/* ========================================================================== */
+/* 8. Formulários                                                             */
+/* ========================================================================== */
+
+.z-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-1);
+}
+
+.z-field__label {
+  color: var(--z-text-subtle);
+  font-size: var(--z-text-sm);
+  font-weight: 600;
+}
+
+.z-field__hint {
+  color: var(--z-text-muted);
+  font-size: var(--z-text-xs);
+}
+
+.z-field__required {
+  color: var(--z-highlight-strong);
+}
+
+.z-input,
+.z-select,
+.z-textarea {
+  width: 100%;
+  min-height: var(--z-control-height);
+  padding: var(--z-space-2) var(--z-space-3);
+  border: 1px solid var(--z-border-strong);
+  border-radius: var(--z-radius);
+  background: var(--z-bg-elevated);
+  color: var(--z-text);
+  /* `font-size: 16px` em telemóvel: abaixo disto o Safari de iOS amplia a página ao
+     focar o campo, e o utilizador perde o contexto do formulário. */
+  font-family: inherit;
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+@media (min-width: 600px) {
+  .z-input,
+  .z-select,
+  .z-textarea {
+    font-size: var(--z-text-base);
+  }
+}
+
+.z-textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+.z-input:focus,
+.z-select:focus,
+.z-textarea:focus {
+  outline: none;
+  border-color: var(--z-accent);
+  box-shadow: 0 0 0 3px var(--z-accent-soft);
+}
+
+.z-input[aria-invalid='true'],
+.z-select[aria-invalid='true'],
+.z-textarea[aria-invalid='true'] {
+  border-color: var(--z-danger);
+}
+
+.z-input:disabled,
+.z-select:disabled {
+  background: var(--z-bg-sunken);
+  color: var(--z-text-muted);
+}
+
+/* Campo com sufixo (€, km, kWh) desenhado dentro do próprio controlo: dizer a unidade
+   ao lado do número evita o erro de introduzir euros num campo de litros. */
+.z-input-group {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+}
+
+.z-input-group__suffix {
+  display: flex;
+  align-items: center;
+  padding: 0 var(--z-space-3);
+  border: 1px solid var(--z-border-strong);
+  border-left: 0;
+  border-radius: 0 var(--z-radius) var(--z-radius) 0;
+  background: var(--z-bg-sunken);
+  color: var(--z-text-muted);
+  font-size: var(--z-text-sm);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.z-input-group .z-input {
+  border-radius: var(--z-radius) 0 0 var(--z-radius);
+}
+
+.z-field__error {
+  color: var(--z-danger);
+  font-size: var(--z-text-xs);
+  font-weight: 500;
+}
+
+.z-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--z-space-3);
+  min-height: var(--z-touch);
+  padding: var(--z-space-2) 0;
+  cursor: pointer;
+}
+
+.z-checkbox input {
+  width: 20px;
+  height: 20px;
+  margin: 2px 0 0;
+  accent-color: var(--z-accent);
+  flex: none;
+}
+
+/* Seletor segmentado: usado para períodos, tipos de gráfico e alternâncias curtas. */
+.z-segmented {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--z-radius);
+  background: var(--z-bg-sunken);
+  overflow-x: auto;
+}
+
+.z-segmented__item {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--z-space-1);
+  min-height: 36px;
+  padding: 0 var(--z-space-3);
+  border: 0;
+  border-radius: calc(var(--z-radius) - 2px);
+  background: transparent;
+  color: var(--z-text-subtle);
+  font-family: inherit;
+  font-size: var(--z-text-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.z-segmented__item[aria-pressed='true'],
+.z-segmented__item[aria-selected='true'] {
+  background: var(--z-bg-elevated);
+  color: var(--z-accent);
+  box-shadow: var(--z-shadow-1);
+}
+
+/* Grelha de opções — categorias de despesa, tipos de manutenção. Cada opção é um botão
+   grande: escolher uma categoria com o polegar é a operação mais repetida da aplicação. */
+.z-option-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: var(--z-space-2);
+}
+
+.z-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: var(--z-touch);
+  padding: var(--z-space-2);
+  border: 1px solid var(--z-border-strong);
+  border-radius: var(--z-radius);
+  background: var(--z-bg-elevated);
+  color: var(--z-text);
+  font-family: inherit;
+  font-size: var(--z-text-xs);
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+}
+
+.z-option__icon {
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+.z-option[aria-pressed='true'] {
+  border-color: var(--z-accent);
+  background: var(--z-accent-soft);
+  color: var(--z-accent);
+}
+
+/* ========================================================================== */
+/* 9. Faixas de aviso                                                         */
+/* ========================================================================== */
+
+.z-banner {
+  display: flex;
+  gap: var(--z-space-3);
+  padding: var(--z-space-3) var(--z-space-4);
+  border-radius: var(--z-radius);
+  border: 1px solid transparent;
+  font-size: var(--z-text-sm);
+}
+
+.z-banner__icon {
+  flex: none;
+  font-size: 1.1rem;
+  line-height: 1.3;
+}
+
+.z-banner__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.z-banner__title {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.z-banner--info {
+  background: var(--z-info-soft);
+  color: var(--z-petrol-800);
+}
+
+.z-banner--ok {
+  background: var(--z-ok-soft);
+  color: var(--z-ok);
+}
+
+.z-banner--warn {
+  background: var(--z-warn-soft);
+  color: var(--z-highlight-ink);
+}
+
+.z-banner--danger {
+  background: var(--z-danger-soft);
+  color: var(--z-danger);
+}
+
+.z-banner__actions {
+  display: flex;
+  gap: var(--z-space-2);
+  margin-top: var(--z-space-2);
+  flex-wrap: wrap;
+}
+
+/* ========================================================================== */
+/* 10. Estados de cartão, etiquetas, contadores                              */
+/* ========================================================================== */
+
+.z-state-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--z-space-3);
+  padding: var(--z-space-3);
+  border: 1px solid var(--z-border);
+  border-left-width: 3px;
+  border-radius: var(--z-radius);
+  background: var(--z-bg-elevated);
+  color: inherit;
+}
+
+.z-state-card:hover {
+  text-decoration: none;
+  border-color: var(--z-border-strong);
+}
+
+/* A cor da barra lateral é o único sinal de estado. O ícone e o texto acompanham, para
+   que a informação não dependa da cor (daltonismo). */
+.z-state-card--ok {
+  border-left-color: var(--z-ok);
+}
+
+.z-state-card--soon {
+  border-left-color: var(--z-highlight);
+}
+
+.z-state-card--due {
+  border-left-color: var(--z-highlight-strong);
+  background: var(--z-warn-soft);
+}
+
+.z-state-card--overdue {
+  border-left-color: var(--z-danger);
+  background: var(--z-danger-soft);
+}
+
+.z-state-card--unknown {
+  border-left-color: var(--z-border-strong);
+  background: var(--z-bg-sunken);
+}
+
+.z-state-card__icon {
+  font-size: 1.15rem;
+  line-height: 1.3;
+}
+
+.z-state-card__label {
+  color: var(--z-text-muted);
+  font-size: var(--z-text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.z-state-card__value {
+  color: var(--z-ink);
+  font-size: var(--z-text-md);
+  font-weight: 600;
+}
+
+.z-state-card__hint {
+  color: var(--z-text-muted);
+  font-size: var(--z-text-xs);
+}
+
+.z-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--z-space-1);
+  min-height: 26px;
+  padding: 0 var(--z-space-2);
+  border-radius: var(--z-radius-pill);
+  background: var(--z-bg-sunken);
+  color: var(--z-text-subtle);
+  font-size: var(--z-text-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.z-chip--accent {
+  background: var(--z-accent-soft);
+  color: var(--z-accent);
+}
+
+.z-chip--warn {
+  background: var(--z-warn-soft);
+  color: var(--z-highlight-ink);
+}
+
+.z-chip--danger {
+  background: var(--z-danger-soft);
+  color: var(--z-danger);
+}
+
+.z-chip--ok {
+  background: var(--z-ok-soft);
+  color: var(--z-ok);
+}
+
+.z-chip--button {
+  border: 0;
+  cursor: pointer;
+  font-family: inherit;
+  min-height: var(--z-touch);
+  padding: 0 var(--z-space-3);
+}
+
+.z-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.z-metric__label {
+  color: var(--z-text-muted);
+  font-size: var(--z-text-xs);
+}
+
+.z-metric__value {
+  color: var(--z-ink);
+  font-size: var(--z-text-lg);
+  font-weight: 600;
+  line-height: var(--z-leading-tight);
+}
+
+.z-metric__value--sm {
+  font-size: var(--z-text-md);
+}
+
+.z-metric__hint {
+  color: var(--z-text-muted);
+  font-size: var(--z-text-xs);
+}
+
+/* ========================================================================== */
+/* 11. Listas e tabelas                                                       */
+/* ========================================================================== */
+
+.z-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.z-list__item {
+  display: flex;
+  align-items: center;
+  gap: var(--z-space-3);
+  min-height: var(--z-touch);
+  padding: var(--z-space-3) var(--z-space-4);
+  border-bottom: 1px solid var(--z-border);
+  color: inherit;
+}
+
+.z-list__item:last-child {
+  border-bottom: 0;
+}
+
+a.z-list__item:hover {
+  background: var(--z-bg-sunken);
+  text-decoration: none;
+}
+
+.z-list__icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--z-radius);
+  background: var(--z-bg-sunken);
+  font-size: 1.05rem;
+}
+
+.z-list__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.z-list__title {
+  color: var(--z-ink);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.z-list__meta {
+  color: var(--z-text-muted);
+  font-size: var(--z-text-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.z-list__trailing {
+  flex: none;
+  text-align: right;
+  color: var(--z-ink);
+  font-weight: 600;
+}
+
+/* A tabela é uma prerrogativa do ambiente de trabalho (§35). No telemóvel a mesma
+   informação aparece como lista; por isso a tabela só existe a partir de 900 px, e o
+   componente que a desenha recebe também a versão em lista. */
+.z-table-wrap {
+  display: none;
+  overflow-x: auto;
+}
+
+@media (min-width: 900px) {
+  .z-table-wrap {
+    display: block;
+    border: 1px solid var(--z-border);
+    border-radius: var(--z-radius-lg);
+    background: var(--z-bg-elevated);
+  }
+}
+
+.z-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--z-text-sm);
+}
+
+.z-table th,
+.z-table td {
+  padding: var(--z-space-3) var(--z-space-4);
+  text-align: left;
+  border-bottom: 1px solid var(--z-border);
+  white-space: nowrap;
+}
+
+.z-table th {
+  color: var(--z-text-muted);
+  font-size: var(--z-text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--z-bg-sunken);
+}
+
+.z-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.z-table tbody tr:hover {
+  background: var(--z-bg-sunken);
+}
+
+.z-table td.z-table__num,
+.z-table th.z-table__num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.z-filters {
+  display: flex;
+  gap: var(--z-space-2);
+  overflow-x: auto;
+  padding-bottom: var(--z-space-1);
+  /* `scrollbar-width` evita que a barra de deslocamento horizontal ocupe altura numa
+     fila de filtros, onde não acrescenta nada. */
+  scrollbar-width: none;
+}
+
+.z-filters::-webkit-scrollbar {
+  display: none;
+}
+
+/* ========================================================================== */
+/* 12. Folha modal (§43, §44)                                                 */
+/* ========================================================================== */
+
+.z-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-z-sheet);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+@media (min-width: 700px) {
+  .z-sheet {
+    align-items: center;
+  }
+}
+
+.z-sheet__scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--z-overlay);
+  border: 0;
+  cursor: pointer;
+}
+
+.z-sheet__panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-height: min(92dvh, 760px);
+  background: var(--z-bg-elevated);
+  border-radius: var(--z-radius-xl) var(--z-radius-xl) 0 0;
+  box-shadow: var(--z-shadow-3);
+  animation: z-sheet-in 0.18s ease-out;
+}
+
+@media (min-width: 700px) {
+  .z-sheet__panel {
+    max-width: 520px;
+    border-radius: var(--z-radius-xl);
+    animation: z-sheet-in-desktop 0.18s ease-out;
+  }
+}
+
+@keyframes z-sheet-in {
+  from {
+    transform: translateY(12px);
+    opacity: 0.6;
+  }
+}
+
+@keyframes z-sheet-in-desktop {
+  from {
+    transform: translateY(8px) scale(0.99);
+    opacity: 0.6;
+  }
+}
+
+.z-sheet__header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--z-space-3);
+  padding: var(--z-space-5) var(--z-space-5) var(--z-space-3);
+  border-bottom: 1px solid var(--z-border);
+}
+
+.z-sheet__grabber {
+  width: 36px;
+  height: 4px;
+  border-radius: var(--z-radius-pill);
+  background: var(--z-border-strong);
+  margin: 0 auto var(--z-space-3);
+}
+
+.z-sheet__title {
+  flex: 1;
+  font-size: var(--z-text-lg);
+  font-weight: 600;
+  color: var(--z-ink);
+}
+
+.z-sheet__subtitle {
+  color: var(--z-text-muted);
+  font-size: var(--z-text-xs);
+  margin-top: 2px;
+}
+
+.z-sheet__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--z-space-4) var(--z-space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-4);
+}
+
+.z-sheet__footer {
+  display: flex;
+  gap: var(--z-space-3);
+  padding: var(--z-space-3) var(--z-space-5);
+  padding-bottom: calc(var(--z-space-3) + env(safe-area-inset-bottom, 0));
+  border-top: 1px solid var(--z-border);
+  background: var(--z-bg-elevated);
+}
+
+.z-sheet__footer .z-btn {
+  flex: 1;
+}
+
+/* Divulgação progressiva: esconde os campos secundários até serem pedidos (§43). */
+.z-disclosure {
+  border-top: 1px solid var(--z-border);
+  padding-top: var(--z-space-3);
+}
+
+.z-disclosure__toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--z-space-2);
+  width: 100%;
+  min-height: var(--z-touch);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--z-accent);
+  font-family: inherit;
+  font-size: var(--z-text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.z-disclosure__chevron {
+  transition: transform 0.15s ease;
+}
+
+.z-disclosure__toggle[aria-expanded='true'] .z-disclosure__chevron {
+  transform: rotate(90deg);
+}
+
+/* ========================================================================== */
+/* 13. Avisos flutuantes                                                      */
+/* ========================================================================== */
+
+.z-toasts {
+  position: fixed;
+  z-index: var(--z-z-toast);
+  left: var(--z-space-4);
+  right: var(--z-space-4);
+  bottom: calc(var(--z-tabbar-height) + var(--z-space-3));
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-2);
+  pointer-events: none;
+}
+
+@media (min-width: 900px) {
+  .z-toasts {
+    left: auto;
+    right: var(--z-space-6);
+    bottom: var(--z-space-6);
+    width: 360px;
+  }
+}
+
+.z-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--z-space-3);
+  padding: var(--z-space-3) var(--z-space-4);
+  border-radius: var(--z-radius);
+  background: var(--z-bg-inverse);
+  color: var(--z-text-on-inverse);
+  box-shadow: var(--z-shadow-3);
+  font-size: var(--z-text-sm);
+  pointer-events: auto;
+}
+
+.z-toast--ok {
+  background: var(--z-ok);
+  color: #fff;
+}
+
+.z-toast--danger {
+  background: var(--z-danger);
+  color: #fff;
+}
+
+.z-toast__close {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 1rem;
+  cursor: pointer;
+  line-height: 1;
+}
+
+/* ========================================================================== */
+/* 14. Estados vazios, carregamento e erro (§46)                              */
+/* ========================================================================== */
+
+.z-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--z-space-3);
+  padding: var(--z-space-8) var(--z-space-4);
+  text-align: center;
+}
+
+.z-empty__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--z-radius-xl);
+  background: var(--z-accent-soft);
+  font-size: 1.6rem;
+}
+
+.z-empty__title {
+  font-size: var(--z-text-md);
+  font-weight: 600;
+  color: var(--z-ink);
+}
+
+.z-empty__body {
+  max-width: 42ch;
+  color: var(--z-text-muted);
+  font-size: var(--z-text-sm);
+}
+
+.z-skeleton {
+  border-radius: var(--z-radius-sm);
+  background: linear-gradient(90deg, var(--z-bg-sunken) 25%, var(--z-border) 37%, var(--z-bg-sunken) 63%);
+  background-size: 400% 100%;
+  animation: z-shimmer 1.4s ease infinite;
+}
+
+@keyframes z-shimmer {
+  from {
+    background-position: 100% 50%;
+  }
+
+  to {
+    background-position: 0 50%;
+  }
+}
+
+.z-skeleton--line {
+  height: 12px;
+}
+
+.z-skeleton--title {
+  height: 20px;
+  width: 45%;
+}
+
+.z-skeleton--card {
+  height: 84px;
+}
+
+/* ========================================================================== */
+/* 15. Gráficos (barras e anel, em CSS puro)                                  */
+/* ========================================================================== */
+
+.z-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--z-space-1);
+  height: 132px;
+  padding-top: var(--z-space-2);
+}
+
+.z-bars__column {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--z-space-1);
+  min-width: 0;
+  height: 100%;
+}
+
+.z-bars__stack {
+  position: relative;
+  width: 100%;
+  max-width: 34px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  border-radius: var(--z-radius-sm) var(--z-radius-sm) 0 0;
+  background: var(--z-bg-sunken);
+}
+
+.z-bars__fill {
+  width: 100%;
+  border-radius: var(--z-radius-sm) var(--z-radius-sm) 0 0;
+  background: var(--z-chart-1);
+  transition: height 0.2s ease;
+}
+
+/* A parcela de energia sobrepõe-se à base da barra em âmbar: é a informação que o
+   produto quer tornar visível (§23 — distinguir tendência de custo de tendência de
+   consumo). O âmbar continua a marcar um destaque, não a decorar a série. */
+.z-bars__fill--energy {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  background: var(--z-chart-accent);
+}
+
+.z-bars__label {
+  color: var(--z-text-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.z-bars__legend {
+  display: flex;
+  gap: var(--z-space-4);
+  flex-wrap: wrap;
+  color: var(--z-text-muted);
+  font-size: var(--z-text-xs);
+}
+
+.z-bars__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--z-space-1);
+}
+
+.z-bars__swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.z-bar-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--z-space-1) var(--z-space-3);
+  align-items: center;
+  padding: var(--z-space-2) 0;
+  border-bottom: 1px solid var(--z-border);
+}
+
+.z-bar-row:last-child {
+  border-bottom: 0;
+}
+
+.z-bar-row__track {
+  grid-column: 1 / -1;
+  height: 6px;
+  border-radius: var(--z-radius-pill);
+  background: var(--z-bg-sunken);
+  overflow: hidden;
+}
+
+.z-bar-row__fill {
+  height: 100%;
+  border-radius: var(--z-radius-pill);
+  background: var(--z-chart-1);
+}
+
+.z-donut {
+  display: flex;
+  align-items: center;
+  gap: var(--z-space-4);
+  flex-wrap: wrap;
+}
+
+.z-donut__figure {
+  position: relative;
+  width: 132px;
+  height: 132px;
+  flex: none;
+}
+
+.z-donut__center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  text-align: center;
+}
+
+.z-donut__total {
+  font-size: var(--z-text-md);
+  font-weight: 700;
+  color: var(--z-ink);
+}
+
+.z-donut__caption {
+  color: var(--z-text-muted);
+  font-size: 10px;
+}
+
+.z-sparkline {
+  display: block;
+  width: 100%;
+  height: 56px;
+  overflow: visible;
+}
+
+.z-sparkline__line {
+  fill: none;
+  stroke: var(--z-chart-1);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.z-sparkline__area {
+  fill: var(--z-accent-soft);
+  stroke: none;
+}
+
+.z-sparkline__dot {
+  fill: var(--z-chart-1);
+}
+
+/* ========================================================================== */
+/* 16. Timeline (§24)                                                         */
+/* ========================================================================== */
+
+.z-timeline {
+  display: flex;
+  flex-direction: column;
+}
+
+.z-timeline__group {
+  display: flex;
+  flex-direction: column;
+}
+
+.z-timeline__month {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: var(--z-space-2) var(--z-space-4);
+  background: var(--z-bg);
+  color: var(--z-text-muted);
+  font-size: var(--z-text-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.z-timeline__item {
+  display: flex;
+  gap: var(--z-space-3);
+  padding: var(--z-space-3) var(--z-space-4);
+  border-bottom: 1px solid var(--z-border);
+  color: inherit;
+}
+
+a.z-timeline__item:hover {
+  background: var(--z-bg-sunken);
+  text-decoration: none;
+}
+
+.z-timeline__rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--z-space-1);
+  flex: none;
+}
+
+.z-timeline__dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--z-bg-sunken);
+  font-size: 0.95rem;
+}
+
+.z-timeline__date {
+  color: var(--z-text-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.z-timeline__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.z-timeline__metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--z-space-1) var(--z-space-3);
+  margin-top: var(--z-space-1);
+}
+
+.z-timeline__metric {
+  color: var(--z-text-muted);
+  font-size: var(--z-text-xs);
+}
+
+.z-timeline__metric-value {
+  color: var(--z-text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.z-timeline__amount {
+  flex: none;
+  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--z-ink);
+}
+
+/* ========================================================================== */
+/* 17. Calendário (§21)                                                       */
+/* ========================================================================== */
+
+.z-calendar__weekdays,
+.z-calendar__grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 2px;
+}
+
+.z-calendar__weekday {
+  padding: var(--z-space-1);
+  color: var(--z-text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.z-calendar__day {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  /* 44 px de altura mínima: um dia do calendário é um alvo de toque, não uma célula de
+     folha de cálculo. */
+  min-height: 44px;
+  padding: var(--z-space-1);
+  border: 1px solid transparent;
+  border-radius: var(--z-radius-sm);
+  background: var(--z-bg-elevated);
+  color: var(--z-text);
+  font-family: inherit;
+  font-size: var(--z-text-sm);
+  cursor: pointer;
+}
+
+.z-calendar__day--outside {
+  color: var(--z-text-muted);
+  background: transparent;
+}
+
+.z-calendar__day--today {
+  border-color: var(--z-accent);
+  font-weight: 700;
+  color: var(--z-accent);
+}
+
+.z-calendar__day--selected {
+  background: var(--z-accent);
+  color: var(--z-accent-contrast);
+  border-color: var(--z-accent);
+}
+
+.z-calendar__day--selected .z-calendar__marker {
+  background: var(--z-accent-contrast);
+}
+
+.z-calendar__markers {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
+
+.z-calendar__marker {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--z-petrol-400);
+}
+
+/* Projeções (datas previstas a partir do ritmo de utilização) são desenhadas a contorno:
+   uma previsão não é um compromisso, e a grelha não pode sugerir o contrário (§21). */
+.z-calendar__marker--projected {
+  background: transparent;
+  border: 1.5px solid var(--z-petrol-400);
+}
+
+.z-calendar__marker--overdue {
+  background: var(--z-danger);
+}
+
+.z-calendar__day-count {
+  color: var(--z-text-muted);
+  font-size: 10px;
+}
+
+.z-calendar__legend {
+  display: flex;
+  gap: var(--z-space-4);
+  flex-wrap: wrap;
+  color: var(--z-text-muted);
+  font-size: var(--z-text-xs);
+}
+
+/* ========================================================================== */
+/* 18. Separadores de página                                                  */
+/* ========================================================================== */
+
+.z-tabs {
+  display: flex;
+  gap: var(--z-space-1);
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-bottom: 1px solid var(--z-border);
+}
+
+.z-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.z-tabs__tab {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--z-space-1);
+  min-height: var(--z-touch);
+  padding: 0 var(--z-space-3);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--z-text-muted);
+  font-family: inherit;
+  font-size: var(--z-text-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.z-tabs__tab[aria-selected='true'] {
+  color: var(--z-accent);
+  border-bottom-color: var(--z-accent);
+}
+
+/* ========================================================================== */
+/* 19. Cabeçalho do veículo e autenticação                                    */
+/* ========================================================================== */
+
+.z-vehicle-hero {
+  display: flex;
+  align-items: center;
+  gap: var(--z-space-4);
+  padding: var(--z-space-4);
+  border-radius: var(--z-radius-lg);
+  background: var(--z-bg-inverse);
+  color: var(--z-text-on-inverse);
+}
+
+.z-vehicle-hero__emoji {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: var(--z-radius);
+  background: rgba(255, 255, 255, 0.14);
+  font-size: 1.6rem;
+  flex: none;
+}
+
+.z-vehicle-hero__title {
+  font-size: var(--z-text-lg);
+  font-weight: 600;
+  color: var(--z-text-on-inverse);
+}
+
+.z-vehicle-hero__plate {
+  color: var(--z-text-on-inverse-muted);
+  font-size: var(--z-text-sm);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+
+.z-vehicle-hero__odometer {
+  text-align: right;
+  flex: none;
+}
+
+.z-vehicle-hero__odometer-value {
+  font-size: var(--z-text-xl);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--z-text-on-inverse);
+  line-height: var(--z-leading-tight);
+}
+
+.z-vehicle-hero__odometer-label {
+  color: var(--z-text-on-inverse-muted);
+  font-size: var(--z-text-xs);
+}
+
+.z-quick-actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--z-space-2);
+}
+
+.z-quick-action {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--z-space-1);
+  min-height: 68px;
+  padding: var(--z-space-2);
+  border: 1px solid var(--z-border);
+  border-radius: var(--z-radius);
+  background: var(--z-bg-elevated);
+  color: var(--z-text);
+  font-family: inherit;
+  font-size: var(--z-text-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.z-quick-action:hover {
+  border-color: var(--z-accent);
+  color: var(--z-accent);
+}
+
+.z-quick-action__icon {
+  font-size: 1.3rem;
+  line-height: 1;
+}
+
+/* --- Autenticação --------------------------------------------------------- */
+
+.z-auth {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--z-space-5);
+  padding: var(--z-space-6) var(--z-space-4);
+  background:
+    radial-gradient(circle at 12% 0%, var(--z-petrol-100) 0%, transparent 46%),
+    radial-gradient(circle at 92% 100%, var(--z-petrol-50) 0%, transparent 42%),
+    var(--z-bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  .z-auth {
+    background:
+      radial-gradient(circle at 12% 0%, var(--z-petrol-900) 0%, transparent 46%),
+      radial-gradient(circle at 92% 100%, #0c2b30 0%, transparent 42%),
+      var(--z-bg);
+  }
+}
+
+.z-auth__card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--z-bg-elevated);
+  border: 1px solid var(--z-border);
+  border-radius: var(--z-radius-xl);
+  box-shadow: var(--z-shadow-2);
+  padding: var(--z-space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-5);
+}
+
+.z-auth__head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--z-space-2);
+  text-align: center;
+}
+
+.z-auth__title {
+  font-size: var(--z-text-xl);
+}
+
+.z-auth__subtitle {
+  color: var(--z-text-muted);
+  font-size: var(--z-text-sm);
+}
+
+.z-auth__footer {
+  text-align: center;
+  color: var(--z-text-muted);
+  font-size: var(--z-text-sm);
+}
+
+.z-steps {
+  display: flex;
+  gap: var(--z-space-2);
+}
+
+.z-steps__dot {
+  flex: 1;
+  height: 4px;
+  border-radius: var(--z-radius-pill);
+  background: var(--z-border);
+}
+
+.z-steps__dot--done {
+  background: var(--z-petrol-400);
+}
+
+.z-steps__dot--current {
+  background: var(--z-accent);
+}
+
+/* ========================================================================== */
+/* 20. Ecrãs específicos                                                      */
+/* ========================================================================== */
+
+.z-datagaps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-2);
+}
+
+/* As lacunas de dados são um convite, não um erro: sem vermelho, sem ícone de aviso (§49,
+   §59). A cor acompanha a superfície calma da marca. */
+.z-datagap {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--z-space-3);
+  padding: var(--z-space-3);
+  border-radius: var(--z-radius);
+  background: var(--z-bg-soft);
+  border: 1px dashed var(--z-petrol-200);
+}
+
+@media (prefers-color-scheme: dark) {
+  .z-datagap {
+    border-color: #1d4a52;
+  }
+}
+
+.z-datagap__icon {
+  flex: none;
+  font-size: 1.05rem;
+}
+
+.z-datagap__title {
+  font-weight: 600;
+  color: var(--z-ink);
+  font-size: var(--z-text-sm);
+}
+
+.z-datagap__message {
+  color: var(--z-text-subtle);
+  font-size: var(--z-text-xs);
+}
+
+.z-suggestion {
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-2);
+  padding: var(--z-space-3);
+  border: 1px solid var(--z-border);
+  border-left: 3px solid var(--z-highlight);
+  border-radius: var(--z-radius);
+  background: var(--z-bg-elevated);
+}
+
+.z-suggestion__title {
+  font-weight: 600;
+  color: var(--z-ink);
+}
+
+.z-suggestion__body {
+  color: var(--z-text-subtle);
+  font-size: var(--z-text-sm);
+}
+
+.z-suggestion__actions {
+  display: flex;
+  gap: var(--z-space-2);
+  flex-wrap: wrap;
+}
+
+.z-assumptions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-2);
+  padding: var(--z-space-3);
+  border-radius: var(--z-radius);
+  background: var(--z-bg-sunken);
+}
+
+.z-assumptions li {
+  display: flex;
+  gap: var(--z-space-2);
+  color: var(--z-text-subtle);
+  font-size: var(--z-text-xs);
+}
+
+.z-assumptions li::before {
+  content: '—';
+  color: var(--z-text-muted);
+}
+
+.z-entity-row {
+  display: flex;
+  gap: var(--z-space-3);
+  padding: var(--z-space-3) var(--z-space-4);
+  border-bottom: 1px solid var(--z-border);
+}
+
+.z-entity-row:last-child {
+  border-bottom: 0;
+}
+
+.z-entity-row--unavailable {
+  background: var(--z-bg-sunken);
+}
+
+.z-entity-row__id {
+  font-family: var(--z-font-mono);
+  font-size: var(--z-text-xs);
+  color: var(--z-text-muted);
+  word-break: break-all;
+}
+
+.z-steps-list {
+  counter-reset: z-step;
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-3);
+}
+
+.z-steps-list li {
+  display: flex;
+  gap: var(--z-space-3);
+  font-size: var(--z-text-sm);
+  color: var(--z-text-subtle);
+}
+
+.z-steps-list li::before {
+  counter-increment: z-step;
+  content: counter(z-step);
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--z-accent-soft);
+  color: var(--z-accent);
+  font-size: var(--z-text-xs);
+  font-weight: 700;
+}
+
+.z-copyfield {
+  display: flex;
+  align-items: center;
+  gap: var(--z-space-2);
+  padding: var(--z-space-2) var(--z-space-3);
+  border: 1px solid var(--z-border);
+  border-radius: var(--z-radius);
+  background: var(--z-bg-sunken);
+}
+
+.z-copyfield__value {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--z-font-mono);
+  font-size: var(--z-text-xs);
+  word-break: break-all;
+  color: var(--z-text);
+}
+
+.z-codes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--z-space-2);
+}
+
+.z-code {
+  padding: var(--z-space-2);
+  border: 1px dashed var(--z-border-strong);
+  border-radius: var(--z-radius-sm);
+  background: var(--z-bg-sunken);
+  font-family: var(--z-font-mono);
+  font-size: var(--z-text-sm);
+  letter-spacing: 0.06em;
+  text-align: center;
+}
+
+/* O QR é desenhado em SVG a partir da matriz calculada no cliente. O fundo é sempre
+   branco com módulos escuros — um QR invertido não é lido pela maioria dos leitores,
+   mesmo quando o tema da aplicação está escuro. */
+.z-qr {
+  display: flex;
+  justify-content: center;
+  padding: var(--z-space-3);
+  border: 1px solid var(--z-border);
+  border-radius: var(--z-radius);
+  background: #ffffff;
+}
+
+.z-qr svg {
+  display: block;
+  width: min(232px, 60vw);
+  height: auto;
+  shape-rendering: crispEdges;
+}
+
+.z-detail-list {
+  display: grid;
+  gap: 0;
+}
+
+.z-detail-list__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--z-space-4);
+  padding: var(--z-space-2) 0;
+  border-bottom: 1px solid var(--z-border);
+}
+
+.z-detail-list__row:last-child {
+  border-bottom: 0;
+}
+
+.z-detail-list__label {
+  color: var(--z-text-muted);
+  font-size: var(--z-text-sm);
+}
+
+.z-detail-list__value {
+  color: var(--z-ink);
+  font-weight: 500;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.z-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--z-space-2);
+  padding: var(--z-space-6) var(--z-space-4);
+  border: 1px dashed var(--z-border-strong);
+  border-radius: var(--z-radius);
+  background: var(--z-bg-sunken);
+  text-align: center;
+  color: var(--z-text-muted);
+  font-size: var(--z-text-sm);
+}
+
+.z-page-loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-3);
+}
+
+.z-inline-error {
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-2);
+  padding: var(--z-space-4);
+  border-radius: var(--z-radius);
+  background: var(--z-danger-soft);
+  color: var(--z-danger);
+  font-size: var(--z-text-sm);
+}
+
+.z-request-id {
+  color: var(--z-text-muted);
+  font-family: var(--z-font-mono);
+  font-size: var(--z-text-xs);
+  overflow-wrap: anywhere;
+}

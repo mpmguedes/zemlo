@@ -1,0 +1,257 @@
+/*
+ * theme.css — tokens do sistema de desenho do Zemlo.
+ *
+ * Este ficheiro é a única tradução de `BRAND` (em `@zemlo/shared`) para CSS. Os valores
+ * das escalas são copiados literalmente de `packages/shared/src/brand.ts`, em vez de
+ * gerados em tempo de execução, por uma razão prática: tokens de cor são lidos pelo
+ * browser no primeiro pixel, antes de qualquer JavaScript. Gerá-los a partir do
+ * `BRAND` obrigaria a um `useEffect` a escrever 30 variáveis no `documentElement` — e a
+ * interface apareceria sem cor durante um fotograma em cada carregamento.
+ *
+ * A regra que se mantém: qualquer cor nova tem de vir do `BRAND`. Se um tom não existe
+ * lá, é porque não deve existir aqui.
+ *
+ * Papéis (e não nomes de cor):
+ *   --z-petrol-*   estrutura, superfícies calmas, ações primárias
+ *   --z-amber-*    AÇÕES, destaque e alertas — nunca decoração (§57)
+ *   --z-neutral-*  texto, contornos, superfícies neutras
+ *   --z-state-*    semântica de estado (ok / info / warn / danger)
+ * As variáveis `--z-surface`, `--z-text`, … são **papéis** que mudam com o tema. O código
+ * de aplicação usa sempre os papéis; as escalas servem para os definir.
+ */
+
+:root {
+  /* ---- Verde-petróleo (PETROL) — cor primária, `#178186` ------------------ */
+  --z-petrol-50: #eaf6f5;
+  --z-petrol-100: #cdeae8;
+  --z-petrol-200: #9ed6d3;
+  --z-petrol-300: #66bcba;
+  --z-petrol-400: #3a9d9e;
+  --z-petrol-500: #178186;
+  --z-petrol-600: #126a70;
+  --z-petrol-700: #0e545a;
+  --z-petrol-800: #0b4046;
+  --z-petrol-900: #082e33;
+
+  /* ---- Âmbar (AMBER) — acento reservado ----------------------------------- */
+  --z-amber-50: #fdf7e7;
+  --z-amber-100: #fbecc2;
+  --z-amber-200: #f7db8a;
+  --z-amber-300: #f2c74f;
+  --z-amber-400: #eeb424;
+  --z-amber-500: #d99b0b;
+  --z-amber-600: #b47c07;
+  --z-amber-700: #8c5f08;
+  --z-amber-800: #6b480a;
+  --z-amber-900: #4d340a;
+
+  /* ---- Neutros (NEUTRAL) -------------------------------------------------- */
+  --z-neutral-50: #f7faf9;
+  --z-neutral-100: #eef3f2;
+  --z-neutral-200: #dfe7e6;
+  --z-neutral-300: #c6d1d0;
+  --z-neutral-400: #9aa8a7;
+  --z-neutral-500: #6f7d7c;
+  --z-neutral-600: #55605f;
+  --z-neutral-700: #3f4847;
+  --z-neutral-800: #2a3231;
+  --z-neutral-900: #182020;
+
+  /* ---- Estado (STATE) ----------------------------------------------------- */
+  --z-state-ok: #1f8a5b;
+  --z-state-info: #178186;
+  --z-state-warn: #d99b0b;
+  --z-state-danger: #c2410c;
+
+  /* ======================================================================= */
+  /* Papéis — tema claro (omissão)                                          */
+  /* ======================================================================= */
+
+  --z-bg: var(--z-neutral-50);
+  --z-bg-elevated: #ffffff;
+  --z-bg-sunken: var(--z-neutral-100);
+  /* Superfície calma em verde-petróleo: o cabeçalho do dashboard e os blocos de estado. */
+  --z-bg-soft: var(--z-petrol-50);
+  --z-bg-inverse: var(--z-petrol-700);
+
+  --z-ink: var(--z-neutral-900);
+  --z-text: var(--z-neutral-800);
+  --z-text-muted: var(--z-neutral-500);
+  /* Contraste mínimo de 4,5:1 sobre `--z-bg-elevated`. */
+  --z-text-subtle: var(--z-neutral-600);
+  --z-text-on-inverse: #ffffff;
+  --z-text-on-inverse-muted: rgba(255, 255, 255, 0.78);
+
+  --z-border: var(--z-neutral-200);
+  --z-border-strong: var(--z-neutral-300);
+  --z-border-focus: var(--z-petrol-500);
+
+  --z-accent: var(--z-petrol-500);
+  --z-accent-hover: var(--z-petrol-600);
+  --z-accent-active: var(--z-petrol-700);
+  --z-accent-soft: var(--z-petrol-100);
+  --z-accent-contrast: #ffffff;
+
+  /* Âmbar com significado: só em botões de destaque, avisos e marcadores de alerta. */
+  --z-highlight: var(--z-amber-500);
+  --z-highlight-strong: var(--z-amber-600);
+  --z-highlight-soft: var(--z-amber-100);
+  --z-highlight-ink: var(--z-amber-900);
+
+  --z-ok: var(--z-state-ok);
+  --z-ok-soft: #e5f4ec;
+  --z-warn: var(--z-state-warn);
+  --z-warn-soft: var(--z-amber-100);
+  --z-danger: var(--z-state-danger);
+  --z-danger-soft: #fbeae3;
+  --z-info-soft: var(--z-petrol-50);
+
+  --z-shadow-1: 0 1px 2px rgba(24, 32, 32, 0.06), 0 1px 1px rgba(24, 32, 32, 0.04);
+  --z-shadow-2: 0 4px 12px rgba(24, 32, 32, 0.08), 0 1px 3px rgba(24, 32, 32, 0.05);
+  --z-shadow-3: 0 16px 40px rgba(24, 32, 32, 0.16), 0 2px 8px rgba(24, 32, 32, 0.08);
+  --z-overlay: rgba(8, 46, 51, 0.42);
+
+  /* Série de barras: uma progressão de petróleo, para que os gráficos pertençam à
+     interface em vez de introduzirem uma paleta nova (§57). O âmbar fica reservado ao
+     valor destacado — energia, no gráfico mensal. */
+  --z-chart-1: var(--z-petrol-600);
+  --z-chart-2: var(--z-petrol-400);
+  --z-chart-3: var(--z-petrol-200);
+  --z-chart-accent: var(--z-amber-400);
+  --z-chart-grid: var(--z-neutral-200);
+
+  /* ---- Tipografia --------------------------------------------------------- */
+  /* Grotesca humanista sem serifa. Sem `@font-face`: a pilha do sistema é o que garante
+     que a interface arranca sem rede — e uma webfont de marca custaria mais em desempenho
+     do que acrescenta em identidade (§57: tecnologia discreta, não ostensiva). */
+  --z-font: 'Inter', 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
+  --z-font-mono: 'JetBrains Mono', 'Cascadia Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --z-text-xs: 0.75rem; /* 12 px — legendas, metadados */
+  --z-text-sm: 0.8125rem; /* 13 px — texto secundário denso */
+  --z-text-base: 0.9375rem; /* 15 px — corpo (15 px em telemóvel evita zoom automático) */
+  --z-text-md: 1rem;
+  --z-text-lg: 1.125rem;
+  --z-text-xl: 1.375rem;
+  --z-text-2xl: 1.75rem;
+  --z-text-3xl: 2.25rem;
+
+  --z-leading-tight: 1.2;
+  --z-leading-normal: 1.45;
+  --z-leading-relaxed: 1.6;
+
+  /* ---- Espaço — escala de 4 px. Só estes valores; nunca um `margin` inventado. */
+  --z-space-1: 0.25rem;
+  --z-space-2: 0.5rem;
+  --z-space-3: 0.75rem;
+  --z-space-4: 1rem;
+  --z-space-5: 1.25rem;
+  --z-space-6: 1.5rem;
+  --z-space-8: 2rem;
+  --z-space-10: 2.5rem;
+  --z-space-12: 3rem;
+
+  --z-radius-sm: 6px;
+  --z-radius: 10px;
+  --z-radius-lg: 14px;
+  --z-radius-xl: 20px;
+  --z-radius-pill: 999px;
+
+  /* Alvo mínimo de toque. Um controlo abaixo disto é um defeito de acessibilidade, não
+     uma escolha de densidade (§35, §53). */
+  --z-touch: 44px;
+  --z-control-height: 44px;
+
+  /* Camadas: a ordem importa. Cabeçalho < barra de separadores < folha modal < aviso. */
+  --z-z-sticky: 10;
+  --z-z-tabbar: 20;
+  --z-z-sheet: 40;
+  --z-z-toast: 60;
+
+  --z-sidebar-width: 248px;
+  --z-content-max: 1100px;
+  --z-tabbar-height: calc(56px + env(safe-area-inset-bottom, 0px));
+
+  color-scheme: light;
+}
+
+/*
+ * Tema escuro.
+ *
+ * Escolhido por `prefers-color-scheme`, não por um botão: o Zemlo não quer ser mais uma
+ * aplicação com um interruptor de tema por configurar. Quem tem o sistema em escuro
+ * recebe o Zemlo em escuro; quem tem claro, em claro. A exceção é o utilizador que
+ * *força* um tema na sua máquina — e esse já tem o sistema a responder por ele.
+ *
+ * No escuro, o petróleo sobe de luminosidade (300/400 em vez de 500/600): o tom de marca
+ * sobre fundo quase preto tem contraste insuficiente para texto.
+ */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --z-bg: var(--z-neutral-900);
+    --z-bg-elevated: #1f2727;
+    --z-bg-sunken: #131a1a;
+    --z-bg-soft: #10333a;
+    --z-bg-inverse: var(--z-petrol-800);
+
+    --z-ink: #f2f6f5;
+    --z-text: #dde5e4;
+    --z-text-muted: #9aa8a7;
+    --z-text-subtle: #b6c3c2;
+    --z-text-on-inverse: #ffffff;
+    --z-text-on-inverse-muted: rgba(255, 255, 255, 0.75);
+
+    --z-border: #333e3d;
+    --z-border-strong: #47534f;
+    --z-border-focus: var(--z-petrol-300);
+
+    --z-accent: var(--z-petrol-400);
+    --z-accent-hover: var(--z-petrol-300);
+    --z-accent-active: var(--z-petrol-200);
+    --z-accent-soft: #123a40;
+    /* Sobre petróleo-400, texto escuro: branco sobre um verde claro perde contraste. */
+    --z-accent-contrast: #06232a;
+
+    --z-highlight: var(--z-amber-400);
+    --z-highlight-strong: var(--z-amber-300);
+    --z-highlight-soft: #40320c;
+    --z-highlight-ink: var(--z-amber-100);
+
+    --z-ok: #4bbd8a;
+    --z-ok-soft: #11352a;
+    --z-warn: var(--z-amber-400);
+    --z-warn-soft: #40320c;
+    --z-danger: #ef8a63;
+    --z-danger-soft: #3c1f14;
+    --z-info-soft: #10333a;
+
+    --z-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --z-shadow-2: 0 4px 12px rgba(0, 0, 0, 0.45);
+    --z-shadow-3: 0 16px 40px rgba(0, 0, 0, 0.6);
+    --z-overlay: rgba(0, 0, 0, 0.6);
+
+    --z-chart-1: var(--z-petrol-300);
+    --z-chart-2: var(--z-petrol-500);
+    --z-chart-3: var(--z-petrol-700);
+    --z-chart-grid: #333e3d;
+
+    color-scheme: dark;
+  }
+}
+
+/*
+ * O tracejado do símbolo é branco por omissão (assente sobre a placa em petróleo). Fora
+ * da placa — variante `mono` — tem de acompanhar a cor da tinta, pelo que herda o papel
+ * de texto em vez de um valor fixo.
+ */
+.z-logo[data-finish='mono'] {
+  --z-logo-plate: var(--z-ink);
+}
+
+.z-logo[data-finish='inverse'] {
+  --z-logo-plate: var(--z-bg-inverse);
+}
+
+.z-logo[data-finish='amber'] {
+  --z-logo-plate: var(--z-bg-elevated);
+}

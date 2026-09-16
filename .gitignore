@@ -1,0 +1,53 @@
+# Dependências
+node_modules/
+
+# Artefactos de build
+dist/
+build/
+*.tsbuildinfo
+
+# Bases de dados locais
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+apps/api/prisma/sqlite/*.db*
+
+# Ambiente (nunca versionar segredos)
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Ficheiros temporários e de depuração.
+#
+# A entrada `.tmp-*` não é cosmética: durante o desenvolvimento criou-se um ficheiro
+# `.tmp-token.txt` na raiz com um token de sessão do utilizador de demonstração, gerado
+# para inspecionar respostas da API. É exatamente o tipo de ficheiro que acaba num commit
+# por distração — e um token no histórico do Git é um segredo comprometido, mesmo depois
+# de o ficheiro ser apagado.
+.tmp-*
+*.tmp
+*~
+
+# Scripts de depuração pontuais (prefixo `_`, por convenção do projeto)
+**/scripts/_*
+
+# Logs
+*.log
+npm-debug.log*
+logs/
+
+# Sistema
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editores
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Testes
+coverage/
+.vitest/

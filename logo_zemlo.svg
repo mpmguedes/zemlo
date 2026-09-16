@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2048" height="1137" viewBox="0 0 2048 1137" role="img" aria-labelledby="title desc">
+  <title id="title">Logótipo Zemlo</title>
+  <desc id="desc">Ícone verde-azulado com cantos arredondados, feixes brancos ascendentes e a palavra Zemlo.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ddf1e8"/>
+      <stop offset="1" stop-color="#d9efe7"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Fundo claro da imagem original -->
+  <rect width="2048" height="1137" fill="url(#background)"/>
+
+  <!-- Painel principal; a parte inferior continua além do enquadramento original -->
+  <rect x="474" y="4" width="1154" height="1220" rx="184" fill="#178186"/>
+
+  <!-- Feixe branco esquerdo -->
+  <path fill="#fdfdfd" d="M 553,908 L 1130,343 L 1410,169 L 790,942 Z"/>
+
+  <!-- Feixe branco direito -->
+  <path fill="#fdfdfd" d="M 927,963 L 1410,169 L 1479,168 L 1220,1008 Z"/>
+
+  <!-- Recorte central verde-azulado entre os dois feixes -->
+  <path fill="#178186" d="M 790,942 L 1410,169 L 1357,171 L 927,963 Z"/>
+
+  <!-- Faixa superior branca com lettering -->
+  <path fill="#fdfdfd" d="M 806,263 L 1401,168 L 1270,354 L 806,355 Z"/>
+  <text x="856" y="337" fill="#178186" font-family="Arial, Helvetica, sans-serif" font-size="85" font-weight="700" letter-spacing="14" transform="rotate(-9 856 337)">Zemlo</text>
+</svg>

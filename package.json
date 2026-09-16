@@ -1,0 +1,48 @@
+{
+  "name": "zemlo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Zemlo — O teu veículo, sem ruído. Plataforma pessoal de informação, histórico, manutenção, custos e integrações para veículos.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=22.11.0"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build": "npm run build --workspace @zemlo/shared && npm run build --workspace @zemlo/api && npm run build --workspace @zemlo/web",
+    "test": "npm run test --workspaces --if-present",
+    "db:generate": "npm run db:generate --workspace @zemlo/api",
+    "db:push": "npm run db:push --workspace @zemlo/api",
+    "db:migrate": "npm run db:migrate --workspace @zemlo/api",
+    "db:seed": "npm run db:seed --workspace @zemlo/api",
+    "db:reset": "npm run db:reset --workspace @zemlo/api",
+    "db:sync-schema": "npm run db:sync-schema --workspace @zemlo/api",
+    "db:check-schema": "npm run db:check-schema --workspace @zemlo/api",
+    "dev:api": "npm run dev --workspace @zemlo/api",
+    "dev:web": "npm run dev --workspace @zemlo/web",
+    "start:api": "npm run start --workspace @zemlo/api",
+    "verify": "npm run verify --workspace @zemlo/api",
+    "verify:config": "npm run verify:config --workspace @zemlo/api",
+    "verify:regressions": "npm run verify:regressions --workspace @zemlo/api",
+    "verify:integration": "npm run verify:integration --workspace @zemlo/api",
+    "verify:all": "npm run verify:config && npm run verify && npm run verify:regressions",
+    "db:cleanup": "npm run db:cleanup --workspace @zemlo/api",
+    "db:integrity": "npm run db:integrity --workspace @zemlo/api",
+    "db:accounts": "npm run db:accounts --workspace @zemlo/api"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.5",
+    "typescript": "^5.6.3"
+  },
+  "allowScripts": {
+    "prisma@6.19.3": true,
+    "@prisma/engines@6.19.3": true,
+    "esbuild@0.28.2": true,
+    "esbuild@0.21.5": true
+  }
+}

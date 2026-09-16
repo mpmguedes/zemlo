@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" role="img" aria-label="Zemlo">
+  <!--
+    Favicon do Zemlo — variante `solid` do símbolo Z-estrada (docs/BRAND.md §3).
+
+    Construído na malha de 100 × 100 com 8 unidades de margem de segurança. O fundo é um
+    quadrado arredondado em verde-petróleo `#178186`, a cor oficial do logótipo: a 16 px,
+    num separador de browser sobre fundo claro ou escuro, um símbolo sem fundo desaparece
+    — e um favicon que não se distingue não cumpre a sua única função.
+
+    A diagonal é um polígono de espessura variável (12 no topo, 22 na base), e não uma
+    faixa inclinada de espessura constante (§2). É essa variação que faz a forma ler-se
+    como estrada em perspetiva em vez de como um "Z" tipográfico — e é por isso que a
+    forma sobrevive à redução para 16 px.
+  -->
+  <rect width="100" height="100" rx="22" fill="#178186" />
+  <g fill="#ffffff">
+    <rect x="8" y="8" width="84" height="14" rx="4" />
+    <polygon points="20,22 32,22 84,86 62,86" />
+    <rect x="8" y="78" width="84" height="14" rx="4" />
+  </g>
+</svg>

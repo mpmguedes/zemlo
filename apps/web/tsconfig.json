@@ -1,0 +1,40 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "types": ["vite/client"],
+
+    "strict": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "forceConsistentCasingInFileNames": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+
+    /*
+     * A web não herda `tsconfig.base.json`, de propósito.
+     *
+     * A base está afinada para código Node (`module: NodeNext`, lib só ES2023, sem DOM) e
+     * para bibliotecas compiladas (`declaration: true`). Um `tsc -p apps/web/tsconfig.json`
+     * que estendesse a base precisaria de sobrepor quase todas essas opções — e cada
+     * sobreposição esconderia a intenção. Declarar as opções de frente, para o browser,
+     * é mais honesto do que herdar e negar.
+     */
+    "paths": {
+      "@zemlo/shared": ["../../packages/shared/dist/index.d.ts"]
+    }
+  },
+  "include": ["src", "vite.config.ts", "vite-env.d.ts"]
+}

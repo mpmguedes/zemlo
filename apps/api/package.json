@@ -1,0 +1,67 @@
+{
+  "name": "@zemlo/api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "API REST do Zemlo — backend API-first para web, mobile, Home Assistant e integrações.",
+  "type": "module",
+  "main": "./dist/server.js",
+  "engines": {
+    "node": ">=22.11.0"
+  },
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/server.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:sync-schema": "node scripts/sync-sqlite-schema.mjs",
+    "db:check-schema": "node scripts/sync-sqlite-schema.mjs --check",
+    "db:generate": "npm run db:sync-schema && prisma generate --schema prisma/schema.prisma && prisma generate --schema prisma/sqlite/schema.sqlite.prisma",
+    "db:push": "prisma db push --schema prisma/sqlite/schema.sqlite.prisma",
+    "db:migrate": "prisma migrate dev --schema prisma/sqlite/schema.sqlite.prisma",
+    "db:deploy": "prisma migrate deploy --schema prisma/sqlite/schema.sqlite.prisma",
+    "db:deploy:pg": "prisma migrate deploy --schema prisma/schema.prisma",
+    "db:migrate:sqlite": "prisma migrate deploy --schema prisma/sqlite/schema.sqlite.prisma",
+    "db:migrate:pg": "prisma migrate deploy --schema prisma/schema.prisma",
+    "db:seed": "tsx prisma/seed.ts",
+    "db:reset": "rimraf prisma/sqlite/dev.db && npm run db:push",
+    "verify": "tsx scripts/verify.ts",
+    "verify:config": "tsx scripts/verify-config.ts",
+    "verify:regressions": "tsx scripts/verify-regressions.ts",
+    "verify:integration": "node scripts/verify-integration.mjs",
+    "db:smoke": "node scripts/smoke-db.mjs",
+    "db:cleanup": "node scripts/cleanup-test-accounts.mjs",
+    "db:integrity": "node scripts/check-integrity.mjs",
+    "db:accounts": "node scripts/list-accounts.mjs",
+    "db:repair": "node scripts/repair-dangling-expense-links.mjs"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.1.0",
+    "@zemlo/shared": "*",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "express-rate-limit": "^7.4.1",
+    "helmet": "^8.0.0",
+    "jose": "^5.9.6",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.7.5",
+    "@types/supertest": "^6.0.2",
+    "prisma": "^6.1.0",
+    "rimraf": "^6.0.1",
+    "supertest": "^7.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}
