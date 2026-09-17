@@ -107,6 +107,20 @@ export interface DedupeKey {
    * valor para comparar", nunca "vale zero".
    */
   readonly numeric?: Readonly<Record<string, number | null>>;
+  /**
+   * As partes do valor canónico que **não** são campos numéricos com tolerância — data,
+   * tipo, categoria, referência do veículo.
+   *
+   * Existe para a comparação por tolerância poder verificar as duas coisas ao mesmo
+   * tempo: os campos numéricos dentro da sua tolerância **e** as restantes partes
+   * exatamente iguais. Sem esta separação, uma chave como `date+litres+odometer` com
+   * litros e quilometragem iguais coincidiria em **datas diferentes** — a data seria a
+   * única parte a diferir, e seria a única que ninguém verificava.
+   *
+   * É a mesma junção por `|` de `value`, mas só com as partes estáveis. `undefined` numa
+   * chave simples, em que a única parte é a estável.
+   */
+  readonly stable?: string;
 }
 
 /** Constrói uma chave a partir de partes, omitindo-a quando falta qualquer parte. */
@@ -115,6 +129,7 @@ function compose(
   level: MatchLevel,
   fields: readonly string[],
   parts: ReadonlyArray<string | number | null | undefined>,
+  stableParts: ReadonlyArray<string | number | null | undefined> = parts,
 ): DedupeKey {
   // Uma chave composta exige **todas** as partes. Sem esta regra, dois registos sem
   // quilometragem coincidiriam numa chave `data+litros+km` com a km vazia, e o
@@ -122,7 +137,13 @@ function compose(
   if (parts.some((part) => part === null || part === undefined)) {
     return { kind, level, value: null, fields };
   }
-  return { kind, level, value: parts.map((part) => String(part)).join('|'), fields };
+  return {
+    kind,
+    level,
+    value: parts.map((part) => String(part)).join('|'),
+    fields,
+    stable: stableParts.map((part) => String(part ?? '')).join('|'),
+  };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -215,11 +236,13 @@ export function expenseKeys(input: ExpenseKeyInput): DedupeKey[] {
   const amount = normalizeCentsForCompare(input.amountCents);
   const vehicle = input.vehicleLocalId ?? null;
 
-  const base = compose('date+amount+vehicle', 'probable', ['date', 'amountCents', 'vehicleLocalId'], [
-    vehicle,
-    date,
-    amount,
-  ]);
+  const base = compose(
+    'date+amount+vehicle',
+    'probable',
+    ['date', 'amountCents', 'vehicleLocalId'],
+    [vehicle, date, amount],
+    [vehicle, date],
+  );
   if (base.value !== null) keys.push(base);
 
   // Sobe a certo com categoria, fornecedor e descrição não vazios. `hasUsableText`
@@ -275,22 +298,36 @@ export function fuelKeys(input: FuelKeyInput): DedupeKey[] {
   const amount = normalizeCentsForCompare(input.amountCents);
   const vehicle = input.vehicleLocalId ?? null;
 
-  const strong = compose('date+litres+odometer', 'exact', ['date', 'litres', 'odometerKm'], [
-    vehicle,
-    date,
-    litres,
-    odometer,
-  ]);
+  const strong = compose(
+    'date+litres+odometer',
+    'exact',
+    ['date', 'litres', 'odometerKm'],
+    [vehicle, date, litres, odometer],
+    // A data e o veículo não toleram nada: só a litragem e a quilometragem têm tolerância.
+    [vehicle, date],
+  );
   if (strong.value !== null) {
     keys.push({ ...strong, numeric: { litres, odometerKm: odometer, amountCents: amount } });
   }
 
-  const byLitres = compose('date+litres', 'probable', ['date', 'litres'], [vehicle, date, litres]);
+  const byLitres = compose(
+    'date+litres',
+    'probable',
+    ['date', 'litres'],
+    [vehicle, date, litres],
+    [vehicle, date],
+  );
   if (byLitres.value !== null) {
     keys.push({ ...byLitres, numeric: { litres, odometerKm: odometer, amountCents: amount } });
   }
 
-  const byAmount = compose('date+amount', 'probable', ['date', 'amountCents'], [vehicle, date, amount]);
+  const byAmount = compose(
+    'date+amount',
+    'probable',
+    ['date', 'amountCents'],
+    [vehicle, date, amount],
+    [vehicle, date],
+  );
   if (byAmount.value !== null) keys.push({ ...byAmount, numeric: { litres, odometerKm: odometer, amountCents: amount } });
 
   return keys;
@@ -321,17 +358,24 @@ export function chargingKeys(input: ChargingKeyInput): DedupeKey[] {
   const odometer = normalizeOdometerForCompare(input.odometerKm);
   const vehicle = input.vehicleLocalId ?? null;
 
-  const strong = compose('date+energy+odometer', 'exact', ['date', 'energyKwh', 'odometerKm'], [
-    vehicle,
-    date,
-    energy,
-    odometer,
-  ]);
+  const strong = compose(
+    'date+energy+odometer',
+    'exact',
+    ['date', 'energyKwh', 'odometerKm'],
+    [vehicle, date, energy, odometer],
+    [vehicle, date],
+  );
   if (strong.value !== null) {
     keys.push({ ...strong, numeric: { energyKwh: energy, odometerKm: odometer } });
   }
 
-  const weak = compose('date+energy', 'probable', ['date', 'energyKwh'], [vehicle, date, energy]);
+  const weak = compose(
+    'date+energy',
+    'probable',
+    ['date', 'energyKwh'],
+    [vehicle, date, energy],
+    [vehicle, date],
+  );
   if (weak.value !== null) keys.push({ ...weak, numeric: { energyKwh: energy, odometerKm: odometer } });
 
   return keys;
@@ -368,7 +412,13 @@ export function datedTypeKeys(input: DatedTypeKeyInput): DedupeKey[] {
   const odometer = normalizeOdometerForCompare(input.odometerKm);
   const vehicle = input.vehicleLocalId ?? null;
 
-  const weak = compose('date+type', 'probable', ['date', 'type'], [vehicle, date, type]);
+  const weak = compose(
+    'date+type',
+    'probable',
+    ['date', 'type'],
+    [vehicle, date, type],
+    [vehicle, date, type],
+  );
   if (weak.value !== null) keys.push(weak);
 
   const strong = compose(
@@ -376,6 +426,9 @@ export function datedTypeKeys(input: DatedTypeKeyInput): DedupeKey[] {
     'exact',
     ['date', 'type', 'amountCents', 'odometerKm'],
     [vehicle, date, type, amount, odometer],
+    // O tipo não tolera diferença: uma manutenção e uma inspeção no mesmo dia não são o
+    // mesmo registo só porque o valor coincide.
+    [vehicle, date, type],
   );
   if (strong.value !== null) {
     keys.push({ ...strong, numeric: { amountCents: amount, odometerKm: odometer } });
@@ -403,19 +456,26 @@ export function taxKeys(input: TaxKeyInput): DedupeKey[] {
   const kind = normalizeTextForCompare(input.kind);
   const vehicle = input.vehicleLocalId ?? null;
 
-  const strong = compose('year+kind', 'exact', ['year', 'kind'], [vehicle, input.year, kind]);
+  const strong = compose(
+    'year+kind',
+    'exact',
+    ['year', 'kind'],
+    [vehicle, input.year, kind],
+    [vehicle, input.year, kind],
+  );
   if (strong.value !== null) keys.push(strong);
 
   // A data fica deliberadamente **fora** da chave: o mesmo imposto pago em datas
   // diferentes é a mesma obrigação, e incluí-la transformaria a mesma obrigação em dois
   // registos. Não é lida de todo, para não sugerir que participa na comparação.
   const amount = normalizeCentsForCompare(input.amountCents);
-  const weak = compose('year+kind+amount', 'probable', ['year', 'kind', 'amountCents'], [
-    vehicle,
-    input.year,
-    kind,
-    amount,
-  ]);
+  const weak = compose(
+    'year+kind+amount',
+    'probable',
+    ['year', 'kind', 'amountCents'],
+    [vehicle, input.year, kind, amount],
+    [vehicle, input.year, kind],
+  );
   if (weak.value !== null) keys.push({ ...weak, numeric: { amountCents: amount } });
 
   return keys;
@@ -446,6 +506,8 @@ export function odometerKeys(input: OdometerKeyInput): DedupeKey[] {
   const odometer = normalizeOdometerForCompare(input.odometerKm);
   const vehicle = input.vehicleLocalId ?? null;
 
+  // Sem `numeric`: a leitura de odómetro é o valor observado, e uma leitura com 4 km de
+  // diferença é outra leitura, não a mesma arredondada. A comparação é por igualdade.
   const key = compose('date+odometer', 'exact', ['recordedAt', 'odometerKm'], [
     vehicle,
     date,
@@ -562,6 +624,10 @@ export function reminderKeys(input: ReminderKeyInput): DedupeKey[] {
       value: [title, vehicle ?? '', odometer].join('|'),
       fields: ['title', 'vehicleLocalId', 'dueOdometerKm'],
       numeric: { dueOdometerKm: odometer },
+      // O título identifica o lembrete: um "Revisão" e um "Pneus" à mesma quilometragem
+      // são lembretes diferentes. Sem esta parte, a comparação por tolerância veria só a
+      // quilometragem e concluiria que são o mesmo.
+      stable: [title, vehicle ?? ''].join('|'),
     });
   }
 
