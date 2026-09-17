@@ -478,6 +478,88 @@ describe('plan — probable: NUNCA promovido a exact (§8.3, §8.6)', () => {
     expect(p.entries[0]?.matched).toEqual([]);
   });
 
+  it('CASO A — a mesma data com litros e quilometragem idênticos distingue-se por um mês de diferença', () => {
+    // Cenário exato do pedido de validação, e a formulação mais forte da regressão: os dois
+    // campos numéricos coincidem **literalmente** (não apenas dentro da tolerância), pelo
+    // que a **única** coisa a distinguir os registos é a data. Se a data não for
+    // verificada, esta é a coincidência mais silenciosa possível — valor exato, litros
+    // exatos, quilometragem exata, e um falso duplicado certo.
+    const records = [fuel('f1', { date: '2026-02-01', litres: 40, odometerKm: 100000, amountCents: 6000 })];
+    const state: ExistingAccountState = {
+      records: [existing('fuel', 'acc-f', { date: '2026-01-01', litres: 40, odometerKm: 100000, amountCents: 6000 }, { vehicleLocalId: 'v1' })],
+    };
+
+    const p = plan(records, state);
+    expect(p.entries[0]?.action).toBe('create');
+    expect(p.entries[0]?.matched).toEqual([]);
+    expect(p.entries[0]?.viaKey).toBeUndefined();
+  });
+
+  it('CASO A — a mesma data com litros e quilometragem idênticos distingue-se por um dia de diferença', () => {
+    // A variante mínima: a tolerância de data é zero, por isso até um dia separa registos.
+    const records = [fuel('f1', { date: '2026-02-01', litres: 40, odometerKm: 100000, amountCents: 6000 })];
+    const state: ExistingAccountState = {
+      records: [existing('fuel', 'acc-f', { date: '2026-01-31', litres: 40, odometerKm: 100000, amountCents: 6000 }, { vehicleLocalId: 'v1' })],
+    };
+
+    const p = plan(records, state);
+    expect(p.entries[0]?.action).toBe('create');
+  });
+
+  it('CASO A — a data também decide quando os números estão dentro da tolerância, não só quando são iguais', () => {
+    // A outra metade do caso: litros e quilometragem a cair dentro das tolerâncias, e a
+    // data a diferir. Antes da correção, a tolerância era satisfeita e a data ignorada, o
+    // que produzia um "provável" — e um provável tratado como certo apaga o registo.
+    const records = [fuel('f1', { date: '2026-02-01', litres: 40.02, odometerKm: 100004, amountCents: 6001 })];
+    const state: ExistingAccountState = {
+      records: [existing('fuel', 'acc-f', { date: '2026-01-01', litres: 40, odometerKm: 100000, amountCents: 6000 }, { vehicleLocalId: 'v1' })],
+    };
+
+    const p = plan(records, state);
+    expect(p.entries[0]?.action).toBe('create');
+  });
+
+  it('CASO A — a contraprova: com a mesma data, os mesmos números continuam a coincidir', () => {
+    // O teste acima só tem valor se a correção não tiver tornado o plano cego. Com a data
+    // igual, tudo o resto igual, a coincidência tem de continuar a existir.
+    const records = [fuel('f1', { date: '2026-02-01', litres: 40, odometerKm: 100000, amountCents: 6000 })];
+    const state: ExistingAccountState = {
+      records: [existing('fuel', 'acc-f', { date: '2026-02-01', litres: 40, odometerKm: 100000, amountCents: 6000 }, { vehicleLocalId: 'v1' })],
+    };
+
+    const p = plan(records, state);
+    expect(p.entries[0]?.action).toBe('exact');
+    expect(p.entries[0]?.viaKey?.kind).toBe('date+litres+odometer');
+  });
+
+  it('CASO A — a parte estável é transportada pela própria chave, não inferida', () => {
+    // O teste de unidade da correção: `stable` tem de existir na chave e conter as partes
+    // sem tolerância. Verificá-lo aqui, na fonte, é o que impede que uma futura alteração
+    // a `compose` remova a informação sem que nenhum teste dê por isso.
+    const [strong] = dedupeKeysFor(fuel('f1', { date: '2026-02-01', litres: 40, odometerKm: 100000, amountCents: 6000 })).filter(
+      (key) => key.kind === 'date+litres+odometer',
+    );
+
+    expect(strong).toBeDefined();
+    expect(strong?.stable).toBeDefined();
+    // A parte estável inclui o veículo e a data; exclui litros e quilometragem.
+    expect(strong?.stable).toContain('v1');
+    expect(strong?.stable).toContain('2026-02-01');
+    expect(strong?.stable).not.toContain('100000');
+  });
+
+  it('CASO A — duas chaves do mesmo tipo com datas diferentes têm partes estáveis diferentes', () => {
+    const keysA = dedupeKeysFor(fuel('f1', { date: '2026-01-01', litres: 40, odometerKm: 100000, amountCents: 6000 }));
+    const keysB = dedupeKeysFor(fuel('f2', { date: '2026-02-01', litres: 40, odometerKm: 100000, amountCents: 6000 }));
+
+    const strongA = keysA.find((key) => key.kind === 'date+litres+odometer');
+    const strongB = keysB.find((key) => key.kind === 'date+litres+odometer');
+
+    expect(strongA?.stable).not.toBe(strongB?.stable);
+    // E os valores canónicos também diferem — a diferença está visível nos dois sítios.
+    expect(strongA?.value).not.toBe(strongB?.value);
+  });
+
   it('um veículo diferente não coincide só porque a quilometragem é igual', () => {
     // Mesmo problema, noutro tipo: `date+litres+odometer` inclui a referência do veículo,
     // que também não é numérica. Sem a verificação da parte estável, dois carros
@@ -583,7 +665,7 @@ describe('plan — probable: NUNCA promovido a exact (§8.3, §8.6)', () => {
 });
 
 describe('plan — enriquecimento distingue valores iguais de valores diferentes', () => {
-  it('um campo preenchido nos dois lados com o mesmo valor não é conflito', () => {
+  it('CASO B — um campo preenchido nos dois lados com o mesmo valor não é conflito', () => {
     // Regressão. A versão anterior só conhecia os **nomes** dos campos preenchidos, e por
     // isso declarava conflito em qualquer campo preenchido dos dois lados — mesmo quando
     // os valores eram idênticos. O efeito era um aviso falso em cada importação de rotina,
@@ -600,7 +682,10 @@ describe('plan — enriquecimento distingue valores iguais de valores diferentes
     expect(p.entries[0]?.enrichableFields).toEqual([]);
   });
 
-  it('um conflito só é declarado quando os valores diferem', () => {
+  it('CASO B — quatro campos iguais e um diferente produzem um conflito, com o campo nomeado', () => {
+    // A granularidade importa: o relatório tem de dizer **qual** campo diverge, não apenas
+    // que "há um conflito". Um conflito sem campo nomeado obriga o utilizador a comparar
+    // registo a registo à mão.
     const records = [vehicle('v1', 'AA-00-AA', null, 'Renault', 'Mégane', 2018)];
     const state: ExistingAccountState = {
       records: [existing('vehicle', 'acc', { plate: 'AA-00-AA', vin: null, make: 'Renault', model: 'Clio', year: 2018 })],
@@ -609,9 +694,76 @@ describe('plan — enriquecimento distingue valores iguais de valores diferentes
     const p = plan(records, state);
     expect(p.entries[0]?.conflictingFields).toEqual(['model']);
     expect(p.entries[0]?.conflict).toBe('conflict');
+    // `plate`, `make` e `year` coincidem e não aparecem em lado nenhum — nem como conflito,
+    // nem como enriquecimento.
+    expect(p.entries[0]?.conflictingFields).not.toContain('plate');
+    expect(p.entries[0]?.conflictingFields).not.toContain('make');
+    expect(p.entries[0]?.conflictingFields).not.toContain('year');
+    expect(p.entries[0]?.enrichableFields).not.toContain('plate');
   });
 
-  it('sem os valores do destino, um campo preenchido nos dois lados não é declarado em conflito', () => {
+  it('CASO B — valores iguais continuam sem conflito num tipo diferente de veículo', () => {
+    // A regra não pode estar presa ao tipo de registo. Aqui aplica-se a um abastecimento,
+    // cujos campos são numéricos e de data em vez de texto.
+    const records = [fuel('f1', { date: '2026-02-01', litres: 40, odometerKm: 100000, amountCents: 6000 })];
+    const state: ExistingAccountState = {
+      records: [existing('fuel', 'acc-f', { date: '2026-02-01', litres: 40, odometerKm: 100000, amountCents: 6000 }, { vehicleLocalId: 'v1' })],
+    };
+
+    const p = plan(records, state);
+    expect(p.entries[0]?.conflictingFields).toEqual([]);
+    expect(p.entries[0]?.conflict).toBe('duplicate');
+  });
+
+  it('CASO B — num abastecimento, só o campo que difere é declarado em conflito', () => {
+    const records = [fuel('f1', { date: '2026-02-01', litres: 40, odometerKm: 100000, amountCents: 9999 })];
+    const state: ExistingAccountState = {
+      records: [existing('fuel', 'acc-f', { date: '2026-02-01', litres: 40, odometerKm: 100000, amountCents: 6000 }, { vehicleLocalId: 'v1' })],
+    };
+
+    const p = plan(records, state);
+    // `date`, `litres` e `odometerKm` coincidem; só `amountCents` diverge.
+    expect(p.entries[0]?.conflictingFields).toEqual(['amountCents']);
+  });
+
+  it('CASO B — `filledValues` é a única fonte de verdade, e um valor ausente no destino não é conflito', () => {
+    // Um campo que o destino **não** tem é enriquecível, não conflituoso. É a distinção que
+    // a decisão 8 assenta: preencher o vazio nunca destrói; sobrescrever pode.
+    const records = [vehicle('v1', 'AA-00-AA', 'VF1RJA00012345678', 'Renault', 'Clio', 2018)];
+    const state: ExistingAccountState = {
+      records: [existing('vehicle', 'acc', { plate: 'AA-00-AA', vin: null, make: 'Renault', model: 'Clio', year: 2018 })],
+    };
+
+    const p = plan(records, state);
+    expect(p.entries[0]?.enrichableFields).toContain('vin');
+    expect(p.entries[0]?.conflictingFields).toEqual([]);
+  });
+
+  it('CASO B — `filledValues` com valor nulo é tratado como campo vazio, não como valor igual a nulo', () => {
+    // `null` nunca é um valor com que se compare. Se `filledValues` trouxesse `vin: null`,
+    // a comparação com o VIN não nulo do bundle declararia conflito — mas `null` significa
+    // "não há valor", e a resposta certa é enriquecer.
+    const records = [vehicle('v1', 'AA-00-AA', 'VF1RJA00012345678', 'Renault', 'Clio', 2018)];
+    const state: ExistingAccountState = {
+      records: [
+        {
+          kind: 'vehicle',
+          id: 'acc',
+          keys: dedupeKeysFor(vehicle('acc', 'AA-00-AA', null, 'Renault', 'Clio', 2018)),
+          // `vin` está em `filledFields` por engano (ou por um leitor de conta descuidado) e
+          // o seu valor é `null`.
+          filledFields: ['plate', 'make', 'model', 'year', 'vin'],
+          filledValues: { plate: 'AA-00-AA', make: 'Renault', model: 'Clio', year: 2018, vin: null },
+        },
+      ],
+    };
+
+    const p = plan(records, state);
+    expect(p.entries[0]?.conflictingFields).toEqual([]);
+    expect(p.entries[0]?.enrichableFields).toContain('vin');
+  });
+
+  it('CASO B — sem os valores do destino, um campo preenchido nos dois lados não é declarado em conflito', () => {
     // Sem `filledValues` não há forma honesta de afirmar que os valores diferem. A escolha
     // é entre um aviso possivelmente falso em cada registo e nenhum aviso; a segunda é a
     // segura, porque um conflito é uma **pergunta** e um enriquecimento nunca sobrescreve.

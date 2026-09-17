@@ -601,16 +601,27 @@ function enrichment(
     // A ausência não enriquece: um campo que o bundle não traz não preenche nada.
     if (value === null || value === undefined || value === '') continue;
 
-    if (!filled.has(field)) {
+    // Sem os valores do destino não há forma honesta de afirmar que um campo preenchido dos
+    // dois lados difere. A escolha é entre um aviso possivelmente falso em cada registo e
+    // nenhum aviso — e a segunda é a segura, porque um conflito é uma pergunta e um
+    // enriquecimento nunca sobrescreve. O que `filledFields` diz continua a valer.
+    if (known === undefined) {
+      if (!filled.has(field)) enrichable.push(field);
+      continue;
+    }
+
+    // Um campo que o destino não tem — ou que tem com valor vazio — está vazio, e
+    // preenchê-lo é enriquecimento. Tratar um `null` em `filledValues` como um valor seria
+    // declarar conflito contra um campo que afinal não está preenchido.
+    const target = known[field];
+    const targetIsEmpty = target === null || target === undefined || target === '';
+
+    if (!filled.has(field) || targetIsEmpty) {
       enrichable.push(field);
       continue;
     }
 
-    // Preenchido nos dois lados. Sem os valores do destino não há forma honesta de dizer
-    // que diferem, e por isso não se declara conflito.
-    if (known === undefined) continue;
-
-    if (known[field] !== value) conflicting.push(field);
+    if (target !== value) conflicting.push(field);
   }
 
   return { enrichable, conflicting };
