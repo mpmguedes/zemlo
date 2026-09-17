@@ -155,7 +155,7 @@ async function main(): Promise<void> {
    * por uma migração) não pode inutilizar a conta. Verificamos isso contra a base de dados
    * diretamente, porque a API já não permite gravar um valor inválido.
    */
-  const { PrismaClient } = await import('@prisma/client');
+  const { PrismaClient } = await import('@zemlo/prisma-sqlite');
   const prisma = new PrismaClient();
   const me = await request('GET', '/me', { token });
   await prisma.user.update({ where: { id: me.body?.id }, data: { timeZone: 'Fuso/Que/Nao/Existe' } });

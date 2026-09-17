@@ -298,7 +298,16 @@ export function describeConfig(): string[] {
     `origens CORS: ${config.cors.allowAllInDevelopment ? 'todas (desenvolvimento)' : config.cors.origins.join(', ')}`,
     `segredos cifrados: ${config.crypto.secretsEnabled ? 'ativos (2FA disponível)' : 'desativados (define ENCRYPTION_KEY)'}`,
     `login Google: ${config.federatedLogin.google ? 'ativo' : 'inativo (sem credenciais)'}`,
-    `email: ${config.email.enabled ? 'ativo' : 'inativo (sem SMTP)'}`,
+    /*
+     * Distingue "sem SMTP" de "SMTP configurado". A recuperação de password existe nos
+     * dois casos, mas sem SMTP o link é registado no log em vez de entregue — e quem
+     * opera a instalação tem de o saber sem ter de ler o código.
+     */
+    `email: ${
+      config.email.enabled
+        ? `SMTP configurado (${config.email.host}) — entrega real por ligar`
+        : 'entrega inativa (sem SMTP) — links de recuperação registados no log'
+    }`,
     `Home Assistant: ${config.homeAssistant.enabled ? 'ativo' : 'inativo (sem broker MQTT)'}`,
   ];
 }

@@ -51,6 +51,7 @@ import {
 import { jsonOrNull, readJsonArray, writeJson } from '../core/json.js';
 import { logger } from '../core/logger.js';
 import { audit } from './audit.js';
+import { sendEmail } from './email.js';
 import { mapUserProfile } from '../domain/payload.js';
 import { signAccessToken, verifyAccessToken } from './tokens.js';
 
@@ -67,7 +68,8 @@ export interface RequestMetadata {
 export interface AuthenticatedUser {
   id: string;
   email: string;
-  sessionId: string | null;
+  /** Sessão que autenticou o pedido. Nunca nulo: sem sessão válida não há pedido autenticado. */
+  sessionId: string;
   timeZone: string;
 }
 
@@ -456,6 +458,188 @@ export async function changePassword(
 }
 
 /* -------------------------------------------------------------------------- */
+/* Recuperação de password (§29, §30)                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Propósito gravado em `OneTimeToken.purpose` para os tokens de recuperação.
+ *
+ * É um valor fixo, e não texto livre: a tabela é genérica e vai servir também para
+ * verificação de email. Sem um propósito fixo, um token emitido para um fim poderia ser
+ * aceite noutro.
+ */
+const PASSWORD_RESET_PURPOSE = 'password-reset';
+
+/**
+ * Duração do link de recuperação, em minutos.
+ *
+ * Uma hora é o compromisso habitual: dá tempo a quem vai buscar o email noutro
+ * dispositivo, sem deixar um link válido a circular durante dias no histórico de uma
+ * caixa de correio.
+ */
+const PASSWORD_RESET_TTL_MINUTES = 60;
+
+/**
+ * Pede a recuperação de password.
+ *
+ * Responde sempre a mesma coisa, exista ou não a conta. É a única forma de não transformar
+ * este endpoint num oráculo de existência de contas — o mesmo cuidado que o `login` tem.
+ * Por isso a função não devolve se a conta existe: quem chama não pode, por descuido,
+ * deixar escapar essa informação na resposta.
+ *
+ * Quando a conta existe, invalida os pedidos anteriores antes de emitir um novo. Sem isto,
+ * cada pedido deixaria mais um link válido a circular; com vários pedidos, o utilizador
+ * (ou quem os tivesse intercetado) teria várias portas abertas em simultâneo.
+ */
+export async function requestPasswordReset(
+  email: string,
+  meta: RequestMetadata,
+): Promise<void> {
+  const user = await prisma.user.findUnique({
+    where: { email },
+    select: { id: true, email: true, deletedAt: true },
+  });
+
+  // Conta inexistente ou eliminada: nada a fazer. A resposta HTTP é idêntica à do caso
+  // em que a conta existe, e é por isso que nada é comunicado a quem chama.
+  if (!user || user.deletedAt !== null) {
+    logger.info('Pedido de recuperação para conta inexistente ou eliminada', { email });
+    return;
+  }
+
+  const token = generateToken(32);
+
+  await prisma.$transaction([
+    // Um pedido novo invalida os anteriores: só o link mais recente funciona.
+    prisma.oneTimeToken.updateMany({
+      where: { userId: user.id, purpose: PASSWORD_RESET_PURPOSE, usedAt: null },
+      data: { usedAt: new Date() },
+    }),
+    prisma.oneTimeToken.create({
+      data: {
+        userId: user.id,
+        purpose: PASSWORD_RESET_PURPOSE,
+        // Só o hash fica na base de dados. Uma cópia da tabela não permite usar os links.
+        tokenHash: hashToken(token),
+        expiresAt: new Date(Date.now() + PASSWORD_RESET_TTL_MINUTES * 60_000),
+      },
+    }),
+  ]);
+
+  const resetUrl = `${config.publicBaseUrl}/repor-password?token=${encodeURIComponent(token)}`;
+
+  await sendEmail({
+    to: user.email,
+    subject: 'Zemlo — reposição da tua password',
+    text: [
+      'Recebemos um pedido para repor a password da tua conta Zemlo.',
+      '',
+      `Abre este endereço para escolher uma nova password (válido ${PASSWORD_RESET_TTL_MINUTES} minutos):`,
+      resetUrl,
+      '',
+      'Se não foste tu, ignora este email: a tua password atual continua a funcionar.',
+    ].join('\n'),
+  });
+
+  await audit('user.password_reset_requested', {
+    userId: user.id,
+    entityType: 'user',
+    entityId: user.id,
+    ipAddress: meta.ipAddress ?? null,
+    userAgent: meta.userAgent ?? null,
+  });
+}
+
+/**
+ * Conclui a recuperação, definindo uma nova password.
+ *
+ * Recusa token inexistente, já usado, expirado, ou emitido para outro propósito. A
+ * validação usa o hash, e não o token em claro: o valor em claro só existe no link.
+ *
+ * Ao suceder, revoga **todas** as sessões da conta. É o ponto essencial do fluxo: quem
+ * repõe a password pode tê-lo feito justamente porque perdeu o controlo da conta, e
+ * deixar as sessões antigas ativas manteria o intruso dentro. É também o que torna a
+ * reposição uma medida de segurança, e não apenas uma comodidade.
+ */
+export async function resetPassword(
+  input: { token: string; newPassword: string },
+  meta: RequestMetadata,
+): Promise<{ revokedSessions: number }> {
+  const tokenHash = hashToken(input.token);
+
+  const record = await prisma.oneTimeToken.findUnique({
+    where: { tokenHash },
+    select: { id: true, userId: true, purpose: true, expiresAt: true, usedAt: true },
+  });
+
+  /*
+   * Mensagem única para todos os motivos de recusa. Distinguir "não existe" de "expirou"
+   * de "já foi usado" diria a quem tem um link antigo se ele chegou a ser válido — e a
+   * quem está a sondar, se um token existe.
+   */
+  const invalid = () =>
+    unauthorized('Este link de recuperação já não é válido. Pede um novo.');
+
+  if (!record || record.purpose !== PASSWORD_RESET_PURPOSE) throw invalid();
+  if (record.usedAt !== null) throw invalid();
+  if (record.expiresAt.getTime() <= Date.now()) throw invalid();
+
+  const user = await prisma.user.findUnique({
+    where: { id: record.userId },
+    select: { id: true, passwordHash: true, deletedAt: true },
+  });
+  if (!user || user.deletedAt !== null) throw invalid();
+
+  /*
+   * Marcar como usado e trocar a password na mesma transação, com uma condição no
+   * `usedAt`: duas tentativas simultâneas com o mesmo link não podem ambas ter sucesso.
+   * A verificação acima já leu `usedAt`, mas entre a leitura e a escrita cabe outra
+   * tentativa — e é exatamente essa corrida que torna um token de uso único reutilizável.
+   */
+  const { count, revoked } = await prisma.$transaction(async (tx) => {
+    const claimed = await tx.oneTimeToken.updateMany({
+      where: { id: record.id, usedAt: null },
+      data: { usedAt: new Date() },
+    });
+    if (claimed.count === 0) return { count: 0, revoked: 0 };
+
+    await tx.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash: await hashPassword(input.newPassword),
+        failedLoginCount: 0,
+        lockedUntil: null,
+      },
+    });
+
+    const sessions = await tx.session.updateMany({
+      where: { userId: user.id, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+
+    return { count: claimed.count, revoked: sessions.count };
+  });
+
+  if (count === 0) throw invalid();
+
+  await audit('user.password_reset_completed', {
+    userId: user.id,
+    entityType: 'user',
+    entityId: user.id,
+    metadata: { sessoesRevogadas: revoked },
+    ipAddress: meta.ipAddress ?? null,
+    userAgent: meta.userAgent ?? null,
+  });
+
+  logger.info('Password reposta por recuperação; sessões revogadas', {
+    userId: user.id,
+    sessions: revoked,
+  });
+
+  return { revokedSessions: revoked };
+}
+
+/* -------------------------------------------------------------------------- */
 /* Verificação em dois passos (§29)                                            */
 /* -------------------------------------------------------------------------- */
 
@@ -841,16 +1025,37 @@ export async function authenticateAccessToken(token: string): Promise<Authentica
   const payload = await verifyAccessToken(token);
   if (!payload) throw unauthorized('A tua sessão terminou. Inicia sessão novamente.');
 
-  // O token é válido, mas a sessão pode ter sido revogada entretanto (dispositivo
-  // perdido, mudança de password). Validar a sessão é o que torna a revogação eficaz.
-  if (payload.sid) {
-    const session = await prisma.session.findUnique({
-      where: { id: payload.sid },
-      select: { revokedAt: true, expiresAt: true, userId: true },
-    });
-    if (!session || session.revokedAt !== null || session.expiresAt.getTime() <= Date.now()) {
-      throw unauthorized('A tua sessão terminou. Inicia sessão novamente.');
-    }
+  /*
+   * A sessão é obrigatória e é validada **sempre**.
+   *
+   * Antes, esta verificação estava dentro de `if (payload.sid)`: um token assinado
+   * corretamente mas sem o `sid` era aceite apenas com base na assinatura. Como os
+   * restantes campos (`sub`, `email`) vinham do próprio token, quem conhecesse o
+   * `JWT_SECRET` podia forjar um token sem sessão e usá-lo para ler todos os dados da
+   * conta, alterar a password e revogar as sessões do dono — tomada de conta completa. O
+   * `docs/ARCHITECTURE.md` afirmava que a sessão era validada em cada pedido; não era.
+   *
+   * Um token sem `sid`, com um `sid` inexistente, com um `sid` revogado, expirado, ou
+   * pertencente a outra conta é agora rejeitado. Validar também a pertença (e não só a
+   * existência) da sessão é o que impede que um `sid` alheio, ou um `sid` reaproveitado
+   * noutro token, dê acesso à conta errada.
+   */
+  if (!payload.sid) {
+    throw unauthorized('A tua sessão terminou. Inicia sessão novamente.');
+  }
+
+  const session = await prisma.session.findUnique({
+    where: { id: payload.sid },
+    select: { id: true, revokedAt: true, expiresAt: true, userId: true },
+  });
+
+  if (
+    !session ||
+    session.revokedAt !== null ||
+    session.expiresAt.getTime() <= Date.now() ||
+    session.userId !== payload.sub
+  ) {
+    throw unauthorized('A tua sessão terminou. Inicia sessão novamente.');
   }
 
   const user = await prisma.user.findUnique({
@@ -859,7 +1064,7 @@ export async function authenticateAccessToken(token: string): Promise<Authentica
   });
   if (!user || user.deletedAt !== null) throw unauthorized('Esta conta já não está ativa.');
 
-  return { id: user.id, email: user.email, sessionId: payload.sid ?? null, timeZone: user.timeZone };
+  return { id: user.id, email: user.email, sessionId: session.id, timeZone: user.timeZone };
 }
 
 /** Descreve o dispositivo a partir do `User-Agent`, para o ecrã de sessões. */

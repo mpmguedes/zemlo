@@ -174,6 +174,28 @@ export const zChangePasswordRequest = z.object({
   revokeOtherSessions: z.boolean().optional().default(true),
 });
 
+/**
+ * Pedido de recuperação de password (§29).
+ *
+ * O corpo tem apenas o email. A resposta é sempre a mesma, exista ou não a conta — é o
+ * que impede usar este endpoint para descobrir que emails estão registados no Zemlo.
+ */
+export const zPasswordResetRequestRequest = z.object({
+  email: zEmail,
+});
+
+/**
+ * Conclusão da recuperação de password.
+ *
+ * O token viaja no link enviado por email. É validado como opaco: a API compara o hash e
+ * nunca interpreta o conteúdo, por isso não há formato a impor além de um comprimento
+ * plausível — recusar cedo valores absurdos evita trabalho de hash desnecessário.
+ */
+export const zPasswordResetConfirmRequest = z.object({
+  token: z.string().min(16).max(512),
+  newPassword: zPassword,
+});
+
 export const zTwoFactorSetupRequest = z.object({
   password: z.string().min(1).max(200),
 });
@@ -677,6 +699,8 @@ export const zDeleteAccountRequest = z.object({
 export type SignUpRequest = z.infer<typeof zSignUpRequest>;
 export type LoginRequest = z.infer<typeof zLoginRequest>;
 export type ChangePasswordRequest = z.infer<typeof zChangePasswordRequest>;
+export type PasswordResetRequestRequest = z.infer<typeof zPasswordResetRequestRequest>;
+export type PasswordResetConfirmRequest = z.infer<typeof zPasswordResetConfirmRequest>;
 export type TwoFactorSetupRequest = z.infer<typeof zTwoFactorSetupRequest>;
 export type TwoFactorConfirmRequest = z.infer<typeof zTwoFactorConfirmRequest>;
 export type TwoFactorDisableRequest = z.infer<typeof zTwoFactorDisableRequest>;

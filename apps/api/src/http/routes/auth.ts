@@ -16,6 +16,8 @@ import {
   zChangePasswordRequest,
   zDeleteAccountRequest,
   zLoginRequest,
+  zPasswordResetConfirmRequest,
+  zPasswordResetRequestRequest,
   zSignUpRequest,
   zTwoFactorConfirmRequest,
   zTwoFactorDisableRequest,
@@ -37,6 +39,8 @@ import {
   login,
   logout,
   refreshSession,
+  requestPasswordReset,
+  resetPassword,
   revokeAllSessions,
   revokeSession,
   signUp,
@@ -100,6 +104,53 @@ authRouter.post(
     const user = requireUser(request);
     await logout(user.sessionId, user.id);
     noContent(response);
+  }),
+);
+
+/* -------------------------------------------------------------------------- */
+/* Recuperação de password (§29)                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Pede o link de recuperação.
+ *
+ * Responde **202 com um corpo fixo**, tenha a conta existido ou não. É a razão de ser
+ * deste endpoint: qualquer resposta que variasse com a existência do email transformaria
+ * a recuperação de password no melhor oráculo de enumeração de contas da API — melhor do
+ * que o login, porque aqui não é preciso saber a password.
+ *
+ * Não é 200 porque nada foi criado do ponto de vista do cliente; e não é 204 porque uma
+ * resposta com corpo é mais fácil de consumir num cliente que mostre a mensagem.
+ */
+authRouter.post(
+  '/auth/password-reset',
+  authRateLimit(),
+  asyncHandler(async (request, response) => {
+    const body = parseBody(zPasswordResetRequestRequest, request);
+    await requestPasswordReset(body.email, {
+      ipAddress: request.meta.ipAddress,
+      userAgent: request.meta.userAgent,
+    });
+    response.status(202).json({
+      message: 'Se existir uma conta com este email, enviámos um link para repor a password.',
+    });
+  }),
+);
+
+/** Conclui a recuperação com o token recebido por email. */
+authRouter.post(
+  '/auth/password-reset/confirm',
+  authRateLimit(),
+  asyncHandler(async (request, response) => {
+    const body = parseBody(zPasswordResetConfirmRequest, request);
+    const result = await resetPassword(body, {
+      ipAddress: request.meta.ipAddress,
+      userAgent: request.meta.userAgent,
+    });
+    response.json({
+      message: 'Password alterada. Inicia sessão com a nova password.',
+      revokedSessions: result.revokedSessions,
+    });
   }),
 );
 

@@ -15,7 +15,7 @@
 import { Router } from 'express';
 import type { HealthResponse } from '@zemlo/shared';
 import { PLATFORM_VERSION } from '@zemlo/shared';
-import { checkDatabase, prisma } from '../../core/db.js';
+import { activeProvider, checkDatabase, prisma } from '../../core/db.js';
 import { config } from '../../core/config.js';
 import { asyncHandler, parseQuery, requireUser } from '../../http/handlers.js';
 import { requireAuth } from '../../http/middleware.js';
@@ -31,6 +31,16 @@ export const healthRouter = Router();
  * Devolve 503 quando a base de dados não responde: um balanceador ou o Cloudflare devem
  * retirar a instância de rotação. Responder 200 com `status: "degraded"` deixaria o
  * tráfego a chegar a um serviço que não consegue servir nada.
+ *
+ * O campo `database.provider` reporta o motor **efetivamente em uso** — o do cliente
+ * Prisma que foi carregado —, não a variável de ambiente `DATABASE_PROVIDER`. A diferença
+ * importa: enquanto o cliente era escolhido por um caminho partilhado, a aplicação podia
+ * estar a escrever em SQLite com `DATABASE_PROVIDER=postgresql`, e um `/health` que
+ * repetisse a variável confirmaria a configuração errada em vez de a denunciar. Reportar
+ * o cliente carregado faz deste campo uma verificação e não um eco.
+ *
+ * A incoerência entre ambos é impossível em runtime: `core/prisma-client.ts` recusa
+ * arrancar se não coincidirem, e recusa SQLite quando `NODE_ENV=production`.
  */
 healthRouter.get(
   '/health',
@@ -43,7 +53,7 @@ healthRouter.get(
       uptimeSeconds: Math.round((Date.now() - startedAt) / 1000),
       database: {
         reachable: database.reachable,
-        provider: config.database.provider,
+        provider: activeProvider,
         latencyMs: database.latencyMs,
       },
       time: new Date().toISOString(),

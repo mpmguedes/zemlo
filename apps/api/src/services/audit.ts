@@ -22,6 +22,8 @@ export type AuditAction =
   | 'user.logout'
   | 'user.logout_all'
   | 'user.password_changed'
+  | 'user.password_reset_requested'
+  | 'user.password_reset_completed'
   | 'user.profile_updated'
   | 'user.preferences_updated'
   | 'user.2fa_setup_started'

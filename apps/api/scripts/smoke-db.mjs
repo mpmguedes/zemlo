@@ -8,7 +8,7 @@
  * Uso: node scripts/smoke-db.mjs
  */
 
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '@zemlo/prisma-sqlite';
 
 const prisma = new PrismaClient();
 

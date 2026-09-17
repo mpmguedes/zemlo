@@ -16,7 +16,7 @@
  * Execução: `npm run db:seed`
  */
 
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '@zemlo/prisma-sqlite';
 import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();

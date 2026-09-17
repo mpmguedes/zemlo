@@ -8,12 +8,21 @@
 
 import { createServer } from 'node:http';
 import { config } from './core/config.js';
-import { checkDatabase, disconnectDatabase } from './core/db.js';
+import { activeProvider, checkDatabase, describeDatabase, disconnectDatabase } from './core/db.js';
 import { logger } from './core/logger.js';
 import { createApp, logStartup } from './app.js';
 
 async function main(): Promise<void> {
   logStartup();
+
+  /*
+   * O motor efetivo é registado explicitamente, e vem do cliente Prisma carregado — não
+   * da variável de ambiente. É esta linha que denuncia, nos logs, uma produção que
+   * arrancou com o cliente errado. `core/prisma-client.ts` já recusa esse caso antes de
+   * aqui chegar; o registo existe para que o operador veja qual o motor em uso sem ter de
+   * consultar o `/health`.
+   */
+  logger.info(`Motor de base de dados: ${activeProvider}`);
 
   // Verificar a base de dados **antes** de abrir a porta. Um servidor que aceita
   // pedidos e responde 500 a todos é pior do que um servidor que não arranca: o
@@ -21,7 +30,7 @@ async function main(): Promise<void> {
   const database = await checkDatabase();
   if (!database.reachable) {
     logger.error(
-      `Não foi possível ligar à base de dados (${config.database.provider}). Verifica DATABASE_URL e, para SQLite, corre \`npm run db:push\`.`,
+      `Não foi possível ligar à base de dados (${describeDatabase()}). Verifica DATABASE_URL e, para SQLite, corre \`npm run db:push\`.`,
     );
     process.exit(1);
   }

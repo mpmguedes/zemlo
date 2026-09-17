@@ -19,7 +19,7 @@
  *   node scripts/cleanup-test-accounts.mjs --dry-run # só mostra o que removeria
  */
 
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '@zemlo/prisma-sqlite';
 
 const prisma = new PrismaClient();
 const dryRun = process.argv.includes('--dry-run');
