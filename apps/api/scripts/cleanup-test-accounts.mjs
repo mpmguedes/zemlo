@@ -20,6 +20,10 @@
  */
 
 import { PrismaClient } from '@zemlo/prisma-sqlite';
+import { loadEnv } from './load-env.mjs';
+
+// O `.env` tem de ser carregado antes de instanciar o cliente: ver `load-env.mjs`.
+loadEnv();
 
 const prisma = new PrismaClient();
 const dryRun = process.argv.includes('--dry-run');

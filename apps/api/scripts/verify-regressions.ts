@@ -11,6 +11,15 @@
  */
 
 import { createHmac } from 'node:crypto';
+import { loadEnv } from './load-env.mjs';
+
+/*
+ * O `.env` tem de ser carregado antes de qualquer `PrismaClient`. Este script cria um
+ * diretamente (para gravar um fuso inválido e confirmar que a conta degrada em vez de
+ * rebentar), e corre fora do servidor — logo não passa por `core/config.ts`, que é quem
+ * carrega o ambiente no arranque da API.
+ */
+loadEnv();
 
 const ORIGIN = process.env.ZEMLO_API_ORIGIN ?? 'http://127.0.0.1:4000';
 const BASE = `${ORIGIN}/api/v1`;

@@ -26,6 +26,14 @@ import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PrismaClient } from '@zemlo/prisma-sqlite';
+import { loadEnv } from './load-env.mjs';
+
+/*
+ * O `.env` tem de ser carregado antes de instanciar o cliente: este script corre fora do
+ * servidor e não passa por `core/config.ts`, que é quem carrega o ambiente no arranque da
+ * API. Sem isto, `DATABASE_URL` não existe no processo e a construção do cliente falha.
+ */
+loadEnv();
 
 const ORIGIN = process.env.ZEMLO_API_ORIGIN ?? 'http://127.0.0.1:4000';
 const BASE = process.env.ZEMLO_API_URL ?? `${ORIGIN}/api/v1`;

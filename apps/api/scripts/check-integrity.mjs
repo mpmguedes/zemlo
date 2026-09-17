@@ -10,6 +10,14 @@
  */
 
 import { PrismaClient } from '@zemlo/prisma-sqlite';
+import { loadEnv } from './load-env.mjs';
+
+/*
+ * O `.env` tem de ser carregado antes de instanciar o cliente: este script corre fora do
+ * servidor e não passa por `core/config.ts`, que é quem carrega o ambiente no arranque da
+ * API. Sem isto, `DATABASE_URL` não existe no processo e a construção do cliente falha.
+ */
+loadEnv();
 
 const prisma = new PrismaClient();
 
