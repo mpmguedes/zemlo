@@ -65,6 +65,41 @@ O arranque **recusa** iniciar em produção com um `JWT_SECRET` em falta, demasi
 com o prefixo `dev-only-` dos ficheiros de desenvolvimento. Uma validação que não é
 executada é indistinguível de uma validação ausente — ver `docs/DECISIONS.md` A19.
 
+### 3.2.1. Cliente Prisma — gerado, com dois motores separados
+
+O cliente Prisma **não é versionado**: é gerado a partir dos schemas por
+`npm run db:generate`, que corre automaticamente no `postinstall` do `npm ci`. Não é
+preciso nenhum passo manual, e não é preciso conhecer nenhuma ordem.
+
+Os dois motores têm clientes **com saídas distintas**:
+
+| Motor | Schema | Cliente gerado | Pacote |
+| --- | --- | --- | --- |
+| PostgreSQL (produção) | `prisma/schema.prisma` | `prisma/generated/postgres` | `@zemlo/prisma-postgres` |
+| SQLite (desenvolvimento) | `prisma/sqlite/schema.sqlite.prisma` | `prisma/generated/sqlite` | `@zemlo/prisma-sqlite` |
+
+```bash
+npm run db:generate            # regenera o schema SQLite e os DOIS clientes
+npm run db:generate:pg         # só o cliente PostgreSQL
+npm run db:generate:sqlite     # só o schema e o cliente SQLite
+```
+
+**Porque é que isto importa.** Na primeira versão os dois schemas geravam para o **mesmo**
+caminho (`node_modules/.prisma/client`) e como `db:generate` corria o SQLite por último, o
+cliente SQLite substituía o de PostgreSQL — sempre e em silêncio. Uma instalação com
+`DATABASE_URL` a apontar para PostgreSQL arrancava, respondia 200, escrevia num ficheiro
+`dev.db` local, e o `/health` anunciava `postgresql`. Só se descobria pela ausência de
+dados. Com saídas distintas a colisão deixou de ser possível, e o arranque verifica três
+coisas, recusando iniciar se alguma falhar:
+
+1. o cliente importado é o do motor correto;
+2. o cliente presente em `prisma/generated/<motor>` foi compilado para esse motor
+   (lido do `schema.prisma` que acompanha cada cliente gerado — não é uma afirmação);
+3. `DATABASE_PROVIDER` coincide com o motor do cliente carregado.
+
+Adicionalmente, um cliente SQLite com `NODE_ENV=production` é recusado de forma
+incondicional.
+
 ### 3.3. Base de dados
 
 A migração inicial já existe no repositório (`prisma/migrations/0_init`), criada com
@@ -77,6 +112,10 @@ export DATABASE_PROVIDER=postgresql
 
 npm run db:deploy:pg     # prisma migrate deploy contra o schema canónico
 ```
+
+`DATABASE_PROVIDER` tem de estar definido **antes** de o processo arrancar: é esta variável
+que seleciona qual dos dois clientes gerados é instanciado. Definir apenas `DATABASE_URL`
+não chega, e o arranque recusa se os dois não coincidirem.
 
 `migrate deploy` aplica apenas as migrações registadas em `prisma/migrations`. **Nunca**
 correr `migrate dev` ou `db push` contra produção: o primeiro pode propor alterações
@@ -101,9 +140,52 @@ npm run build      # pacote partilhado → API → aplicação web
 npm run start:api  # a API serve também a aplicação web compilada
 ```
 
+`npm run build` corre `db:generate` antes de compilar a API (script `prebuild`), pelo que é
+impossível compilar contra um cliente Prisma desatualizado.
+
 Com `apps/web/dist` presente, a API serve os ficheiros estáticos e devolve o `index.html`
 para rotas que não sejam da API. O sistema inteiro é **um** serviço, um domínio e um
 certificado — sem CORS e sem uma segunda política de cabeçalhos.
+
+**Verificação depois do primeiro arranque.** O log de arranque regista o motor em uso:
+
+```
+INFO  Motor de base de dados: postgresql
+INFO  Base de dados a responder em 12 ms
+```
+
+E o `/health` reporta o motor do cliente **realmente carregado** — não o valor de
+`DATABASE_PROVIDER`, que é precisamente a parte que pode estar errada:
+
+```bash
+curl -s http://127.0.0.1:4000/health | grep -o '"provider":"[a-z]*"'
+# tem de dizer: "provider":"postgresql"
+```
+
+Se a instalação estiver a escrever em SQLite, o processo não arranca — é preferível a servir
+dados de um ficheiro que ninguém vai salvaguardar. Confirmar também que
+`apps/api/prisma/sqlite/dev.db` **não** existe na máquina de produção: se existir depois de
+criar dados, alguma coisa está errada.
+
+### 3.4.1. Recuperação de password e entrega de email
+
+A recuperação de password está implementada (`POST /auth/password-reset` e
+`POST /auth/password-reset/confirm`), com tokens de uso único, expiração de 60 minutos e
+hash SHA-256 em repouso. Ao concluir, **todas** as sessões da conta são revogadas.
+
+A **entrega** do link, no entanto, depende de um fornecedor de email que o MVP não traz.
+Sem `SMTP_HOST` configurado, o link é escrito no log da aplicação:
+
+```
+INFO  Email não enviado — entrega por configurar; conteúdo registado
+      {"to":"…","subject":"Zemlo — reposição da tua password","body":"…/repor-password?token=…"}
+```
+
+Isso serve para desenvolvimento e testes de ponta a ponta, e **não** serve para
+utilizadores reais: quem se esquecer da password não recebe nada. Antes de abrir a
+plataforma a utilizadores, é obrigatório ligar um transporte real — implementar
+`EmailSender` em `apps/api/src/services/email.ts` e registá-lo com `setEmailSender`. Nada
+do fluxo de tokens precisa de mudar.
 
 ### 3.5. Serviço
 
@@ -276,6 +358,17 @@ npx prisma migrate diff \
 `npm run verify` inclui `db:check-schema`: se a variante SQLite ficar desatualizada, a
 verificação falha. É o que impede a divergência entre o schema de desenvolvimento e o de
 produção de passar despercebida até ao deploy.
+
+Depois de alterar o schema, regenerar **os dois** clientes Prisma — o schema é a fonte de
+verdade, e o cliente gerado é derivado:
+
+```bash
+npm run db:generate      # sincroniza o SQLite, gera os dois clientes, liga os pacotes
+```
+
+O `prebuild` da API corre este passo de qualquer forma, pelo que `npm run build` nunca
+compila contra um cliente desatualizado. Correr `db:generate` explicitamente serve para
+inspecionar os tipos novos antes de escrever código contra eles.
 
 Antes de qualquer migração destrutiva: backup verificado, migração ensaiada em staging, e
 uma janela em que dê para reverter.

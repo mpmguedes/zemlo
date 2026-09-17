@@ -56,6 +56,8 @@ Cabeçalhos úteis: `X-Request-Id` (correlação), `X-Zemlo-Api-Version`, `Retry
 | POST | `/auth/refresh` | renovar sessão com `refreshToken` |
 | POST | `/auth/logout` | terminar a sessão atual |
 | POST | `/auth/logout-all` | terminar todas as sessões |
+| POST | `/auth/password-reset` | pedir link de recuperação. Resposta **idêntica** exista ou não a conta (202) |
+| POST | `/auth/password-reset/confirm` | concluir a recuperação com o token do email. Revoga **todas** as sessões |
 | GET | `/me` | perfil + contadores + passos de onboarding em falta |
 | PATCH | `/me` | nome, fuso horário, locale, unidades |
 | DELETE | `/me` | eliminar conta. Requer `confirm: "ELIMINAR"` e password (e TOTP, se ativo) |

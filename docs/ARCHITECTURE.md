@@ -122,6 +122,31 @@ precisa de `as`.
 27 tabelas, agrupadas por propósito. O schema canónico é
 `apps/api/prisma/schema.prisma` (PostgreSQL); a variante SQLite é gerada.
 
+### 3.1. Dois clientes Prisma, com saídas distintas
+
+Cada motor tem o **seu** cliente gerado, em pastas separadas
+(`prisma/generated/postgres` e `prisma/generated/sqlite`), e `DATABASE_PROVIDER` seleciona
+qual deles é instanciado — em `core/prisma-client.ts`, o único sítio onde essa decisão
+existe.
+
+Isto não é organização: é uma correção. Na primeira versão os dois schemas geravam para o
+mesmo caminho (`node_modules/.prisma/client`) e, como a geração corria o SQLite por último,
+o cliente SQLite substituía o de PostgreSQL **sempre, e em silêncio**. Uma instalação com
+`DATABASE_URL` a apontar para PostgreSQL arrancava, respondia 200 e escrevia num ficheiro
+`dev.db` local, enquanto o `/health` anunciava `postgresql` — porque repetia a variável de
+ambiente em vez de reportar o motor do cliente carregado.
+
+As garantias atuais, todas verificadas no arranque:
+
+- o cliente importado é o do motor configurado;
+- o cliente presente em `prisma/generated/<motor>` foi compilado para esse motor — lido do
+  `schema.prisma` que acompanha cada cliente gerado, e não afirmado por uma constante;
+- `DATABASE_PROVIDER` coincide com o motor do cliente carregado;
+- um cliente SQLite com `NODE_ENV=production` é recusado incondicionalmente.
+
+O `/health` reporta o motor do cliente efetivamente carregado. É essa a diferença entre
+uma verificação e um eco da configuração.
+
 ```
 User ─┬─ UserPreference            (1:1)
       ├─ NotificationPreference    (1:N, por tópico × canal)
@@ -315,7 +340,7 @@ do produto (§31), não uma configuração.
 | Vetor | Mitigação |
 | --- | --- |
 | Força bruta em passwords | bcrypt custo 12; bloqueio progressivo após 8 tentativas; limitação por IP+email |
-| Reutilização de tokens roubados | Access token curto; revogação por sessão; validação da sessão em cada pedido |
+| Reutilização de tokens roubados | Access token curto; revogação por sessão; sessão validada em **todos** os pedidos — o token sem claim `sid` é rejeitado |
 | Acesso a dados de outra conta | Filtro por `userId` na consulta; 404 indistinguível de inexistente |
 | Descrição de contas | Mensagem idêntica para email inexistente e password errada |
 | Segredos em cópias de base de dados | Segredos cifrados (AES-256-GCM); códigos de recuperação como hash |
