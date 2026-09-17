@@ -359,8 +359,26 @@ export function invalidLocalIdIssues(records: readonly CanonicalRecord[]): Impor
  *
  * Só os que tornam o registo **sem sentido** sem eles. A tentação é acrescentar muitos —
  * e cada campo obrigatório a mais transforma num erro bloqueante um dado que o Zemlo
- * aceitaria alegremente (§49, enriquecimento progressivo). Um veículo sem matrícula não
- * é um veículo inválido: é um veículo que o utilizador ainda não completou.
+ * aceitaria alegremente (§49, enriquecimento progressivo).
+ *
+ * ## A matrícula é a identidade mínima de um veículo
+ *
+ * `vehicle: ['plate']` é deliberado, e não o caso geral descrito acima. O README é
+ * explícito — *"uma matrícula é suficiente para começar"* e *"Só a matrícula é
+ * obrigatória para criar um veículo"*. A importação segue a **mesma regra do onboarding**:
+ * um veículo importado tem de trazer matrícula utilizável.
+ *
+ * A §49 — "aceitar dados incompletos" — refere-se aos dados **complementares**: VIN,
+ * combustível, bateria, potência, pneus, aquisição. `Kia EV3 · 42 381 km` é um veículo
+ * válido porque está identificado pela matrícula, não porque a matrícula seja dispensável.
+ * Sem matrícula não há identidade, e sem identidade o registo não pode ser comparado com
+ * o que já existe — que é precisamente o que a §8 exige antes de escrever seja o que for.
+ *
+ * A ausência desta leitura é o que faz um veículo importado sem matrícula entrar em
+ * quarentena, enquanto `vehiclePlausibilityIssues` classifica a mesma ausência como
+ * informativa. As duas coisas são compatíveis: a plausibilidade descreve a **forma** do
+ * valor (curta, estrangeira, atípica) e continua a ser informativa; a obrigatoriedade
+ * decide se o registo **entra**. Ver A25 em `docs/DECISIONS.md`.
  */
 const REQUIRED_FIELDS: Readonly<Record<RecordKind, readonly string[]>> = {
   vehicle: ['plate'],
@@ -687,6 +705,17 @@ export function localIdPrefixHint(record: CanonicalRecord): ImportIssue | null {
  * Deliberadamente informativas e não recuperáveis: uma matrícula curta, ou ausente, é a
  * **norma** num onboarding por completar (§49). Tratá-las como problema tornaria o
  * relatório inútil no caso mais comum.
+ *
+ * ## Porque é que isto convive com a matrícula obrigatória
+ *
+ * Esta verificação descreve a **forma** do valor — se a matrícula é aproveitável como
+ * chave de comparação. Não decide se o registo entra: essa decisão é de
+ * `missingRequiredFieldIssues`, que trata a matrícula ausente como bloqueante (A25).
+ *
+ * As duas coexistem sem se contradizerem porque respondem a perguntas diferentes. Um
+ * veículo com uma matrícula curta mas presente passa a obrigatoriedade e recebe este
+ * aviso; um veículo sem matrícula nenhuma não passa a obrigatoriedade e é isso que o
+ * relatório mostra em primeiro lugar. O aviso informativo nunca é a última palavra.
  */
 export function vehiclePlausibilityIssues(record: CanonicalRecord): ImportIssue[] {
   if (record.kind !== 'vehicle') return [];

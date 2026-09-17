@@ -202,6 +202,13 @@ a timeline e as estatísticas. O utilizador não introduz o mesmo dado duas veze
 em linguagem de produto: "Com a quilometragem atual, passamos a calcular o custo por km."
 Nunca `ERROR: incomplete data`.
 
+**Incompleto não é o mesmo que sem identidade.** O que pode faltar são os dados
+**complementares** — VIN, combustível, bateria, potência, pneus, aquisição. A **matrícula é
+a identidade mínima** de um veículo, e é a única coisa que não pode faltar: sem ela não há
+forma de saber que dois registos são o mesmo veículo. O exemplo acima é válido porque o
+veículo está identificado pela matrícula, não porque ela seja dispensável. A importação
+segue a mesma regra da criação manual (A25).
+
 ### Automatizar antes de pedir (§3.4)
 
 Se o valor não foi indicado, o Zemlo calcula-o (preço por litro, preço por kWh, próxima

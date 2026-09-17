@@ -57,7 +57,13 @@ import {
   type Migration,
   type MigrationContext,
 } from '../src/domain/import/migrate.js';
-import { issue, validateRecords, type CanonicalRecord } from '../src/domain/import/validate.js';
+import {
+  issue,
+  localIdPrefixHint,
+  validateRecords,
+  vehiclePlausibilityIssues,
+  type CanonicalRecord,
+} from '../src/domain/import/validate.js';
 
 /* -------------------------------------------------------------------------- */
 /* Auxiliares                                                                  */
@@ -1141,10 +1147,12 @@ describe('plan — contagens e resumo para o ecrã de revisão (§11.2)', () => 
         { name: 'IPO', category: 'inspection', expiresAt: '2027-01-01', contentState: 'missingContent', contentSha256: null, storageKey: null },
         { vehicleLocalId: 'v1' },
       ),
-      // Um veículo sem matrícula: falta um campo obrigatório e o registo fica em
-      // quarentena. Note-se que `vehiclePlausibilityIssues` classifica a ausência de
-      // matrícula como **informativa** — a divergência entre os dois é do bloco 4+5, já
-      // validado, e está registada no relatório em vez de ser corrigida aqui.
+      // Um veículo sem matrícula: falta a identidade mínima e o registo fica em
+      // quarentena (A25). `vehiclePlausibilityIssues` classifica a ausência de matrícula
+      // como **informativa** e continua a fazê-lo — as duas verificações respondem a
+      // perguntas diferentes: a plausibilidade descreve a forma do valor, a
+      // obrigatoriedade decide se o registo entra. O que o cenário exercita é justamente
+      // a coexistência das duas no mesmo plano.
       record('vehicle', 'v3', { plate: null, vin: null, make: null, model: null, year: null }, {}),
     ];
 
@@ -1184,6 +1192,9 @@ describe('plan — contagens e resumo para o ecrã de revisão (§11.2)', () => 
   });
 
   it('um veículo sem matrícula nem VIN fica em quarentena', () => {
+    // A identidade mínima de um veículo é a matrícula (A25). O VIN não a substitui na
+    // regra de entrada — continua a ser um campo complementar, ainda que seja a chave de
+    // deduplicação mais forte quando existe (§8.4).
     const p = mixedPlan();
     const bad = p.entries.find((entry) => entry.localId === 'v3');
     expect(bad?.action).toBe('quarantined');
@@ -1214,6 +1225,51 @@ describe('plan — contagens e resumo para o ecrã de revisão (§11.2)', () => 
     expect(p.notices.some((notice) => notice.includes('não podem ser importados'))).toBe(true);
   });
 
+  it('o aviso de quarentena não aparece quando só há avisos informativos', () => {
+    // A distinção importa: um veículo com matrícula curta gera um aviso informativo de
+    // plausibilidade e **não** é bloqueado (A25). Se este teste passasse a ver aviso de
+    // quarentena, a regra da matrícula estaria a bloquear matrículas que aceita.
+    const records = [record('vehicle', 'v1', { plate: 'Kia', vin: null, make: 'Kia', model: 'EV3', year: 2024 }, {})];
+    const validation = validateRecords(records);
+
+    // O veículo é aceite e fica `complete` — não há quarentena em lado nenhum.
+    expect(validation.records[0]?.quality).toBe('complete');
+    expect(validation.issues.some((item) => item.severity === 'blocking')).toBe(false);
+
+    // A informação de plausibilidade chega ao plano pela via que existe hoje: um informativo
+    // injetado em `validationIssues` propaga-se à entrada e **não** cria aviso de quarentena.
+    const plausibility = vehiclePlausibilityIssues(records[0]!);
+    const p = buildPlan({ records, state: EMPTY, validationIssues: [...validation.issues, ...plausibility] });
+
+    expect(plausibility[0]?.severity).toBe('info');
+    expect(p.entries[0]?.action).toBe('create');
+    expect(p.entries[0]?.issues.some((item) => item.code === 'vehicle.plate_missing_or_short')).toBe(true);
+    expect(p.notices.some((notice) => notice.includes('não podem ser importados'))).toBe(false);
+  });
+
+  it('nem `vehiclePlausibilityIssues` nem `localIdPrefixHint` chegam ao plano sozinhos', () => {
+    // Observação registada durante a validação da Fase 1: `validateRecords` só compõe
+    // `missingRequiredFieldIssues`, `semanticIssues` e `documentContentIssues`. As duas
+    // verificações **informativas** existem, estão testadas, e não são chamadas por
+    // ninguém — nem por `validateRecords`, nem pela construção do plano.
+    //
+    // Não é um defeito de correção: nada bloqueia indevidamente por causa disto. É uma
+    // lacuna de fiação, e o teste existe para que a lacuna não passe a silenciosa. Liga-a
+    // quem montar a camada HTTP da Fase 3; se o fizer sem este teste, o comportamento do
+    // relatório muda sem nada falhar.
+    const short = record('vehicle', 'v1', { plate: 'AB1', vin: null, make: 'Kia', model: 'EV3', year: 2024 }, {});
+    const validation = validateRecords([short]);
+
+    expect(validation.issues.some((item) => item.code === 'vehicle.plate_missing_or_short')).toBe(false);
+    expect(validation.issues.some((item) => item.code === 'bundle.unexpected_local_id_prefix')).toBe(false);
+
+    // E, no entanto, cada uma produz o aviso quando chamada diretamente.
+    expect(vehiclePlausibilityIssues(short)[0]?.code).toBe('vehicle.plate_missing_or_short');
+    expect(localIdPrefixHint(record('vehicle', 'anything', { plate: 'AB-12-CD' }, {}))?.code).toBe(
+      'bundle.unexpected_local_id_prefix',
+    );
+  });
+
   it('`issuesBySeverity` separa bloqueantes de recuperáveis', () => {
     const p = mixedPlan();
     expect(issuesBySeverity(p, 'blocking').length).toBeGreaterThan(0);
@@ -1225,6 +1281,66 @@ describe('plan — contagens e resumo para o ecrã de revisão (§11.2)', () => 
     const creates = entriesByAction(p, 'create');
     expect(creates.every((entry) => entry.action === 'create')).toBe(true);
     expect(creates.length).toBe(p.counts.create);
+  });
+});
+
+describe('plan — um veículo sem matrícula e os registos que lhe apontam (A25, §9.4)', () => {
+  /**
+   * Um veículo sem matrícula referido por outro registo.
+   *
+   * Este é o caso que a regra da matrícula torna interessante. A §9.4 diz que uma
+   * referência quebrada é **bloqueante** porque o bundle está internamente inconsistente.
+   * Aqui a referência **não** está quebrada — o veículo existe no bundle, apenas não pode
+   * ser importado. São duas situações diferentes e o plano tem de as tratar como tal:
+   * inventar uma referência quebrada esconderia a causa real, que é a falta de matrícula.
+   */
+  function planWithOrphan(): ImportPlan {
+    const records: CanonicalRecord[] = [
+      record('vehicle', 'v1', { plate: null, vin: null, make: null, model: null, year: null }, {}),
+      fuel('f1', { date: '2026-02-01', litres: 30, odometerKm: 20000, amountCents: 4500 }),
+    ];
+    const validation = validateRecords(records);
+
+    return buildPlan({ records, state: EMPTY, validationIssues: validation.issues });
+  }
+
+  it('o veículo sem matrícula fica em quarentena e o abastecimento fica em espera', () => {
+    const p = planWithOrphan();
+    const veh = p.entries.find((entry) => entry.localId === 'v1');
+
+    expect(veh?.action).toBe('quarantined');
+    expect(veh?.issues.some((item) => item.code === 'record.missing_required_field')).toBe(true);
+  });
+
+  it('a referência ao veículo em quarentena não é reportada como quebrada', () => {
+    // A distinção é a que interessa ao utilizador: "não encontrei este veículo no
+    // ficheiro" e "este veículo não pode entrar" pedem decisões diferentes. Colapsá-las
+    // num só código mandaria o utilizador procurar um problema de integridade que não
+    // existe.
+    const p = planWithOrphan();
+    expect(p.issues.some((item) => item.code === 'bundle.broken_reference')).toBe(false);
+  });
+
+  it('o plano não fica bloqueado ao nível do bundle por causa da matrícula ausente', () => {
+    // A matrícula ausente é bloqueante **para o registo**, não para o bundle. Se
+    // bloqueasse o bundle, um único veículo sem matrícula impediria a importação de tudo
+    // o resto — e a §9.4 reserva o bloqueio global para referências quebradas e
+    // `localId` duplicados, que são inconsistências internas do ficheiro.
+    const p = planWithOrphan();
+    expect(p.state).not.toBe('blocked');
+    expect(p.counts.quarantined).toBe(1);
+  });
+
+  it('um `vehicleLocalId` que não existe é quebrado, e continua a bloquear (§9.4)', () => {
+    // O contraste que dá sentido ao teste anterior: ausente do bundle ≠ presente mas
+    // não importável.
+    const records: CanonicalRecord[] = [
+      record('vehicle', 'v1', { plate: 'AA-00-AA', vin: null, make: 'Renault', model: 'Clio', year: 2018 }, {}),
+      record('fuel', 'f1', { date: '2026-02-01', litres: 30, odometerKm: 20000, amountCents: 4500 }, { vehicleLocalId: 'v_missing' }),
+    ];
+    const validation = validateRecords(records);
+
+    expect(validation.issues.some((item) => item.code === 'bundle.broken_reference')).toBe(true);
   });
 });
 

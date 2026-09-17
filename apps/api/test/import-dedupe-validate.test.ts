@@ -83,6 +83,14 @@ function record(
     references?: Record<string, string | null | undefined>;
     file?: string;
     line?: number;
+    /**
+     * Subtitui os campos por omissão em vez de se sobrepor a eles.
+     *
+     * Sem isto, um teste que queira testar a **ausência** de um campo obrigatório não o
+     * consegue exprimir: `{ plate: null }` continuaria a ver `plate: 'AA-00-BB'` do
+     * conjunto por omissão, e o teste passaria a afirmar o contrário do que diz.
+     */
+    replaceFields?: boolean;
   } = {},
 ): CanonicalRecord {
   const defaults: Record<string, Record<string, unknown>> = {
@@ -102,10 +110,14 @@ function record(
     notification: { topic: 'maintenance', title: 'Óleo', body: 'Está na hora.' },
   };
 
+  const fields = overrides.replaceFields
+    ? (overrides.fields ?? {})
+    : { ...(defaults[kind] ?? {}), ...(overrides.fields ?? {}) };
+
   return {
     kind,
     localId,
-    fields: { ...(defaults[kind] ?? {}), ...(overrides.fields ?? {}) },
+    fields,
     references: overrides.references ?? {},
     ...(overrides.file ? { file: overrides.file } : {}),
     ...(overrides.line !== undefined ? { line: overrides.line } : {}),
@@ -624,6 +636,102 @@ describe('Campos obrigatórios (§9.1)', () => {
   });
 });
 
+/**
+ * A identidade mínima de um veículo é a matrícula (A25).
+ *
+ * A importação segue a **mesma regra da criação manual**: o README diz *"uma matrícula é
+ * suficiente para começar"* e *"só a matrícula é obrigatória para criar um veículo"*. A
+ * §49 aceita dados **complementares** incompletos, não a ausência de identidade.
+ *
+ * Estes testes existem porque a regra já estava implementada mas não estava **escrita** no
+ * sítio onde vivia, e por isso divergiu do README durante todo o bloco 4+5 sem que nada
+ * falhasse. Uma regra bloqueante que ninguém consegue citar é uma regra que se perde.
+ */
+describe('identidade mínima do veículo — matrícula obrigatória (A25)', () => {
+  it('aceita um veículo identificado apenas pela matrícula', () => {
+    // É o caso do onboarding de três passos. Nada mais é exigido.
+    const issues = missingRequiredFieldIssues(record('vehicle', 'veh_1', { fields: { plate: 'AA-00-BB' }, replaceFields: true }));
+    expect(issues).toHaveLength(0);
+  });
+
+  it('aceita o exemplo de dados incompletos da §49 quando existe matrícula', () => {
+    // `Kia EV3 · 42 381 km`: matrícula, marca, model e quilometragem — sem VIN, sem
+    // combustível declarado, sem bateria, sem potência, sem pneus. Válido porque está
+    // identificado, não porque a matrícula seja dispensável.
+    const record49 = record('vehicle', 'veh_1', {
+      fields: { plate: '42-38-1EL', make: 'Kia', model: 'EV3', odometerKm: 42381 },
+      replaceFields: true,
+    });
+
+    expect(missingRequiredFieldIssues(record49)).toHaveLength(0);
+    expect(validateRecords([record49]).records[0]?.quality).toBe('complete');
+  });
+
+  it('recusa um veículo sem matrícula', () => {
+    const issues = missingRequiredFieldIssues(
+      record('vehicle', 'veh_1', { fields: { vin: null }, replaceFields: true }),
+    );
+    expect(issues).toHaveLength(1);
+    expect(issues[0]?.severity).toBe('blocking');
+    expect(issues[0]?.code).toBe('record.missing_required_field');
+    expect(issues[0]?.field).toBe('plate');
+  });
+
+  it('um VIN completo não substitui a matrícula', () => {
+    // O VIN é a chave de deduplicação mais forte quando existe (§8.4), mas continua a ser
+    // um campo **complementar** na regra de entrada. Substituí-lo aqui tornaria a regra
+    // dependente de um dado que o utilizador não tem à mão (A14).
+    const withVin = record('vehicle', 'veh_1', {
+      fields: { plate: null, vin: 'VF1RFB00912345678' },
+      replaceFields: true,
+    });
+    expect(missingRequiredFieldIssues(withVin)).toHaveLength(1);
+    expect(validateRecords([withVin]).records[0]?.quality).toBe('quarantined');
+  });
+
+  it('uma matrícula vazia não contorna o campo obrigatório (§5.3)', () => {
+    // `""` é um valor, não a ausência dele — mas para efeitos de obrigatoriedade conta
+    // como ausente. Sem isto, uma matrícula vazia passaria a validação e só falharia na
+    // escrita, longe da causa.
+    const cases: Array<Record<string, unknown>> = [{ plate: '' }, { plate: null }, { plate: undefined }, {}];
+
+    for (const fields of cases) {
+      const issues = missingRequiredFieldIssues(record('vehicle', 'veh_1', { fields, replaceFields: true }));
+      expect(issues, `campos: ${JSON.stringify(fields)}`).toHaveLength(1);
+      expect(issues[0]?.field).toBe('plate');
+    }
+  });
+
+  it('uma matrícula curta é aceite: a regra é de presença, não de forma', () => {
+    // A forma da matrícula pertence a `vehiclePlausibilityIssues`, que é **informativa** e
+    // não bloqueia. Se a obrigatoriedade julgasse também a forma, uma matrícula curta
+    // legítima ficaria em quarentena — e o relatório perderia utilidade no caso mais comum.
+    const short = record('vehicle', 'veh_1', { fields: { plate: 'AB1' }, replaceFields: true });
+    expect(missingRequiredFieldIssues(short)).toHaveLength(0);
+    expect(vehiclePlausibilityIssues(short)[0]?.severity).toBe('info');
+  });
+
+  it('a matrícula ausente mantém a semântica bloqueante em validateRecords', () => {
+    const result = validateRecords([
+      record('vehicle', 'veh_1', { fields: { plate: null }, replaceFields: true }),
+    ]);
+    const veh = result.records[0];
+
+    expect(veh?.quality).toBe('quarantined');
+    expect(veh?.issues.some((item) => item.code === 'record.missing_required_field')).toBe(true);
+    expect(result.blocked).toBe(true);
+  });
+
+  it('o aviso informativo de plausibilidade continua a acompanhar a matrícula ausente', () => {
+    // As duas verificações coexistem: a obrigatoriedade põe o registo em quarentena e a
+    // plausibilidade continua a descrever a forma do valor. O aviso informativo nunca é
+    // a última palavra, mas também não é suprimido.
+    const missing = record('vehicle', 'veh_1', { fields: { plate: null }, replaceFields: true });
+    expect(vehiclePlausibilityIssues(missing)[0]?.code).toBe('vehicle.plate_missing_or_short');
+    expect(vehiclePlausibilityIssues(missing)[0]?.severity).toBe('info');
+  });
+});
+
 describe('Problemas semânticos — recuperáveis, nunca bloqueantes (§9.1)', () => {
   it('assinala um valor negativo sem o recusar', () => {
     const issues = semanticIssues(record('expense', 'exp_1', { fields: { amountCents: -1200 } }));
@@ -747,6 +855,27 @@ describe('validateRecords — bloqueio do bundle (§9.4)', () => {
     const codes = result.issues.map((item) => item.code);
     expect(codes).toContain('record.missing_required_field');
     expect(codes).toContain('bundle.broken_reference');
+  });
+
+  it('reporta em conjunto a falta de matrícula e a referência quebrada', () => {
+    // O mesmo cenário com as duas regras bloqueantes que a A25 separa: o veículo sem
+    // matrícula não é importável, **e** a despesa aponta para um veículo que não existe.
+    // O relatório tem de trazer as duas — resolvida a primeira, o utilizador não pode
+    // descobrir a segunda só então.
+    const result = validateRecords([
+      record('vehicle', 'veh_1', { fields: { plate: null } }),
+      record('expense', 'exp_1', {
+        fields: { amountCents: 1000, date: '2026-01-15', category: 'Portagens' },
+        references: { vehicleLocalId: 'veh_999' },
+      }),
+    ]);
+
+    const codes = result.issues.map((item) => item.code);
+    expect(codes).toContain('record.missing_required_field');
+    expect(codes).toContain('bundle.broken_reference');
+
+    const veh = result.records.find((entry) => entry.record.localId === 'veh_1');
+    expect(veh?.quality).toBe('quarantined');
   });
 
   it('atribui qualidade a cada registo', () => {

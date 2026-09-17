@@ -586,3 +586,46 @@ a mesma atenção, os mesmos testes.
 **Consequência para os testes.** `verify-integration.mjs` verifica as três situações —
 endereço inexistente com e sem token, e endereço existente sem token — porque foi
 exatamente aqui que a regra se partiu duas vezes.
+
+---
+
+## A25. A identidade mínima de um veículo é a matrícula — também na importação
+
+**Decisão.** Um veículo, criado à mão ou importado, tem de trazer uma **matrícula
+utilizável**. Sem matrícula o registo não entra: fica em quarentena com
+`record.missing_required_field`. Os restantes campos — VIN, combustível, bateria, potência,
+pneus, aquisição — continuam opcionais.
+
+A §49 ("aceitar dados incompletos") passa a ler-se como aceitação de **dados complementares
+incompletos**, nunca de um veículo sem identidade mínima. O exemplo `Kia EV3 · 42 381 km` do
+`README.md` pressupõe matrícula; foi essa a ambiguidade corrigida.
+
+**Porquê.** É a mesma regra do onboarding (§5, A14): *"uma matrícula é suficiente para
+começar"* e *"só a matrícula é obrigatória para criar um veículo"*. A importação não é uma
+porta lateral com regras próprias — se o destino não aceita criar um veículo anónimo, a
+importação não pode criá-lo por outro caminho.
+
+E, mais fundo: a matrícula é o que torna um veículo **comparável**. A §8 deduz a identidade
+de conteúdo, e para um veículo as chaves fortes são `vin` e `plate` (A14, `§8.4`). Sem
+nenhuma das duas, a única chave que resta é `marca + modelo + ano` — **provável**, e ausente
+por completo se a marca ou o modelo faltarem. Um veículo assim não pode ser reconhecido numa
+segunda importação, nem enriquecido por `fill-empty` (decisão 8), que precisa de uma chave
+para encontrar o registo a enriquecer. Aceitá-lo seria prometer uma deduplicação que não
+existe.
+
+**Consequência na escrita (Fase 3, ainda por fazer).** O schema mantém
+`plate String` NOT NULL e `@@unique([userId, plate])`: a regra bloqueante torna o
+`NOT NULL` **inalcançável** a partir da importação, e não é preciso tornar o campo nullable,
+inventar sentinelas nem alterar índices. Uma sentinela seria mesmo pior — entraria no índice
+único e dois veículos anónimos colidiriam. Esta decisão é o que permite à Fase 3 não mexer
+no schema.
+
+**O que isto não muda.** `vehiclePlausibilityIssues` continua **informativa**: descreve a
+forma do valor (matrícula curta, estrangeira, atípica), não decide se o registo entra. Uma
+matrícula estrangeira não é um erro (A14). As duas verificações respondem a perguntas
+diferentes e coexistem.
+
+**Como se detetou.** A contradição vivia entre ficheiros — `REQUIRED_FIELDS.vehicle` em
+`validate.ts` e a §49 no `README.md` — e manteve-se invisível até a regra de carga do bundle
+ser exercitada por um teste de cenário misto. Duas regras de produto em dois documentos, uma
+bloqueante e outra informativa: nenhuma delas estava errada isoladamente.
