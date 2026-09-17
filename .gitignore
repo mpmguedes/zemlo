@@ -6,6 +6,13 @@ dist/
 build/
 *.tsbuildinfo
 
+# Clientes Prisma gerados.
+#
+# Reconstruídos a partir dos schemas por `npm run db:generate`, que corre no
+# `postinstall`. O schema é a fonte única de verdade; o cliente é derivado e não pertence
+# ao repositório.
+apps/api/prisma/generated/
+
 # Bases de dados locais
 *.db
 *.db-journal

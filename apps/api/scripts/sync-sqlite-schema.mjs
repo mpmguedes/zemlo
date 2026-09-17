@@ -26,8 +26,22 @@ const canonicalPath = join(apiRoot, 'prisma', 'schema.prisma');
 const sqliteDir = join(apiRoot, 'prisma', 'sqlite');
 const sqlitePath = join(sqliteDir, 'schema.sqlite.prisma');
 
-/** Caminho do ficheiro de base de dados, relativo à pasta do schema SQLite. */
-const SQLITE_DB_RELATIVE = 'dev.db';
+/**
+ * O valor por omissão do ficheiro de base de dados SQLite (`file:./dev.db`) vive em
+ * `core/config.ts`, que é o único sítio onde os valores por omissão de ambiente existem.
+ * O schema gerado limita-se a ler `DATABASE_URL`.
+ */
+
+/**
+ * Pasta de saída do cliente SQLite, relativa à pasta do schema SQLite.
+ *
+ * Tem de ser DIFERENTE da saída do cliente PostgreSQL (`./generated/postgres`, em
+ * `prisma/`). Enquanto ambos escreviam em `node_modules/.prisma/client`, gerar os dois
+ * significava que o último ganhava — e o último era sempre o SQLite. O resultado era uma
+ * produção a escrever num ficheiro local com `DATABASE_URL` a apontar para PostgreSQL,
+ * sem qualquer erro visível.
+ */
+const SQLITE_CLIENT_OUTPUT = '../generated/sqlite';
 
 /**
  * O SQLite não tem tipos de coluna próprios no Prisma: todas as anotações `@db.*`
@@ -69,29 +83,47 @@ function buildSqliteSchema(canonical) {
   let body = canonical;
 
   // 1. Substituir o bloco `datasource` pelo equivalente SQLite.
+  //
+  // `env("DATABASE_URL")` e não um caminho fixo: o cliente tem de obedecer à mesma
+  // variável que `core/config.ts` lê. Com o caminho fixo, `DATABASE_URL` era ignorado pelo
+  // cliente SQLite, pelo que a aplicação podia reportar um alvo e escrever noutro.
+  // O valor por omissão (`file:./dev.db`) é aplicado em `core/config.ts`, que é o único
+  // sítio onde os valores por omissão de ambiente vivem.
   const datasourcePattern = /datasource\s+db\s*\{[^}]*\}/;
   if (!datasourcePattern.test(body)) {
     throw new Error('Não foi encontrado o bloco `datasource db` no schema canónico.');
   }
   body = body.replace(
     datasourcePattern,
+    ['datasource db {', '  provider = "sqlite"', '  url      = env("DATABASE_URL")', '}'].join(
+      '\n',
+    ),
+  );
+
+  // 2. Substituir o bloco `generator` para dar ao cliente SQLite uma saída própria.
+  const generatorPattern = /generator\s+client\s*\{[^}]*\}/;
+  if (!generatorPattern.test(body)) {
+    throw new Error('Não foi encontrado o bloco `generator client` no schema canónico.');
+  }
+  body = body.replace(
+    generatorPattern,
     [
-      'datasource db {',
-      '  provider = "sqlite"',
-      `  url      = "file:./${SQLITE_DB_RELATIVE}"`,
+      'generator client {',
+      '  provider = "prisma-client-js"',
+      `  output   = "${SQLITE_CLIENT_OUTPUT}"`,
       '}',
     ].join('\n'),
   );
 
-  // 2. Remover anotações de tipo específicas do PostgreSQL.
+  // 3. Remover anotações de tipo específicas do PostgreSQL.
   for (const [pattern, replacement] of TYPE_ATTRIBUTE_MAP) {
     body = body.replace(pattern, replacement);
   }
 
-  // 3. Ajustar valores por omissão de JSON.
+  // 4. Ajustar valores por omissão de JSON.
   body = convertJsonDefaults(body);
 
-  // 4. Limpar espaços residuais.
+  // 5. Limpar espaços residuais.
   body = tidy(body);
 
   const header = [

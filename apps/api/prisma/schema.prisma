@@ -19,6 +19,15 @@
 
 generator client {
   provider = "prisma-client-js"
+  // Saída PRÓPRIA e explícita. Antes desta alteração os dois clientes (PostgreSQL e
+  // SQLite) escreviam ambos em `node_modules/.prisma/client`: o último a ser gerado
+  // ganhava, e como `db:generate` corria o SQLite por último, o cliente SQLite
+  // substituía silenciosamente o de PostgreSQL. A aplicação arrancava, respondia 200 e
+  // escrevia num ficheiro local com `DATABASE_URL` a apontar para PostgreSQL.
+  //
+  // Com saídas distintas o cliente carregado é sempre inequívoco, e `core/db.ts`
+  // escolhe-o a partir de `DATABASE_PROVIDER`.
+  output = "./generated/postgres"
 }
 
 datasource db {
