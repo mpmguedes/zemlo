@@ -98,6 +98,7 @@ model User {
   households       HouseholdMember[]
   organizationMembers OrganizationMember[]
   auditLogs        AuditLog[]
+  importBookEntries ImportBookEntry[]
 
   @@index([authProvider, authProviderId])
 }
@@ -767,6 +768,55 @@ model AppSetting {
   key       String   @id
   value     Json
   updatedAt DateTime @updatedAt
+}
+
+/* ========================================================================== */
+/* Importação — livro de idempotência (§9.5, decisão A26)                     */
+/* ========================================================================== */
+
+/// Livro de idempotência da importação nativa.
+///
+/// Cada registo criado por uma importação é registado aqui como
+/// `(userId, bundleId, localId) → createdRecordId`. É o que faz
+/// **reimportar o mesmo bundle não criar nada** (§9.5) e o que torna seguro
+/// retomar uma importação por lotes interrompida (§7.2): a retoma consulta o
+/// livro e não volta a criar o que já entrou.
+///
+/// Não confundir com a deduplicação por conteúdo (§8): o livro diz "já
+/// importado **deste ficheiro**", a deduplicação diz "já existes **na conta**".
+/// A chave inclui o `userId`, pelo que importar o mesmo bundle noutra conta
+/// cria tudo — que é precisamente o que permite exportar de uma conta e
+/// importar noutra.
+///
+/// `localId` é opaco (§2.1): nunca é interpretado, só comparado. Por isso é
+/// `String` e não tem prefixo nem formato próprio guardado aqui.
+model ImportBookEntry {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Identificador do bundle de origem (§5.4). Opaco, como o `localId`.
+  bundleId String
+  /// Identificador local do registo **dentro do bundle**. Opaco.
+  localId  String
+  /// Tipo do registo criado (`vehicle`, `expense`, …), para o relatório poder
+  /// contar por tipo sem ir buscá-lo à tabela de destino.
+  recordKind String
+  /// Identificador do registo criado. `String` e não uma FK: aponta para sete
+  /// tabelas diferentes, e uma FK polimórfica não existe no Prisma. O que
+  /// garante a integridade é o `onDelete: Cascade` do `userId` — o livro de um
+  /// utilizador desaparece com ele.
+  createdRecordId String
+
+  createdAt DateTime @default(now())
+  /// Retenção de 12 meses (decisão 12 do IMPORT-EXPORT.md), configurável.
+  /// Depois desta data o livro já não reconhece uma reimportação; a
+  /// deduplicação por conteúdo continua a proteger.
+  expiresAt DateTime
+
+  @@unique([userId, bundleId, localId])
+  @@index([userId, bundleId])
+  @@index([expiresAt])
 }
 
 /* ========================================================================== */

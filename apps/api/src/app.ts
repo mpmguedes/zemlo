@@ -9,7 +9,7 @@
 import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import express, { type Express, type Router } from 'express';
+import express, { type Express, type Router, raw } from 'express';
 import { API_BASE_PATH, PRODUCT } from '@zemlo/shared';
 import { describeConfig } from './core/config.js';
 import { logger } from './core/logger.js';
@@ -31,6 +31,12 @@ import { complianceRouter } from './http/routes/compliance.js';
 import { documentsRouter } from './http/routes/documents.js';
 import { financialRouter } from './http/routes/financial.js';
 import { healthRouter, metricsRouter } from './http/routes/health.js';
+import {
+  ACCEPTED_UPLOAD_TYPES,
+  IMPORT_UPLOAD_MAX_BYTES,
+  importRouter,
+  isNativeImportUpload,
+} from './http/routes/import.js';
 import { insightsRouter } from './http/routes/insights.js';
 import { exportRouter, integrationsRouter } from './http/routes/integrations.js';
 import { notificationsRouter } from './http/routes/notifications.js';
@@ -50,6 +56,158 @@ export function createApp(): Express {
   app.use(securityHeaders());
   app.use(corsMiddleware());
   app.use(generalRateLimit());
+
+  /*
+   * Isenção do `requireJsonBody` para o upload do bundle de importação.
+   *
+   * ## Porque é que isto está aqui, e não dentro de `routes/import.ts`
+   *
+   * O `requireJsonBody()` corre na aplicação, **antes** de qualquer router ser resolvido —
+   * logo um router montado em `/api/v1` nunca veria o pedido que o middleware já recusou.
+   * A isenção tem de correr antes dele, e é por isso que é uma linha nesta lista e não uma
+   * opção da rota.
+   *
+   * ## As três linhas
+   *
+   * ```ts
+   * if (!isNativeImportUpload(request.method, request.path)) { next(); return; }
+   * ```
+   *
+   * Uma condição, avaliada por `isNativeImportUpload()` (ver `routes/import.ts`). Não usa
+   * prefixo — `startsWith('/api/v1/import')` isentaria tudo o que começasse por esse
+   * caminho, incluindo rotas futuras que ninguém considerou —, não usa expressão regular, e
+   * não consulta o `Content-Type`. Compara o caminho **exato** das duas rotas que
+   * transportam bytes, e nada mais.
+   *
+   * ## Porque é que não pode ser global
+   *
+   * Alargar o `requireJsonBody` a `application/zip` em toda a aplicação aceitaria um
+   * `Content-Type: application/zip` num endpoint de despesas; o `jsonBodyParser` continuaria
+   * a não o interpretar, e o handler responderia "o campo `amountCents` é obrigatório" — a
+   * mensagem enganadora que o middleware existe precisamente para evitar. A proteção é útil;
+   * o que se quer é uma exceção **estreita** e legível.
+   *
+   * ## O que a isenção troca, e o que não troca
+   *
+   * Troca a proteção de tipo global por uma proteção **mais forte**, específica desta rota:
+   * o `Content-Type` é validado contra uma lista fechada de três tipos dentro do handler, o
+   * tamanho é limitado por `IMPORT_UPLOAD_MAX_BYTES` **durante a leitura**, e o conteúdo é
+   * verificado pela assinatura do ZIP.
+   *
+   * O limite de 1 MB do `jsonBodyParser` e o `requireJsonBody` continuam a proteger todas as
+   * outras rotas e todos os outros caminhos sob `/import/`.
+   */
+  /*
+   * As duas rotas de upload leem o corpo em bruto. O `type` é a lista fechada dos tipos
+   * do upload: sem ele, o `raw` consumiria também `application/json` e um pedido JSON a
+   * estas rotas deixaria de produzir a mensagem "isto não é um ZIP". O limite é
+   * verificado **enquanto** o corpo é lido.
+   */
+  const parseNativeUpload = raw({
+    type: [...ACCEPTED_UPLOAD_TYPES],
+    limit: IMPORT_UPLOAD_MAX_BYTES,
+  });
+
+  /*
+   * O router montado no mesmo prefixo da v1, criado uma só vez na composição.
+   *
+   * A montagem não é um detalhe: é o que retira `/api/v1` antes de o router ver o
+   * pedido. O `importRouter` compara `request.path` com `/import/preview` e
+   * `/import/apply` — caminhos **relativos** ao ponto de montagem — tal como as suas
+   * rotas, declaradas com o mesmo prefixo. Chamá-lo diretamente deixaria `request.path`
+   * a ser `/api/v1/import/preview`, e nem as rotas nem o guarda de autenticação
+   * corresponderiam ao caminho que esperam.
+   */
+  const mountedImportRouter = express.Router();
+  mountedImportRouter.use(API_BASE_PATH, importRouter);
+
+  /*
+   * Isenção do `requireJsonBody` para o upload do bundle de importação.
+   *
+   * ## Porque é que isto está aqui, e não dentro de `routes/import.ts`
+   *
+   * O `requireJsonBody()` corre na aplicação, **antes** de qualquer router ser resolvido —
+   * logo um router montado em `/api/v1` nunca veria o pedido que o middleware já recusou.
+   * A isenção tem de correr antes dele, e é por isso que é uma linha nesta lista e não uma
+   * opção da rota.
+   *
+   * ## Porque é que a camada entrega o pedido ao router, e não apenas lê o corpo
+   *
+   * Ler o corpo não basta, e foi o defeito que esta versão corrige. A cadeia de `app.use`
+   * não tem saltos: um pedido que faça `next()` a partir daqui continua para os
+   * middlewares seguintes, e o `requireJsonBody()` da linha imediatamente a seguir
+   * recusá-lo-ia com 415 — porque o tipo dele é `application/zip` e não JSON. O corpo já
+   * teria sido lido, mas a resposta seria a recusa e o `importRouter` nunca chegaria a
+   * correr.
+   *
+   * A isenção tem, por isso, de **entregar** o pedido ao router. E tem de o entregar a um
+   * router que **responda**: se o `importRouter` deixasse o pedido seguir, ele continuaria
+   * para o `requireJsonBody()` e acabaria recusado com 415 de qualquer forma. A entrega
+   * funciona porque as duas rotas de upload respondem sempre — qualquer pedido que nelas
+   * não seja servido acaba, dentro do próprio router, numa resposta (uma recusa de upload
+   * ou uma recusa de autenticação), e nunca num `next()` que devolva o pedido à cadeia.
+   *
+   * ## Porque é que a montagem é feita com `app.use(API_BASE_PATH, ...)`
+   *
+   * O `importRouter` compara `request.path` com `/import/preview` e `/import/apply` —
+   * caminhos **relativos** ao ponto de montagem. Ao montá-lo em `API_BASE_PATH`, o Express
+   * retira esse prefixo antes de o router ver o pedido, exatamente como faz na v1. Sem a
+   * montagem — chamando o router diretamente — o `request.path` lá dentro continuaria a ser
+   * `/api/v1/import/preview`, e nem as rotas nem o guarda de autenticação corresponderiam.
+   *
+   * ## O âmbito
+   *
+   * Uma condição, avaliada por `isNativeImportUpload()` (ver `routes/import.ts`). Não usa
+   * prefixo — `startsWith('/api/v1/import')` isentaria tudo o que começasse por esse
+   * caminho, incluindo rotas futuras que ninguém considerou —, não usa expressão regular, e
+   * não consulta o `Content-Type`. Compara o caminho **exato** das duas rotas que
+   * transportam bytes, e nada mais.
+   *
+   * Não há duplicação de rota: é o **mesmo** router, montado também aqui para os dois
+   * caminhos exatos que a isenção identifica. Para todo o resto, a lista da v1 continua a
+   * ser o único caminho, e o `requireJsonBody()` continua intacto a proteger tudo o que não
+   * sejam estes dois caminhos.
+   *
+   * ## O que a isenção troca, e o que não troca
+   *
+   * Troca a proteção de tipo global por uma proteção **mais forte**, específica desta rota:
+   * o `Content-Type` é validado contra uma lista fechada de três tipos dentro do handler, o
+   * tamanho é limitado por `IMPORT_UPLOAD_MAX_BYTES` **durante a leitura**, e o conteúdo é
+   * verificado pela assinatura do ZIP.
+   */
+  app.use((request, response, next) => {
+    if (!isNativeImportUpload(request.method, request.path)) {
+      next();
+      return;
+    }
+
+    /*
+     * O `optionalAuth` e o `noStore` correm aqui, e não mais abaixo, porque o pedido
+     * não vai seguir a cadeia normal: ao ser entregue ao router dentro desta camada,
+     * nunca passaria pela linha que os monta. Sem o `optionalAuth` o `request.user`
+     * ficaria por preencher e o `requireAuth` do router responderia 401 a um pedido
+     * com um token perfeitamente válido.
+     *
+     * São exatamente os mesmos middlewares e na mesma ordem — o contrato de
+     * autenticação é o da aplicação, não uma segunda versão paralela.
+     */
+    optionalAuth()(request, response, (error?: unknown) => {
+      if (error) {
+        next(error);
+        return;
+      }
+      noStore()(request, response, () => {
+        parseNativeUpload(request, response, (parseError?: unknown) => {
+          if (parseError) {
+            next(parseError);
+            return;
+          }
+          mountedImportRouter(request, response, next);
+        });
+      });
+    });
+  });
+
   app.use(requireJsonBody());
   app.use(jsonBodyParser());
   app.use(urlEncodedParser());
@@ -140,6 +298,7 @@ export function createApp(): Express {
     notificationsRouter,
     integrationsRouter,
     exportRouter,
+    importRouter,
     metricsRouter,
   ];
 

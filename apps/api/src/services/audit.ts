@@ -31,6 +31,7 @@ export type AuditAction =
   | 'user.2fa_disabled'
   | 'user.2fa_recovery_used'
   | 'user.exported_data'
+  | 'user.imported_data'
   | 'user.deleted_account'
   | 'session.created'
   | 'session.revoked'

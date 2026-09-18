@@ -629,3 +629,251 @@ diferentes e coexistem.
 `validate.ts` e a §49 no `README.md` — e manteve-se invisível até a regra de carga do bundle
 ser exercitada por um teste de cenário misto. Duas regras de produto em dois documentos, uma
 bloqueante e outra informativa: nenhuma delas estava errada isoladamente.
+
+## A26. O livro de idempotência da importação, e três regras de leitura do bundle
+
+**Decisão.** A importação nativa ganha uma tabela própria — `ImportBookEntry` — e o leitor do
+bundle passa a ter três comportamentos fixados por escrito.
+
+**1. O livro de idempotência.** Cada registo importado é registado em `ImportBookEntry` como
+`(userId, bundleId, localId) → id do registo criado`, com data de criação e data de expiração.
+A chave é única. A retenção é de **12 meses** (decisão 12 do `IMPORT-EXPORT.md`), configurável.
+
+**Porquê.** A §9.5 exige o livro, a §7.2 exige que a retoma de uma importação por lotes não
+duplique o que já entrou, e a §13.3 exige que "importar duas vezes = importar uma vez" valha
+para **toda** a entrada válida. Nenhuma das três é satisfazível sem persistência: sem livro,
+a idempotência só existe dentro de um processo, e uma retoma depois de uma interrupção volta a
+criar tudo.
+
+Note-se que o livro **não** é a deduplicação por conteúdo (§8.2). São mecanismos diferentes e a
+distinção tem consequência visível: o livro diz *"já importado deste ficheiro"*, a deduplicação
+diz *"já existes na conta"*. E, porque a chave inclui o `userId`, importar o mesmo bundle noutra
+conta **cria tudo** — que é o que torna possível exportar de uma conta e importar noutra.
+
+**Alternativas.** (a) Reutilizar o `AuditLog` como livro — rejeitada: a §7.3 exige auditoria
+**sem conteúdo** e a decisão 5 exclui o `AuditLog` do bundle. Sobre um registo de auditoria não
+se podem expirar entradas sem falsificar a auditoria, e uma consulta de importação passaria a
+depender de uma tabela cujo propósito é outro. (b) Guardar o mapa no `source: Json` de cada
+registo — rejeitada: obrigaria a percorrer e a indexar JSON em todas as tabelas, e o registo
+criado não sabe de que bundle veio sem ir buscar essa informação ao livro. (c) `ExternalId`
+também nesta fase — adiada para a Fase 4 (ver abaixo).
+
+**O que se perde.** Uma reimportação do mesmo bundle **depois** dos 12 meses não é reconhecida
+pelo livro. A deduplicação por conteúdo continua a proteger, desde que os registos não tenham
+sido alterados no Zemlo entre as duas importações. É uma consequência assumida, e a retenção
+deve ser revista quando houver dados reais de utilização.
+
+**O que fica de fora, deliberadamente.** `externalIds` (§2.3) — a identidade na origem anterior
+— **não** ganha tabela nesta fase. O §2.3 descreve um benefício ("permite que uma segunda
+importação da mesma aplicação de origem reconheça os registos que já entraram"), não um
+requisito testável: nenhum teste da §13.1 depende dele. No bundle nativo, `externalIds` só
+existe quando o bundle já veio de uma importação anterior; a camada onde ele é essencial é a
+**Fase 4 (CSV)**, onde a origem é externa e é isso que dá identidade. Fica registado para essa
+fase em vez de ser escrito em antecipação.
+
+**2. Ficheiro de dados presente mas não declarado no `manifest.json` → recusar.** Um ficheiro
+no ZIP que o manifest não declara é um bundle internamente inconsistente, e a §9.4 manda
+bloquear antes de escrever. Aceitá-lo obrigaria a confiar em dados cuja origem o próprio bundle
+não assume — e a contagem declarada deixaria de significar seja o que for.
+
+**3. `counts` divergentes → aviso, não rejeição.** Se as contagens do manifest não coincidirem
+com as linhas efectivamente presentes, mas o conteúdo presente for válido, a importação
+prossegue com um aviso. A verdade são as linhas; um contador desactualizado não é corrupção de
+dados. Recusar por um resumo desalinhado tornaria o bundle recusável por um detalhe sem
+consequência — e a §11.3 exige que o utilizador consiga sempre sair do estado de erro.
+
+**4. Bytes de documentos presentes no ZIP → verificar o SHA-256, não persistir.** Nesta fase não
+há camada de armazenamento (decisão 2). Os bytes são lidos e o seu `sha256` é conferido contra o
+manifest — é verificação de integridade, não persistência. O relatório declara quantos bytes
+foram verificados e descartados. O contrato `missingContent` mantém-se para os documentos cujos
+bytes não venham no bundle, e a limitação é declarada **antes** da confirmação (§11.3), nunca
+depois.
+
+**Condição transversal às quatro.** **Todos os limites de segurança são aplicados aos dados
+efectivamente lidos, nunca aos valores declarados no manifest.** Um `count` enganador — para
+menos ou para mais — não pode contornar um limite nem autorizar trabalho que os dados não
+justificam. É a mesma lógica da Fase 2, onde os limites do ZIP são verificados sobre os tamanhos
+declarados **antes** de descomprimir e reconfirmados sobre os bytes reais **depois**: declarado
+serve para recusar cedo, real serve para decidir.
+
+**Limite de volume.** Acima de **100 000 registos** a importação é **recusada antes de qualquer
+alteração na base de dados**. Os 10 000 da §7.2 continuam a ser o limite de *transação* (`≤10 000`
+→ transação única; `10 001–100 000` → lotes atómicos com ponto de retoma). Os 100 000 são um
+**limite de segurança e operacional da implementação**, não um valor da especificação funcional —
+a §7.2 não fixa teto absoluto, e sem teto um bundle de tamanho arbitrário obrigaria a memória do
+processo a decidir por nós. É configurável.
+
+**Como se detetou.** Ao preparar a Fase 3, a §9.5 foi confrontada com o `schema.prisma`: nenhum
+dos 27 modelos serve de livro, e `plan.ts` já consome `importedLocalIds` como se existisse. A
+lacuna vivia entre um documento fechado e um schema que nunca o reflectiu, e só apareceu quando
+o consumidor do livro passou a existir.
+
+---
+
+## A27. O Normalizer mapeia referências para **dois** locais, e três campos que o contrato não formalizava
+
+A §4.1 descreve a cadeia `ImportSource → Parser → Normalizer → Validator → Deduplicator →
+ImportPlan → Transaction → Report`. Ao preparar a Fase 3 verificou-se que o **Normalizer não
+existia**: `bundle.ts` produzia `RawBundleRecord` com os campos **deliberadamente não
+interpretados** (foi o que o A26 fixou, e os testes da Fase 3 verificam-no), enquanto `validate.ts`
+e `plan.ts` só aceitam `CanonicalRecord`. A cadeia estava partida em dois, e o elo em falta é este.
+
+O elo passa a ser `apps/api/src/domain/import/normalize-records.ts` — **puro**: sem Prisma, sem
+HTTP, sem sistema de ficheiros. É também o ponto de convergência que a §4.3 exige: o bundle hoje e
+o CSV na Fase 4 produzem ambos `CanonicalRecord`, e é isso que permite acrescentar um adaptador
+novo sem tocar no Validator.
+
+Ao escrevê-lo apareceram três lacunas entre o contrato fechado e o que o domínio já consumia.
+Nenhuma exigiu alteração incompatível; as três resolvem-se de forma aditiva.
+
+**1. `vehicleLocalId` vive em dois locais: `references.vehicleLocalId` e `fields.vehicleLocalId`.**
+
+O `plan.ts` lê a referência de `record.references.vehicleLocalId`; o `dedupe-keys.ts` inclui
+`vehicleLocalId` **nos `fields`** como componente do valor da chave de despesa
+(`fields: ['date','amountCents','category','vendor','description','vehicleLocalId']`). Se o
+Normalizer escrevesse a referência num só dos dois sítios, a chave de despesa passaria a comparar
+`undefined` do lado do bundle, e duas despesas de **veículos diferentes** com o mesmo dia e o
+mesmo valor coincidiriam — exactamente a mistura de históricos que a §8.4 proíbe.
+
+A duplicação é deliberada e tem uma justificação: `references` é a **aresta** do grafo (validada
+quanto a existência pelo `findBrokenReferences`), `fields` é o **valor** que entra na composição da
+chave. São perguntas diferentes sobre o mesmo dado. Alternativa rejeitada: unificar num só local
+obrigaria a alterar `plan.ts` e `dedupe-keys.ts` — domínio já testado — para contornar a ausência
+do Normalizer, o que inverteria a ordem das alterações.
+
+**2. `storageKey` não se inventa nem se deriva.** O bundle v1 não transporta `storageKey`, e o
+`documentKeys` lê-o. `contentPath`, `fileName` e `contentSha256` **não** são substitutos: têm
+significados próprios e usá-los como se fossem a chave de armazenamento criaria uma coincidência
+falsa entre documentos distintos que partilham nome de ficheiro. Sem `storageKey`, a componente
+correspondente fica ausente e a deduplicação faz-se pelos restantes campos definidos — mais fraca,
+mas honesta. A chave forte de deduplicação de documentos continua a ser `contentSha256`, que o
+bundle transporta.
+
+**3. `tax.kind` é campo explícito do bundle, não um valor derivado.** O `taxKeys` constrói a chave
+`year+kind` como **certa**, e o modelo `TaxRecord` guarda `kind String @default("iuc")`. Mas o
+contrato partilhado só formalizava esquemas por tipo para `vehicle` e `document`: `taxes.jsonl` não
+tinha forma declarada, pelo que `kind` era um campo que o domínio já usava sem estar formalizado.
+**Derivá-lo de `year`, da descrição ou da categoria está proibido** — seria inventar uma regra de
+negócio que ninguém escreveu, e uma derivação errada transformaria duas obrigações fiscais
+distintas na mesma. Foi acrescentado `zBundleTax` ao contrato partilhado, de forma **aditiva**
+(nenhum esquema existente foi alterado nem removido), com `kind` obrigatório.
+
+**Regra geral que fica destas três.** Um campo que o domínio já lê é um campo do contrato, mesmo
+que o contrato não o tenha formalizado. A resposta correcta é **formalizá-lo**, nunca derivá-lo nem
+inventá-lo: um campo em uso e não declarado é uma lacuna da documentação, e uma derivação silenciosa
+é uma regra de negócio inventada no sítio onde ninguém a vai procurar.
+
+**Como se detetou.** Ao construir o Normalizer, a tentativa de preencher o `CanonicalRecord` foi
+confrontada com os campos que `dedupeKeysFor` consome, campo a campo, para os catorze tipos de
+registo. Três não tinham origem definida. A lacuna não aparecia em nenhum teste porque nenhum
+teste ligava ainda o Parser ao Validator — cada metade estava testada contra o seu próprio
+contrato, e o contrato entre as duas nunca tinha sido exercido.
+
+### Risco registado, não corrigido nesta fase — `normalizeTextForCompare` devolve `''` e não `null`
+
+Ao escrever os testes do Normalizer apareceu um defeito **latente e pré-existente**, no
+`dedupe-keys.ts`. Fica registado aqui em vez de corrigido, porque a correção toca em domínio já
+fixado por 529 testes e a instrução da fase proíbe alterá-lo.
+
+**O mecanismo.** O `compose` recusa construir uma chave quando uma das partes é `null` ou
+`undefined` — é essa guarda que impede um falso "certo" a partir de um campo em falta. Mas o
+`normalizeTextForCompare` devolve **string vazia**, não `null`, para uma entrada ausente. A string
+vazia passa a guarda.
+
+**A consequência.** Um imposto sem `kind` produz a chave `year+kind` com o valor `"veh_1|2026|"`.
+Não é nulo, portanto é uma chave **utilizável** e declarada `exact`. Dois impostos do mesmo veículo
+e do mesmo ano, ambos sem `kind` — por exemplo um IUC e um IMI — **coincidem** nessa chave, a
+classificação é "duplicado certo" e um deles é ignorado em silêncio. É a perda de dados que a §8.4
+existe para impedir, e é indistinguível de uma deduplicação correta no relatório.
+
+**O que limita o dano hoje.** O `zBundleTax` (acima) exige `kind` **não vazio**, pelo que um bundle
+conforme ao contrato nunca chega a este caminho. Alcançá-lo exige um bundle que viole o contrato, e
+para esse a proteção é a validação do contrato — não uma heurística no mapeamento.
+
+**A correção, quando for feita.** Duas opções, ambas no domínio: o `normalizeTextForCompare` passa a
+devolver `null` em vez de `''` para entrada ausente — mais correto, mas mexe numa função usada por
+seis dos catorze tipos; ou o `compose` passa a tratar a string vazia como parte ausente — mais
+localizado, mas altera a política de composição de todas as chaves. **A primeira é a preferida**:
+"ausente" e "vazio" são coisas diferentes, e a função é precisamente a que traduz o valor de entrada
+para a forma comparável — é aí que a distinção pertence.
+
+**Onde está o caso escrito.** `test/import-normalize-records.test.ts`, no teste
+*"um imposto sem kind produz uma chave degenerada"*, que afirma o comportamento atual, demonstra a
+colisão com dois impostos e explica porque não se corrige nesta fase.
+
+---
+
+## A28. A chave de `counts` é o nome do ficheiro, "não há nada a fazer" não é um erro, e o relatório não reconta
+
+Três decisões que surgiram ao escrever a camada de serviços da Fase 3 (`read.ts`, `book.ts`,
+`apply.ts`, `report.ts`), todas sobre fronteiras onde duas peças correctas se encontram e a
+fronteira entre elas não estava escrita em nenhum sítio.
+
+Não são escolhas arquitecturais independentes: são a consequência obrigatória das regras já
+aprovadas — a regra 2 de A26 (contagens divergentes avisam em vez de rejeitar) e a §9.5
+(reimportar é uma operação normal). Ficam registadas porque a aplicação de uma regra aprovada a
+um caso concreto é precisamente o que se esquece e se reverte sem saber o que protegia.
+
+### 1. `manifest.counts` é indexado pelo nome do ficheiro
+
+O `collectCountMismatches` comparava as contagens declaradas com as reais contando por
+`` `${record.kind}s` `` — pluralizando o tipo do registo. A coincidência parecia funcionar
+porque acerta em `vehicle`→`vehicles` e `document`→`documents`, mas o contrato da §5.2 mostra
+`"counts": { …, "fuel": 18, … }` para `fuel.jsonl`: a chave é o **nome do ficheiro sem
+`.jsonl`**, não o tipo pluralizado.
+
+O erro não se manifestava como uma falta de aviso, mas como **um aviso a mais**: um bundle
+perfeitamente coerente passava a produzir `bundle.count_mismatch` a dizer que as contagens não
+batiam. Um aviso falso é pior do que um aviso ausente — treina o utilizador a ignorar avisos.
+
+**A correcção.** A chave passa a ser derivada do `record.file` que cada registo já traz
+(`basename` sem `.jsonl`). Não há nada a inferir: o nome do ficheiro está no registo e o
+`counts` é indexado por esse nome. A regra geral que fica: **quando os dois lados de uma
+comparação têm o mesmo dado, derivar a chave do dado em vez de a reconstruir por convenção.**
+
+### 2. Aplicar um plano `nothing-to-do` devolve um relatório, não lança
+
+O `canApply` do domínio devolve `false` para `blocked` **e** para `nothing-to-do`. Usado como
+porta de recusa no `apply.ts`, tratava uma reimportação como erro.
+
+Responde a duas perguntas diferentes:
+
+- *"esta importação é válida?"* — só `blocked` responde que não;
+- *"há trabalho a fazer?"* — `nothing-to-do` responde que não.
+
+A §9.5 descreve a reimportação como um **resultado normal**, com relatório: *"já importado em
+14/02/2026 às 10:31; nada a fazer."* Não escrever nada quando não há nada a escrever é um
+sucesso, e a interface tem de o poder dizer. O `apply.ts` passa a recusar apenas `blocked`; o
+caminho de trabalho vazio continua a devolver o relatório vazio que já existia.
+
+**Os três estados não se confundem entre si.** Cada um responde a uma pergunta diferente e
+nenhum é um caso degenerado dos outros:
+
+| Estado | Pergunta | Origem |
+|---|---|---|
+| `skipped` | *"este ficheiro já foi importado?"* | `ImportBookEntry` (livro de idempotência) |
+| `exact` | *"este registo já existe na conta?"* | deduplicação por conteúdo (§8) |
+| `blocked` | *"há uma condição que impede a aplicação?"* | validação |
+
+O livro tem **precedência** sobre a deduplicação: um registo de um bundle já importado é
+`skipped` («já importado deste ficheiro»), mesmo que a deduplicação o classificasse como
+`exact`. São perguntas diferentes e a que responde *"não há nada a fazer com este registo"* é a
+mais específica — foi por isso que um teste meu que esperava `exact` estava errado e o código
+certo.
+
+**A formulação geral.** *"Não posso escrever"* e *"não tenho o que escrever"* são coisas
+diferentes: a primeira exige uma acção do utilizador, a segunda é uma confirmação. Uma função
+booleana que responde às duas ao mesmo tempo obriga quem a chama a saber qual das duas
+perguntas fez — e é aí que a distinção se perde.
+
+### 3. O relatório compõe, não recalcula
+
+O `report.ts` é a composição do `summarizePlan` (domínio) com o `ApplyReport` (o que foi
+escrito). Não reconta nada. Uma terceira contagem só poderia divergir das outras duas, e a
+divergência seria visível ao utilizador como uma contradição — "Criar 298" no ecrã de revisão
+e 297 no relatório — sem forma de saber qual está certa.
+
+**Onde estão os casos escritos.** `test/import-apply-preview.test.ts` (livro de idempotência com
+precedência sobre a deduplicação, reimportação, `nothing-to-do`, avisos de `counts`) e
+`test/import-report.test.ts` (relatório, CSV, a frase de abertura que não pode contradizer os
+números).

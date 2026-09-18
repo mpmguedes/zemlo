@@ -20,7 +20,7 @@ telemetria, famílias e frotas sem reconstrução estrutural.
 | Autenticação (email/password, JWT, 2FA TOTP, sessões renováveis) | ✅ |
 | App web (React · Vite · mobile-first, 30 rotas) | ✅ |
 | Testes (63 unitários · 231 ponta a ponta · 70 regressões · 12 guardas · 28 integração) | ✅ a passar |
-| Documentação (API, arquitetura, 25 decisões, operações, identidade) | ✅ |
+| Documentação (API, arquitetura, 28 decisões, operações, identidade) | ✅ |
 | App mobile (Flutter) | ⏳ pós-MVP (§3.6) |
 | Integrações de fabricantes, OBD, wallboxes, MQTT | ⏳ modelo e especificação prontos, sem ligação |
 
@@ -172,7 +172,7 @@ zemlo/
 └── docs/
     ├── API.md                      Contrato completo da API
     ├── ARCHITECTURE.md             Como o sistema está construído
-    ├── DECISIONS.md                Porque cada decisão foi tomada (25 decisões)
+    ├── DECISIONS.md                Porque cada decisão foi tomada (28 decisões)
     ├── OPERATIONS.md               Deploy, backups, monitorização, recuperação
     └── BRAND.md                    Símbolo Z-estrada: conceito e regras
 ```
@@ -304,7 +304,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"     
   erro, fluxos de confirmação.
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — as quatro camadas da API, modelo de
   dados, autenticação, pontos de extensão, superfície de segurança.
-- **[docs/DECISIONS.md](docs/DECISIONS.md)** — 25 decisões de arquitetura com alternativas
+- **[docs/DECISIONS.md](docs/DECISIONS.md)** — 28 decisões de arquitetura com alternativas
   consideradas e o que se perde com cada escolha.
 - **[docs/OPERATIONS.md](docs/OPERATIONS.md)** — deploy, segredos, migrações, backups,
   monitorização e recuperação.

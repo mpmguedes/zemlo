@@ -881,6 +881,18 @@ export interface BuildPlanOptions {
   readonly state: ExistingAccountState;
   /** Problemas da validação, preservados no plano em vez de recalculados. */
   readonly validationIssues?: readonly ImportIssue[];
+  /**
+   * Avisos do **bundle** (não da validação), preservados no plano.
+   *
+   * É o canal pelo qual a divergência de `counts` chega ao utilizador (A26): o `bundle.ts`
+   * deteta-a e classifica-a como `info`, e o plano tem de a transportar até à interface.
+   * Sem isto, o aviso existiria no resultado da leitura e perder-se-ia antes de chegar a
+   * quem o devia ver — o utilizador veria "importamos os N que existem" em lado nenhum.
+   *
+   * São issues **sem `localId`**, e por isso não entram nas entradas: não pertencem a
+   * nenhum registo, e atribuí-las a um seria inventar um dono.
+   */
+  readonly bundleIssues?: readonly ImportIssue[];
   readonly conflictPolicy?: ConflictPolicy;
   /** Âmbito declarado pelo bundle (§5.7), para apresentação. */
   readonly scopeNote?: string;
@@ -910,6 +922,7 @@ export function buildPlan(options: BuildPlanOptions): ImportPlan {
     records,
     state,
     validationIssues = [],
+    bundleIssues = [],
     conflictPolicy = DEFAULT_CONFLICT_POLICY,
     scopeNote,
     decisions,
@@ -965,13 +978,28 @@ export function buildPlan(options: BuildPlanOptions): ImportPlan {
   // exatamente os problemas que bloqueiam o bundle inteiro.
   const orphanIssues = validationIssues.filter((issue) => !issue.localId);
 
+  /*
+   * Os avisos do bundle juntam-se aos da validação num só conjunto. Não vão para as
+   * entradas: são avisos de conjunto (o `counts` do manifest é sobre o ficheiro, não sobre
+   * os registos), e o `inherited` acima só distribui por `localId` — um aviso sem dono não
+   * tem por onde ser distribuído.
+   *
+   * A ordem preserva os da validação primeiro: a interface mostra-os pela ordem em que
+   * chegam, e os problemas de um registo concreto são mais accionáveis do que um aviso de
+   * contagem.
+   */
+  const allIssues = [...validationIssues, ...bundleIssues];
+
   return {
     state: state_,
     counts,
     byKind: countByKind(entries),
     entries,
-    issues: [...validationIssues],
-    issueSummary: summarizeIssues([...validationIssues, ...orphanIssues.map((item) => ({ ...item }))]),
+    issues: allIssues,
+    issueSummary: summarizeIssues([
+      ...allIssues,
+      ...orphanIssues.map((item) => ({ ...item })),
+    ]),
     ...(scopeNote ? { scopeNote } : {}),
     conflictPolicy,
     notices,

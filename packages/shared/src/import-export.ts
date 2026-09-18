@@ -415,6 +415,31 @@ export const zBundleDocument = zBundleRecordBase.extend({
 });
 export type BundleDocument = z.infer<typeof zBundleDocument>;
 
+/**
+ * Imposto (§5.5).
+ *
+ * O `kind` é **obrigatório e explícito** e não se deriva de mais nada. O modelo
+ * `TaxRecord` guarda-o (`kind String @default("iuc")`) e a chave de deduplicação
+ * `year+kind` depende dele como componente **certo** (§8.4): derivá-lo do ano, da
+ * descrição ou da categoria seria inventar uma regra de negócio que ninguém escreveu, e
+ * uma derivação errada faria duas obrigações fiscais distintas passarem pela mesma —
+ * perdendo uma delas na importação. Ver A27.
+ *
+ * Acrescentado em A27: o domínio já consumia `kind` desde a Fase 1, mas `taxes.jsonl`
+ * era o único ficheiro de dados sem forma declarada no contrato.
+ */
+export const zBundleTax = zBundleRecordBase.extend({
+  vehicleLocalId: z.string(),
+  /** Tipo de imposto: `iuc`, `imi`, `circulation`, `toll`, … */
+  kind: z.string().min(1),
+  year: z.number().int(),
+  amountCents: z.number().int(),
+  date: z.string().nullable().optional(),
+  dueDate: z.string().nullable().optional(),
+  paid: z.boolean().optional(),
+});
+export type BundleTax = z.infer<typeof zBundleTax>;
+
 /* -------------------------------------------------------------------------- */
 /* Importação — resultado estruturado (§9)                                     */
 /* -------------------------------------------------------------------------- */
