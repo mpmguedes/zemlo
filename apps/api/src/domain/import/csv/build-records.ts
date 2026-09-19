@@ -171,6 +171,13 @@ export function buildCanonicalRecords(
     const fields: Record<string, unknown> = {};
     let hasValue = false;
     let blocked = false;
+    /**
+     * A linha tem um valor cuja leitura depende de uma resposta que ainda não foi dada.
+     *
+     * Distinto de `blocked`: aqui não há nada de errado com o ficheiro. Ver a nota no
+     * interior do ciclo.
+     */
+    let awaitingDecision = false;
     // Texto cru da célula da matrícula, quando existe. É o único sítio onde a forma que o
     // ficheiro escreveu (`AA-00-BB`) sobrevive à interpretação — que já devolve o valor
     // convertido. Sem isto, `plateDisplay` acabaria igual ao `plate` canónico. Ver
@@ -193,20 +200,39 @@ export function buildCanonicalRecords(
       // (legítimo) ou o valor pode ter sido ilegível (já reportado em `issues`).
       const raw = row.values[column.index];
       if (raw !== undefined && raw.trim() !== '') {
-        // Havia texto e não há valor interpretado: o valor foi rejeitado.
-        blocked = true;
+        /*
+         * Havia texto e não há valor interpretado. São duas causas diferentes, e a
+         * diferença é do utilizador:
+         *
+         *  - **ambíguo** — o valor é legível mas tem várias leituras (`1,589`, `03/04/2026`)
+         *    e o intérprete recusou-se a escolher. Não há nada a corrigir no ficheiro; falta
+         *    uma resposta. `values` vem vazio exatamente por isso.
+         *  - **rejeitado** — o valor não é do tipo do campo (`"muito caro"` numa coluna de
+         *    preço). Aqui o ficheiro tem um problema.
+         *
+         * Sem esta distinção, as duas produziam a mesma frase («valores ilegíveis») e a
+         * primeira mandava o utilizador corrigir um ficheiro que estava certo. É a mesma
+         * correção que `describeEmptyResult` faz na mensagem de conjunto.
+         */
+        if (interpreted.get(column.index) === undefined) {
+          awaitingDecision = true;
+        } else {
+          blocked = true;
+        }
       }
     }
 
-    if (!hasValue && !blocked) {
+    if (!hasValue && !blocked && !awaitingDecision) {
       // Linha sem qualquer valor mapeado — não é um erro, é uma linha vazia.
       continue;
     }
 
-    if (blocked) {
+    if (blocked || awaitingDecision) {
       skipped.push({
         line: row.line,
-        reason: 'Um ou mais valores desta linha não puderam ser interpretados.',
+        reason: awaitingDecision
+          ? 'Falta responder a uma ambiguidade para interpretar esta linha.'
+          : 'Um ou mais valores desta linha não puderam ser interpretados.',
       });
       continue;
     }
@@ -831,9 +857,38 @@ export function emptyFieldsFor(
  *
  * Devolver uma lista vazia em silêncio seria o pior resultado possível: o utilizador veria
  * "0 registos" sem saber porquê. A mensagem tem de apontar para a causa mais provável.
+ *
+ * ## Porque é que uma ambiguidade muda a mensagem
+ *
+ * As linhas ignoradas por causa de um valor ambíguo **têm** valores PERFEITAMENTE legíveis —
+ * só têm mais do que uma leitura. Dizer «foram ignoradas por terem valores ilegíveis» é
+ * falso nesse caso, e manda o utilizador corrigir um ficheiro que não tem nada para
+ * corrigir. Quando quem chama sabe que a causa é uma ambiguidade, a mensagem muda de
+ * destinatário: deixa de ser uma instrução sobre o ficheiro e passa a ser um pedido de
+ * resposta.
+ *
+ * A decisão de **quando** há ambiguidade não é tomada aqui: `describeEmptyResult` é do
+ * domínio da construção de registos e não interpreta valores. O chamador passa o que sabe,
+ * e a função limita-se a redigir. (A §4.3 é a mesma razão pela qual este módulo não conhece
+ * `interpretColumn`: cada um responde pela sua parte.)
  */
-export function describeEmptyResult(result: BuildRecordsResult): string | null {
+export function describeEmptyResult(
+  result: BuildRecordsResult,
+  ambiguities: readonly { readonly code: string; readonly question: string }[] = [],
+): string | null {
   if (result.records.length > 0) return null;
+
+  /*
+   * A ambiguidade vem primeiro: quando existe, é ela que explica as linhas em falta — as
+   * linhas ignoradas são a **consequência**, não a causa. Apresentar a consequência antes da
+   * causa obrigaria o utilizador a perceber sozinho que as duas coisas estão ligadas.
+   */
+  if (ambiguities.length > 0) {
+    const questions = ambiguities.map((entry) => entry.question).join(' ');
+    return ambiguities.length === 1
+      ? `Falta uma resposta para continuar. ${questions}`
+      : `Faltam ${ambiguities.length} respostas para continuar. ${questions}`;
+  }
 
   if (result.skipped.length > 0) {
     return `Nenhum registo pôde ser construído: ${result.skipped.length} linha(s) foram ignoradas por terem valores ilegíveis.`;

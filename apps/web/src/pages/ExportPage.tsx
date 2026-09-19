@@ -5,7 +5,7 @@ import { fetchExport } from '../api/queries';
 import { errorMessage, errorRequestId } from '../api/errors';
 import { saveBlob } from '../api/client';
 import { useMetrics, useProfile, useVehicles } from '../api/hooks';
-import { Button, Card, Chip, DetailList, DetailRow, InlineError, LoadingBlock, PageHeader, Section } from '../ui/primitives';
+import { Button, ButtonLink, Card, Chip, DetailList, DetailRow, InlineError, LoadingBlock, PageHeader, Section } from '../ui/primitives';
 import { useToast } from '../ui/Toaster';
 import { dateLong, dateRange } from '../lib/format';
 import { formatNumber } from '@zemlo/shared';
@@ -147,6 +147,27 @@ export function ExportPage() {
               </div>
             </Card>
           </div>
+        </div>
+      </Card>
+
+      <Card soft>
+        <div className="z-card__header">
+          <div>
+            <div className="z-card__title">Trazer dados de outra aplicação</div>
+            <div className="z-card__subtitle">Importar de um ficheiro CSV</div>
+          </div>
+        </div>
+        <p className="z-small z-muted">
+          Se tens o teu histórico noutra aplicação — uma folha de cálculo, um caderno de
+          manutenção, o export de um serviço — podes trazê-lo para aqui. O Zemlo percebe as
+          colunas sozinho, mostra-te como os registos vão ficar e só escreve depois de tu
+          confirmares.
+        </p>
+        <div className="z-row" style={{ marginTop: 'var(--z-space-3)', gap: 'var(--z-space-2)' }}>
+          <ButtonLink to="/import" variant="secondary">
+            Importar de um ficheiro
+          </ButtonLink>
+          <Chip tone="ok">Nada é escrito sem confirmares</Chip>
         </div>
       </Card>
 

@@ -40,11 +40,13 @@ import {
   documentContentIssues,
   findBrokenReferences,
   findDuplicateLocalIds,
+  findMissingVehicleReferences,
   informational,
   invalidLocalIdIssues,
   invalidReferenceFormatIssues,
   localIdPrefixHint,
   missingRequiredFieldIssues,
+  missingVehicleReferenceIssues,
   qualityFrom,
   recoverable,
   semanticIssues,
@@ -592,6 +594,110 @@ describe('findBrokenReferences — distingue ausência de quebra (§9.4)', () =>
     ]);
     expect(issues[0]?.severity).toBe('blocking');
     expect(issues[0]?.code).toBe('bundle.invalid_reference_format');
+  });
+});
+
+describe('findMissingVehicleReferences — referência obrigatória em falta (§9.4)', () => {
+  /*
+   * Esta regra preenche um buraco que o `findBrokenReferences` não vê, por desenho.
+   *
+   * O `findBrokenReferences` responde a «esta referência aponta para algo que não
+   * existe?». Ele **não** responde a «este registo tem a referência de que precisa?» —
+   * e a ausência é um valor legítimo em `documents` e `events`, pelo que tratá-la lá
+   * como quebra estaria errado.
+   *
+   * Sem esta regra, um registo de `fuel` sem `vehicleLocalId` passava a validação
+   * inteira, o plano dizia `ready`, e a escrita falhava a meio com um erro do Prisma
+   * (`Argument \`vehicle\` is missing`) — um 500, não um problema explicado. A §9.4
+   * exige «bloqueante, detetada antes de qualquer escrita».
+   */
+
+  it('deteta um abastecimento sem veículo', () => {
+    const missing = findMissingVehicleReferences([record('fuel', 'fuel_1')]);
+    expect(missing).toHaveLength(1);
+    expect(missing[0]?.record.localId).toBe('fuel_1');
+  });
+
+  it('trata a ausência como `undefined`, `null` e cadeia vazia', () => {
+    // A §5.3 diz que a ausência é omissão ou `null`; uma cadeia vazia é o mesmo escrito
+    // de outra maneira. Não contar a cadeia vazia deixaria passar exactamente o caso que
+    // a camada CSV produz quando a coluna da matrícula existe mas está vazia.
+    expect(findMissingVehicleReferences([record('fuel', 'f1', { references: {} })])).toHaveLength(1);
+    expect(findMissingVehicleReferences([record('fuel', 'f2', { references: { vehicleLocalId: null } })])).toHaveLength(1);
+    expect(findMissingVehicleReferences([record('fuel', 'f3', { references: { vehicleLocalId: undefined } })])).toHaveLength(1);
+    expect(findMissingVehicleReferences([record('fuel', 'f4', { references: { vehicleLocalId: '' } })])).toHaveLength(1);
+  });
+
+  it('NÃO exige veículo a um documento', () => {
+    // `Document.vehicleId` é `String?` no esquema: uma carta de condução não tem veículo.
+    expect(findMissingVehicleReferences([record('document', 'doc_1')])).toHaveLength(0);
+  });
+
+  it('NÃO exige veículo a um veículo', () => {
+    expect(findMissingVehicleReferences([record('vehicle', 'veh_1')])).toHaveLength(0);
+  });
+
+  it('aceita um registo que traz o veículo', () => {
+    const missing = findMissingVehicleReferences([
+      record('vehicle', 'veh_1'),
+      record('fuel', 'fuel_1', { references: { vehicleLocalId: 'veh_1' } }),
+    ]);
+    expect(missing).toHaveLength(0);
+  });
+
+  it('exige-o a todos os tipos que têm vehicleId obrigatório no esquema', () => {
+    // A lista é derivada do `schema.prisma`, não de preferências: todos estes declaram
+    // `vehicleId String` sem `?`. Um tipo novo que entre no esquema sem veículo tem de
+    // ser uma decisão consciente, e este teste é o que a obriga a ser.
+    const required: CanonicalRecord['kind'][] = [
+      'odometer',
+      'expense',
+      'fuel',
+      'charging',
+      'maintenance',
+      'insurance',
+      'inspection',
+      'tax',
+      'reminder',
+    ];
+    for (const kind of required) {
+      expect(findMissingVehicleReferences([record(kind, `${kind}_1`)]), kind).toHaveLength(1);
+    }
+  });
+
+  it('converte-os em problemas bloqueantes com mensagem legível', () => {
+    const issues = missingVehicleReferenceIssues(
+      findMissingVehicleReferences([record('fuel', 'fuel_1')]),
+    );
+    expect(issues).toHaveLength(1);
+    expect(issues[0]?.severity).toBe('blocking');
+    expect(issues[0]?.code).toBe('bundle.missing_vehicle_reference');
+    expect(issues[0]?.localId).toBe('fuel_1');
+    expect(issues[0]?.field).toBe('vehicleLocalId');
+    // A mensagem nomeia o tipo em português, para uma pessoa decidir — não a coluna interna.
+    expect(issues[0]?.message).toContain('abastecimento');
+    expect(issues[0]?.message).not.toContain('vehicleLocalId');
+  });
+
+  it('bloqueia o conjunto inteiro, não apenas o registo afetado (§9.4)', () => {
+    // A §9.4 trata um bloqueante como bloqueio do bundle: o utilizador não deve importar
+    // «os outros» e descobrir depois que faltou metade.
+    const validation = validateRecords([
+      record('vehicle', 'veh_1'),
+      record('odometer', 'odo_1', { references: { vehicleLocalId: 'veh_1' } }),
+      record('fuel', 'fuel_1'),
+    ]);
+    expect(validation.blocked).toBe(true);
+    expect(validation.issues.some((i) => i.code === 'bundle.missing_vehicle_reference')).toBe(true);
+  });
+
+  it('não bloqueia um conjunto em que todos trazem o veículo', () => {
+    const validation = validateRecords([
+      record('vehicle', 'veh_1'),
+      record('odometer', 'odo_1', { references: { vehicleLocalId: 'veh_1' } }),
+      record('fuel', 'fuel_1', { references: { vehicleLocalId: 'veh_1' } }),
+    ]);
+    expect(validation.blocked).toBe(false);
   });
 });
 

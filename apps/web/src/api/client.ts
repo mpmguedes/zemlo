@@ -242,6 +242,16 @@ interface RawRequestInit {
   body?: unknown;
   signal?: AbortSignal;
   headers?: Record<string, string>;
+  /**
+   * Corpo binário, enviado tal como está.
+   *
+   * É mutuamente exclusivo com `body`: um pedido ou leva JSON (que é serializado aqui) ou
+   * leva bytes (que não podem ser tocados). Ter os dois campos separados, em vez de um
+   * `BodyInit`, evita a ambiguidade silenciosa de um `Blob` que também é um objeto
+   * serializável — `JSON.stringify(new Blob())` produz `{}` e o servidor receberia um CSV
+   * vazio sem que nada falhasse.
+   */
+  rawBody?: { blob: Blob; contentType: string };
 }
 
 /**
@@ -256,16 +266,25 @@ async function rawRequest(path: string, init: RawRequestInit, options: RequestOp
   const url = path.startsWith('http') ? path : `${API_BASE_URL}${path}${buildQueryString(options.query)}`;
   const token = getAccessToken();
 
+  const body: BodyInit | undefined =
+    init.rawBody !== undefined
+      ? init.rawBody.blob
+      : init.body !== undefined
+        ? JSON.stringify(init.body)
+        : undefined;
+
+  const contentType = init.rawBody?.contentType ?? (init.body !== undefined ? 'application/json' : undefined);
+
   const send = async (bearer: string | null): Promise<Response> =>
     fetch(url, {
       method: init.method,
       headers: {
         Accept: 'application/json',
-        ...(init.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+        ...(contentType !== undefined ? { 'Content-Type': contentType } : {}),
         ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
         ...init.headers,
       },
-      body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+      body,
       signal: init.signal,
     });
 
@@ -346,6 +365,18 @@ export interface Client {
   delete<T = void>(path: string, body?: unknown, options?: RequestOptions): Promise<T>;
   /** Descarrega um ficheiro (exportação §54), devolvendo bytes e nome sugerido. */
   download(path: string, options?: RequestOptions): Promise<{ blob: Blob; fileName: string | null }>;
+  /**
+   * Envia os **bytes originais** de um ficheiro, com o `Content-Type` declarado.
+   *
+   * Existe porque o corpo destes pedidos é o próprio ficheiro e não JSON: o `post` serializa
+   * o corpo, e serializar um CSV em JSON destruiria exatamente aquilo que o servidor tem de
+   * receber — os bytes, cujo `sha256` é a identidade do ficheiro usada na idempotência.
+   *
+   * O `Content-Type` é passado explicitamente (e não deixado ao browser) porque a API decide
+   * se lê o corpo a partir dele: um `multipart/form-data` é recusado com 415, e o browser
+   * usaria esse tipo se enviássemos um `FormData`.
+   */
+  upload<T>(path: string, body: Blob, contentType: string, options?: RequestOptions): Promise<T>;
 }
 
 async function parse<T>(response: Response): Promise<T> {
@@ -390,6 +421,15 @@ export const api: Client = {
     const disposition = response.headers.get('Content-Disposition') ?? '';
     const match = /filename="?([^";]+)"?/i.exec(disposition);
     return { blob: await response.blob(), fileName: match?.[1] ?? null };
+  },
+
+  async upload<T>(path: string, body: Blob, contentType: string, options: RequestOptions = {}) {
+    const response = await rawRequest(
+      path,
+      { method: 'POST', rawBody: { blob: body, contentType } },
+      options,
+    );
+    return parse<T>(response);
   },
 };
 

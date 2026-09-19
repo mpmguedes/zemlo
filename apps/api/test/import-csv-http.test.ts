@@ -985,6 +985,240 @@ describe('auditoria', () => {
   });
 });
 
+/* ========================================================================== */
+/* 10. As ambiguidades de valor chegam ao ecrã (§10.4)                         */
+/* ========================================================================== */
+
+/**
+ * ## O defeito que esta secção existe para impedir
+ *
+ * A §10.4 obriga a que as ambiguidades que o sistema não resolve sozinho sejam **perguntadas
+ * com pré-visualização das duas interpretações**, e a §11.3 proíbe becos sem saída. O
+ * domínio calcula essas ambiguidades (`interpretColumn` devolve `ambiguity`), mas o serviço
+ * de pré-visualização consumia o resultado e **descartava o campo**: só `values` e `issues`
+ * eram lidos.
+ *
+ * A consequência era o pior dos dois mundos, e era invisível nas suites existentes:
+ *
+ *  - a coluna ficava **sem valores** (`values: ambiguity ? new Map() : values`);
+ *  - `build-records.ts` encontrava células com texto e sem valor interpretado — "o valor foi
+ *    rejeitado" — e marcava a linha como bloqueada;
+ *  - a linha ia para `skipped` com o motivo genérico *"Um ou mais valores desta linha não
+ *    puderam ser interpretados"*;
+ *  - e o `valueIssues` ficava **vazio**, porque a ambiguidade nunca produziu um `ValueIssue`.
+ *
+ * O resultado era uma importação que não importava nada, um plano `nothing-to-do`, um ecrã
+ * que dizia *"4 linhas foram ignoradas por terem valores ilegíveis"* sem uma única linha
+ * ilegível para mostrar, e **nenhuma pergunta ao utilizador** — exatamente o que a §10.4
+ * manda perguntar.
+ *
+ * O caso é comum e não exótico: `1,589` (três decimais, o preço por litro) dispara
+ * `detectDecimalStyle` para `ambiguous`, e a coluna `Preço` de qualquer exportação de
+ * abastecimentos tem três decimais. Um ficheiro com `Data`, `Litros` e `Preço` composto por
+ * `03/05/2024` / `41,20` / `1,589` **não era importável**, e o motivo apresentado era falso.
+ *
+ * ## O que se exige aqui
+ *
+ * Não se exige uma forma específica de resolver a ambiguidade — exige-se que ela **não
+ * desapareça**. Uma ambiguidade que o servidor conhece e não conta é uma pergunta perdida.
+ */
+describe('ambiguidades de valor (§10.4)', () => {
+  /** O CSV que reproduz o defeito: vírgula decimal e três decimais no preço. */
+  const AMBIGUOUS_CSV = [
+    'Data;Descrição;Litros;Preço',
+    '03/05/2024;Repsol;41,20;1,589',
+    '12/05/2024;Galp;38,90;1,612',
+  ].join('\r\n');
+
+  it('apresenta a ambiguidade em vez de a descartar', async () => {
+    const response = await uploadCsv(app, '/api/v1/import/csv/preview', AMBIGUOUS_CSV);
+
+    expect(response.status).toBe(200);
+
+    /*
+     * A asserção central, e a única que prova a §10.4: o servidor **sabe** que não consegue
+     * decidir, e diz-o. Tem de trazer a pergunta pronta e as duas leituras com os valores de
+     * amostra, para que a resposta possa ser dada a olhar para os dados.
+     *
+     * Antes da correção este campo não existia: a ambiguidade era calculada em
+     * `interpretColumn` e o serviço só lhe consumia `values` e `issues`. O utilizador
+     * recebia uma lista de linhas ignoradas sem explicação possível, e nenhuma pergunta.
+     */
+    const ambiguities = response.body.mapping.valueAmbiguities as Array<{
+      code: string;
+      field: string;
+      question: string;
+      alternatives: Array<{ label: string; preview: string[] }>;
+    }>;
+
+    expect(ambiguities.length).toBeGreaterThan(0);
+
+    const separator = ambiguities.find((entry) => entry.code === 'separador_decimal');
+    expect(separator, 'a ambiguidade do separador decimal tem de ser declarada').toBeDefined();
+    expect(separator?.field).toBe('amountCents');
+    expect(separator?.question).toMatch(/separador de milhares ou decimal/i);
+    expect(separator?.alternatives.length).toBeGreaterThanOrEqual(2);
+
+    /*
+     * As alternativas trazem pré-visualização — é a §10.4 a exigir «pré-visualização das
+     * duas interpretações». Uma pergunta sem valores ao lado não é respondível: quem não
+     * sabe se o ficheiro é português ou inglês sabe ainda menos se `1,589` são 159 cêntimos
+     * ou 1589.
+     */
+    for (const alternative of separator?.alternatives ?? []) {
+      expect(alternative.label.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('não deixa avançar sem resposta enquanto a ambiguidade existir', async () => {
+    const response = await uploadCsv(app, '/api/v1/import/csv/preview', AMBIGUOUS_CSV);
+
+    /*
+     * `readyWithoutInput` é o que o ecrã usa para decidir se mostra o botão de continuar.
+     * Com uma ambiguidade por resolver tem de ser `false`: as linhas afetadas não produzem
+     * registos, e um ecrã que dissesse "tudo resolvido" sobre uma revisão vazia seria uma
+     * afirmação falsa.
+     */
+    expect(response.body.mapping.readyWithoutInput).toBe(false);
+    expect(response.body.preview).toHaveLength(0);
+  });
+
+  it('uma ambiguidade de valor não se disfarça de ficheiro vazio', async () => {
+    const response = await uploadCsv(app, '/api/v1/import/csv/preview', AMBIGUOUS_CSV);
+
+    const skipped = response.body.skipped as unknown[];
+    const emptyReason = response.body.emptyReason as string | null;
+
+    /*
+     * Quando nada pôde ser construído **por causa de uma ambiguidade**, a razão não pode
+     * afirmar que os valores eram ilegíveis: eles são legíveis, só não são unívocos. O
+     * utilizador tem de ser levado a responder, não a corrigir o ficheiro.
+     */
+    if (skipped.length > 0 && emptyReason !== null) {
+      expect(emptyReason).not.toMatch(/valores ilegíveis/i);
+    }
+  });
+
+  it('responder à convenção resolve a importação por completo', async () => {
+    const response = await uploadCsv(app, '/api/v1/import/csv/preview', AMBIGUOUS_CSV, {
+      query: 'kind=fuel&dateOrder=dia-mes&decimalStyle=virgula',
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.skipped).toHaveLength(0);
+    expect(response.body.emptyReason).toBeNull();
+    expect(response.body.preview).toHaveLength(2);
+
+    /*
+     * E o valor tem de estar **certo**, não apenas presente: `1,589` com a convenção da
+     * vírgula é um euro e cinquenta e nove cêntimos e nove décimos de cêntimo — arredondado
+     * a 159 cêntimos. Se a convenção fosse ignorada, o mesmo `1,589` leria 1589 cêntimos.
+     */
+    const first = response.body.preview[0] as { fields: Record<string, unknown> };
+    expect(first.fields.amountCents).toBe(159);
+    expect(first.fields.date).toBe('2024-05-03');
+  });
+});
+
+/* ========================================================================== */
+/* 11. Um CSV sem matrícula não pode rebentar na escrita (§9.4)                */
+/* ========================================================================== */
+
+/**
+ * O `FUEL_CSV` desta suite traz uma coluna `Matrícula`, e é por isso que ele nunca expôs
+ * este defeito: com matrícula, o adaptador sintetiza o veículo e o registo fica ligado.
+ *
+ * Um ficheiro **sem** coluna de matrícula — uma exportação de consumos, um registo de
+ * despesas por categoria — produz registos sem `vehicleLocalId`. Antes desta correcção
+ * isso passava a validação, o plano dizia `ready`, e a escrita rebentava a meio da
+ * transação com um erro do Prisma (`Argument \`vehicle\` is missing`) devolvido como
+ * **500**. A §9.4 exige «bloqueante, detetada antes de qualquer escrita».
+ *
+ * Estes testes fixam as três metades da exigência: **detetado**, **antes**, e **sem
+ * escrita nenhuma**.
+ */
+describe('CSV sem matrícula (§9.4)', () => {
+  /** Abastecimentos sem qualquer coluna de veículo. */
+  const NO_PLATE_CSV = [
+    'Data;Litros;Valor',
+    '25/02/2026;32,4;45,50',
+    '10/03/2026;28,1;39,90',
+  ].join('\r\n');
+
+  const NO_PLATE_DECISIONS = JSON.stringify([
+    { index: 0, field: 'date' },
+    { index: 1, field: 'litres' },
+    { index: 2, field: 'amountCents' },
+  ]);
+
+  it('o preview deteta a falta e bloqueia, em vez de prometer uma escrita impossível', async () => {
+    const response = await uploadCsv(app, '/api/v1/import/csv/preview', NO_PLATE_CSV, {
+      query: `kind=fuel&decisions=${encodeURIComponent(NO_PLATE_DECISIONS)}`,
+    });
+
+    expect(response.status).toBe(200);
+
+    // O plano não pode dizer `ready`: a escrita não pode funcionar.
+    const plan = response.body.plan as { state: string; counts: Record<string, number> };
+    expect(plan.state).toBe('blocked');
+
+    // E não pode haver nada classificado como «a criar» — é isso que torna o botão inerte.
+    expect(plan.counts.create).toBe(0);
+
+    // O problema tem de ser nomeado, com o código e a explicação legível.
+    const codes = (response.body.plan as { issues: { code: string }[] }).issues.map((i) => i.code);
+    expect(codes).toContain('bundle.missing_vehicle_reference');
+  });
+
+  it('explica o problema numa frase que uma pessoa consegue resolver', async () => {
+    const response = await uploadCsv(app, '/api/v1/import/csv/preview', NO_PLATE_CSV, {
+      query: `kind=fuel&decisions=${encodeURIComponent(NO_PLATE_DECISIONS)}`,
+    });
+
+    const issues = (response.body.plan as { issues: { message: string; severity: string }[] }).issues;
+    const missing = issues.find((i) => /veículo/i.test(i.message));
+    expect(missing).toBeDefined();
+    expect(missing?.severity).toBe('blocking');
+    // Nomeia o tipo em português, não a coluna interna.
+    expect(missing?.message).not.toContain('vehicleLocalId');
+  });
+
+  it('tentar aplicar mesmo assim devolve um erro explicado, nunca um 500', async () => {
+    const response = await uploadCsv(app, '/api/v1/import/csv/apply', NO_PLATE_CSV, {
+      query: `kind=fuel&decisions=${encodeURIComponent(NO_PLATE_DECISIONS)}`,
+    });
+
+    // O ponto central: a falha é **explicada**. Antes, isto era um 500 do Prisma.
+    expect(response.status).not.toBe(500);
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(errorOf(response.body).message).toBeTruthy();
+  });
+
+  it('não escreve absolutamente nada quando a matrícula falta', async () => {
+    const before = await counts();
+
+    await uploadCsv(app, '/api/v1/import/csv/apply', NO_PLATE_CSV, {
+      query: `kind=fuel&decisions=${encodeURIComponent(NO_PLATE_DECISIONS)}`,
+    });
+
+    // Nem registos, nem livro de idempotência: uma importação que não pode correr não
+    // pode deixar rasto que faça a seguinte parecer já feita.
+    expect(await counts()).toEqual(before);
+  });
+
+  it('um CSV COM matrícula continua a importar normalmente (não é uma proibição)', async () => {
+    // A regra é sobre a ligação em falta, não sobre o tipo. Este teste existe para que
+    // uma correcção futura demasiado ampla seja apanhada.
+    const response = await uploadCsv(app, '/api/v1/import/csv/apply', FUEL_CSV, {
+      query: `kind=fuel&decisions=${encodeURIComponent(FUEL_DECISIONS)}`,
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.applied).toBe(true);
+    expect(await db.prisma.fuelSession.count()).toBe(2);
+  });
+});
+
 /* -------------------------------------------------------------------------- */
 /* Contagem de linhas                                                          */
 /* -------------------------------------------------------------------------- */

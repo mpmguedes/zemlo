@@ -80,6 +80,7 @@ function navGroups(unreadCount: number): NavGroup[] {
         { to: '/notifications', label: 'Notificações', icon: '🔔', badge: unreadCount },
         { to: '/integrations', label: 'Integrações', icon: '🔗' },
         { to: '/export', label: 'Exportar dados', icon: '📤' },
+        { to: '/import', label: 'Importar dados', icon: '📥' },
         { to: '/settings', label: 'Definições', icon: '⚙️' },
       ],
     },

@@ -2354,3 +2354,271 @@ a.z-timeline__item:hover {
   font-size: var(--z-text-xs);
   overflow-wrap: anywhere;
 }
+/* ========================================================================== */
+/* 21. Importação de ficheiros (§10, §11)                                     */
+/* ========================================================================== */
+
+/*
+ * O fluxo de importação é o ecrã mais longo da aplicação e o único que muda de forma
+ * conforme o ficheiro. As classes abaixo existem para que essa variação seja de
+ * **conteúdo** e não de estrutura: os passos aparecem e desaparecem, mas o vocabulário
+ * visual (cartão, faixa, etiqueta, campo) é o mesmo do resto da aplicação.
+ *
+ * A regra que se mantém: nenhum valor de cor ou de espaço inventado. Tudo vem dos tokens
+ * de `theme.css`, e o âmbar continua reservado ao que pede uma ação.
+ */
+
+/* ---- Escolha do tipo de registo ---- */
+
+/*
+ * A opção é um `z-btn` com duas linhas. O `z-btn` já garante o alvo de 44 px e o estado
+ * de carregamento; o que se acrescenta é a possibilidade de o rótulo ter uma dica por
+ * baixo, que o `z-btn` (que centra os filhos numa linha) não comporta.
+ */
+.z-import__kind {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  height: auto;
+  min-height: var(--z-touch);
+  padding: var(--z-space-3) var(--z-space-4);
+  text-align: left;
+  line-height: var(--z-leading-normal);
+}
+
+.z-import__kind-label {
+  font-size: var(--z-text-base);
+  font-weight: 600;
+}
+
+.z-import__kind-hint {
+  font-size: var(--z-text-xs);
+  font-weight: 400;
+  opacity: 0.82;
+}
+
+/* ---- Mapeamento das colunas ---- */
+
+/*
+ * Uma coluna ambígua é um bloco com contorno próprio. O contorno é colorido pelo estado
+ * (âmbar para o que pede decisão, petróleo para o que foi resolvido) e não é decoração:
+ * é o que permite ao utilizador perceber, sem ler, quantos blocos ainda lhe pedem algo.
+ */
+.z-import__column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-2);
+  padding: var(--z-space-3);
+  border: 1px solid var(--z-border);
+  border-left-width: 3px;
+  border-radius: var(--z-radius);
+  background: var(--z-bg-elevated);
+}
+
+.z-import__column--warn {
+  border-left-color: var(--z-warn);
+  background: var(--z-warn-soft);
+}
+
+.z-import__column--accent {
+  border-left-color: var(--z-accent);
+}
+
+.z-import__column--ok {
+  border-left-color: var(--z-ok);
+}
+
+.z-import__column--neutral {
+  border-left-color: var(--z-border-strong);
+}
+
+.z-import__column-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--z-space-3);
+}
+
+/*
+ * As amostras são o que torna uma decisão tomável sem conhecer os dados de cor: alinham-se
+ * em linha e quebram quando não cabem, em vez de serem cortadas.
+ */
+.z-import__sample {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--z-space-1);
+}
+
+.z-import__sample-value {
+  padding: 1px var(--z-space-2);
+  border-radius: var(--z-radius-sm);
+  background: var(--z-bg-sunken);
+  color: var(--z-text-subtle);
+  font-size: var(--z-text-xs);
+}
+
+/* A linha do mapa completo, já resolvida: densa, sem contorno, para se poder percorrer. */
+.z-import__settled {
+  padding: var(--z-space-2) 0;
+  border-bottom: 1px solid var(--z-border);
+  font-size: var(--z-text-sm);
+}
+
+.z-import__settled:last-child {
+  border-bottom: 0;
+}
+
+/* ---- Convenções de valor (datas, decimais) ---- */
+
+.z-import__conventions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-3);
+  padding: var(--z-space-3);
+  border-radius: var(--z-radius);
+  background: var(--z-bg-sunken);
+}
+
+.z-import__convention {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+
+/* ---- Pré-visualização normalizada ---- */
+
+.z-import__preview-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-2);
+  padding: var(--z-space-3);
+  border: 1px solid var(--z-border);
+  border-radius: var(--z-radius);
+  background: var(--z-bg-elevated);
+}
+
+/*
+ * Os campos de uma linha em grelha automática: um registo de abastecimento tem cinco ou
+ * seis campos e um de veículo tem quatro, e ambos têm de caber sem que o ecrã decida por
+ * nós quantas colunas mostrar.
+ */
+.z-import__preview-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: var(--z-space-2) var(--z-space-3);
+  margin: 0;
+}
+
+.z-import__preview-field {
+  min-width: 0;
+}
+
+.z-import__preview-field dt {
+  margin: 0;
+}
+
+.z-import__preview-field dd {
+  margin: 0;
+  font-size: var(--z-text-sm);
+  color: var(--z-text);
+  overflow-wrap: anywhere;
+}
+
+/* ---- Contagens do plano (§11.2) ---- */
+
+/*
+ * As quatro contagens em grelha. Em telemóvel ficam duas a duas — quatro colunas dariam
+ * números de dois dígitos a transbordar, e o ecrã de revisão é o passo mais importante do
+ * fluxo para se perceber de relance.
+ */
+.z-import__counts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--z-space-2);
+}
+
+@media (min-width: 640px) {
+  .z-import__counts {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.z-import__count {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--z-space-3);
+  border: 1px solid var(--z-border);
+  border-radius: var(--z-radius);
+  background: var(--z-bg-elevated);
+}
+
+.z-import__count--ok {
+  border-color: var(--z-ok);
+  background: var(--z-ok-soft);
+}
+
+.z-import__count--warn {
+  border-color: var(--z-warn);
+  background: var(--z-warn-soft);
+}
+
+.z-import__count--danger {
+  border-color: var(--z-danger);
+  background: var(--z-danger-soft);
+}
+
+.z-import__count--accent {
+  border-color: var(--z-accent);
+  background: var(--z-accent-soft);
+}
+
+.z-import__count-value {
+  font-size: var(--z-text-2xl);
+  font-weight: 700;
+  line-height: var(--z-leading-tight);
+  color: var(--z-ink);
+}
+
+.z-import__count-label {
+  font-size: var(--z-text-sm);
+  font-weight: 600;
+  color: var(--z-text);
+}
+
+.z-import__count-hint {
+  line-height: var(--z-leading-normal);
+}
+
+/* ---- Uma entrada do plano ---- */
+
+.z-import__entry {
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-1);
+  padding: var(--z-space-2) var(--z-space-3);
+  border: 1px solid var(--z-border);
+  border-radius: var(--z-radius);
+  background: var(--z-bg-elevated);
+}
+
+/*
+ * O botão de detalhe é um botão e não uma ligação: não navega, altera o que está à vista.
+ * Herda o aspeto de texto para não competir com as etiquetas de estado que tem ao lado.
+ */
+.z-import__entry-toggle {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--z-accent);
+  font-family: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.z-import__entry-toggle:hover {
+  color: var(--z-accent-hover);
+}

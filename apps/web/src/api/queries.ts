@@ -29,6 +29,11 @@ import type {
   VehicleUpdateRequest,
 } from '@zemlo/shared';
 import { api } from './client';
+import type {
+  CsvApplyResponse,
+  CsvImportParams,
+  CsvPreviewResponse,
+} from './csvImport';
 import {
   queryKeys,
   type ChangePasswordResponse,
@@ -365,8 +370,127 @@ export const fetchExport = (params: {
   api.download('/export', { query: { ...params } });
 
 /* -------------------------------------------------------------------------- */
+/* Importação de CSV (Camada 2, §10)                                           */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * O `Content-Type` com que o CSV é enviado.
+ *
+ * `text/csv` e não `text/plain` porque é o tipo verdadeiro do ficheiro, e a API aceita os
+ * dois. O `charset` fica de fora de propósito: a codificação é detetada **pelos bytes**, e
+ * declará-la aqui seria uma afirmação do browser que poderia contradizer o conteúdo — um
+ * `charset=utf-8` num ficheiro CP1252 produziria uma deteção a discutir com o cabeçalho.
+ */
+const CSV_CONTENT_TYPE = 'text/csv';
+
+/**
+ * Analisa um CSV **sem escrever nada** (§7.1).
+ *
+ * O `bytes` é o `File` escolhido pelo utilizador, enviado sem qualquer transformação: é o
+ * `sha256` destes bytes que identifica o ficheiro no livro de idempotência, pelo que
+ * reencodar o conteúdo aqui mudaria a identidade e faria a segunda importação do mesmo
+ * ficheiro parecer uma importação nova.
+ *
+ * `decisions` só é enviado quando há decisões: um array vazio na *query* seria interpretado
+ * como "o utilizador decidiu não mapear nada", que é diferente de "ainda não decidiu".
+ */
+export const previewCsvImport = (
+  file: Blob,
+  params: CsvImportParams,
+): Promise<CsvPreviewResponse> =>
+  api.upload<CsvPreviewResponse>(
+    '/import/csv/preview',
+    file,
+    CSV_CONTENT_TYPE,
+    { query: csvQuery(params) },
+  );
+
+/** Aplica o plano revisto. **Escreve** — e devolve o relatório (§10.2, passos 8–9). */
+export const applyCsvImport = (
+  file: Blob,
+  params: CsvImportParams,
+): Promise<CsvApplyResponse> =>
+  api.upload<CsvApplyResponse>(
+    '/import/csv/apply',
+    file,
+    CSV_CONTENT_TYPE,
+    { query: csvQuery(params) },
+  );
+
+/**
+ * Traduz as opções para a *query string*.
+ *
+ * As decisões de coluna viajam como **JSON** (`decisions=[{"index":0,"field":"date"}]`).
+ *
+ * ## Porque é que não é um formato compacto
+ *
+ * Um par `índice:campo` separado por vírgulas seria mais curto, mas parte de uma premissa
+ * falsa: que o campo é um identificador simples. Não é — o servidor valida-o contra o
+ * vocabulário canónico, e um dia poderá ser qualquer texto. Nesse momento uma vírgula ou um
+ * `&` dentro do valor seria indistinguível do separador, e a codificação passaria a ser um
+ * problema de aspas a resolver em dois sítios.
+ *
+ * O JSON é também o formato que a API **já analisa** (`parseCsvOptions`), com uma validação
+ * explícita por entrada: índice inteiro não negativo, campo texto ou `null`. Um formato
+ * compacto obrigaria a acrescentar um segundo analisador no servidor, e dois analisadores
+ * para o mesmo conceito divergem à primeira alteração.
+ *
+ * ## O que não é enviado
+ *
+ *  - `decisions` vazio fica de fora: um array vazio dentro do JSON é uma lista vazia válida,
+ *    mas enviá-lo seria dizer «o utilizador decidiu não mapear nada», que é diferente de
+ *    «ainda não decidiu». Ausente, o campo não é tocado.
+ *  - `identity` vazio fica de fora pela mesma razão: `parseIdentityParam` trata a ausência
+ *    como «sem identificador a confrontar», e uma cadeia vazia seria um identificador que
+ *    nunca corresponde — recusaria sempre com 409.
+ */
+function csvQuery(params: CsvImportParams): Record<string, string | number | undefined> {
+  const decisions = params.decisions;
+  return {
+    ...(params.kind !== undefined ? { kind: params.kind } : {}),
+    ...(params.dateOrder !== undefined ? { dateOrder: params.dateOrder } : {}),
+    ...(params.decimalStyle !== undefined ? { decimalStyle: params.decimalStyle } : {}),
+    ...(params.conflictPolicy !== undefined ? { conflictPolicy: params.conflictPolicy } : {}),
+    ...(params.identity !== undefined && params.identity !== '' ? { identity: params.identity } : {}),
+    ...(decisions !== undefined && decisions.length > 0
+      ? { decisions: JSON.stringify(decisions) }
+      : {}),
+  };
+}
+
+/* -------------------------------------------------------------------------- */
 /* Reexportações úteis para os ecrãs                                           */
 /* -------------------------------------------------------------------------- */
 
 export { queryKeys };
 export type { OdometerResult, TimelineItemKind };
+/*
+ * `RecordKind` é reexportado por conveniência dos ecrãs de importação, que precisam de o
+ * nomear para o tipo escolhido. Vem do pacote partilhado — é um tipo de domínio — mas
+ * reexportá-lo aqui mantém a regra de `queryKeys.ts`: um ecrã importa de `@/api` e não de
+ * `@zemlo/shared`, para que uma mudança de sítio seja um único ficheiro a ajustar.
+ */
+export type { RecordKind } from '@zemlo/shared';
+export type {
+  ColumnDecision,
+  ColumnMapping,
+  ColumnState,
+  CsvApplyResponse,
+  CsvDetection,
+  CsvImportParams,
+  CsvMappingView,
+  CsvPreviewResponse,
+  CsvRecordPreview,
+  CsvSkippedRow,
+  CsvValueIssue,
+  DateOrder,
+  DecimalStyle,
+  ConflictPolicy,
+  FieldCandidate,
+  ImportIssue,
+  ImportPlanView,
+  KindInference,
+  PlanCounts,
+  PlanEntry,
+  SavedMapSummary,
+} from './csvImport';

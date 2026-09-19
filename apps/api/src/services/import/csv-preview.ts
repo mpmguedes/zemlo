@@ -54,6 +54,7 @@ import {
 } from '../../domain/import/csv/mapping.js';
 import {
   interpretColumn,
+  type ColumnAmbiguity,
   type ColumnInterpretation,
   type DateOrder,
   type DecimalStyle,
@@ -162,6 +163,34 @@ export interface CsvMappingView {
   readonly readyWithoutInput: boolean;
   /** Amostra de valores por coluna, para o utilizador reconhecer o que está a mapear. */
   readonly requiredFields: readonly string[];
+  /**
+   * Ambiguidades de **valor** por resolver (§10.4) — data dia/mês, separador decimal,
+   * duas moedas, unidade ambígua.
+   *
+   * ## Porque é que este campo existe, e porque é que a sua ausência era um defeito
+   *
+   * `ambiguousColumns` cobre ambiguidades de **mapeamento**: a coluna «Km/l» pode ser dois
+   * campos diferentes. Este campo cobre o outro eixo, que a §10.4 trata na mesma secção: o
+   * **mapeamento está certo** e o valor é que tem mais do que uma leitura possível —
+   * `03/04/2026` é 3 de abril ou 4 de março, e `1,589` é um euro e meio ou mil quinhentos e
+   * oitenta e nove.
+   *
+   * Sem ele, o `interpretColumn` calculava a ambiguidade e o serviço **descartava-a**: a
+   * coluna ficava sem valores, as linhas eram marcadas como tendo «valores ilegíveis» que
+   * ninguém conseguia nomear, e o utilizador recebia um beco sem saída em vez de uma
+   * pergunta. A §10.4 diz «pergunta-se, com pré-visualização das duas interpretações»; uma
+   * ambiguidade que o servidor conhece e não conta é uma pergunta perdida, e a §11.3 proíbe
+   * exatamente isso.
+   *
+   * ## O que o ecrã faz com isto
+   *
+   * Cada entrada traz a pergunta pronta e as interpretações possíveis com os valores de
+   * amostra já calculados, para que a resposta seja dada a olhar para os dados. A resposta
+   * viaja de volta como `dateOrder` / `decimalStyle` — as mesmas convenções que o mapa
+   * guardado persiste —, pelo que responder aqui e responder no seletor de convenções são a
+   * mesma operação.
+   */
+  readonly valueAmbiguities: readonly ColumnAmbiguity[];
 }
 
 /** A pré-visualização normalizada — o passo 7 do fluxo (§10.2). */
@@ -372,6 +401,7 @@ function mapAndInterpret(
   inference: KindInference;
   kind: RecordKind | null;
   valueIssues: readonly RowIssue[];
+  valueAmbiguities: readonly ColumnAmbiguity[];
 } {
   /* ---- Passagem 1: sem tipo ---- */
 
@@ -410,6 +440,14 @@ function mapAndInterpret(
 
   const interpretations = new Map<number, ColumnInterpretation>();
   const valueIssues: RowIssue[] = [];
+  /*
+   * As ambiguidades de valor por resolver, na ordem das colunas.
+   *
+   * A ordem é a do ficheiro e não a da gravidade: o utilizador lê as perguntas na mesma
+   * ordem em que lê as colunas, e uma lista reordenada por "importância" obrigá-lo-ia a
+   * encontrar a coluna antes de responder.
+   */
+  const valueAmbiguities: ColumnAmbiguity[] = [];
 
   if (kind !== null && isCsvSupportedKind(kind)) {
     for (const column of resolved) {
@@ -448,13 +486,26 @@ function mapAndInterpret(
 
       interpretations.set(column.index, interpretation);
 
+      /*
+       * A ambiguidade é **transportada**, não descartada.
+       *
+       * `interpretColumn` devolve `ambiguity` quando não consegue decidir sozinho — e a
+       * §10.4 manda perguntar. Consumir só `values` e `issues` deixava a ambiguidade pelo
+       * caminho: `values` vem vazio (para não gravar uma leitura adivinhada), a linha era
+       * marcada como tendo valores ilegíveis, e não havia nada para mostrar nem nada para
+       * perguntar. Ver a nota em `CsvMappingView.valueAmbiguities`.
+       */
+      if (interpretation.ambiguity !== null) {
+        valueAmbiguities.push(interpretation.ambiguity);
+      }
+
       for (const issue of interpretation.issues) {
         valueIssues.push({ ...issue, field: column.field });
       }
     }
   }
 
-  return { mapping, resolved, interpretations, inference, kind, valueIssues };
+  return { mapping, resolved, interpretations, inference, kind, valueIssues, valueAmbiguities };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -569,10 +620,8 @@ export async function previewCsv(options: PreviewCsvOptions): Promise<CsvPreview
 
   /* ---- Passos 3–6: mapeamento, tipo e valores ---- */
 
-  const { mapping, resolved, interpretations, inference, kind, valueIssues } = mapAndInterpret(
-    table,
-    options,
-  );
+  const { mapping, resolved, interpretations, inference, kind, valueIssues, valueAmbiguities } =
+    mapAndInterpret(table, options);
 
   /* ---- Passo 7: registos canónicos ---- */
 
@@ -676,8 +725,19 @@ export async function previewCsv(options: PreviewCsvOptions): Promise<CsvPreview
       ambiguousColumns: resolved.filter((column) => column.state === 'ambiguo'),
       unmappedColumns: resolved.filter((column) => column.state === 'nao_mapeado'),
       coverage: mapping.coverage,
-      readyWithoutInput: mapping.readyWithoutInput && inference.state !== 'ambiguo',
+      /*
+       * Uma ambiguidade de valor também impede o avanço sem resposta: as linhas afetadas não
+       * produzem registos, porque o intérprete devolve `values` vazio em vez de gravar uma
+       * leitura adivinhada. Deixar `readyWithoutInput` a `true` faria o ecrã avançar para
+       * uma revisão vazia e dizer ao utilizador que estava tudo resolvido — quando não
+       * estava. É a mesma regra que já se aplica à inferência do tipo.
+       */
+      readyWithoutInput:
+        mapping.readyWithoutInput &&
+        inference.state !== 'ambiguo' &&
+        valueAmbiguities.length === 0,
       requiredFields: required,
+      valueAmbiguities,
     },
     inference,
     kind,
@@ -686,7 +746,16 @@ export async function previewCsv(options: PreviewCsvOptions): Promise<CsvPreview
     skipped: built.skipped,
     valueIssues: built.issues,
     plan,
-    emptyReason: describeEmptyResult(built),
+    /*
+     * A razão de nada ter sido construído é reescrita quando a causa é uma ambiguidade.
+     *
+     * `describeEmptyResult` olha para as linhas ignoradas e conclui «valores ilegíveis» —
+     * verdade para `31/02/2026`, falso para `1,589`. Os valores ambíguos são **legíveis**:
+     * só têm mais do que uma leitura. Dizer ao utilizador para corrigir o ficheiro quando
+     * o que ele tem de fazer é responder a uma pergunta é mandá-lo para o sítio errado, e a
+     * §11.3 proíbe um ecrã que não diga o que fazer a seguir.
+     */
+    emptyReason: describeEmptyResult(built, valueAmbiguities),
   };
 }
 

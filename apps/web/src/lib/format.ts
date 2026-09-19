@@ -93,6 +93,29 @@ export function share(value: number | null | undefined, decimals = 0): string {
   return `${formatNumber(value * 100, decimals)} %`;
 }
 
+/**
+ * Tamanho de um ficheiro em texto legível.
+ *
+ * A unidade é decimal (1 kB = 1000 B) e não binária (1 KiB = 1024 B). A confusão é
+ * irrelevante para o que aqui se faz — mostrar ao utilizador que ficheiro escolheu —, mas
+ * escrever `KiB` a alguém que está a importar um CSV do Excel seria um pormenor técnico sem
+ * qualquer utilidade (§11.3).
+ *
+ * Uma casa decimal, exceto em bytes: `1,4 MB` é útil, `847,3 B` não é.
+ */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '—';
+  if (bytes < 1000) return `${formatNumber(bytes, 0)} B`;
+  const units = ['kB', 'MB', 'GB'] as const;
+  let value = bytes / 1000;
+  let unit = 0;
+  while (value >= 1000 && unit < units.length - 1) {
+    value /= 1000;
+    unit += 1;
+  }
+  return `${formatNumber(value, 1)} ${units[unit]}`;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Datas                                                                       */
 /* -------------------------------------------------------------------------- */

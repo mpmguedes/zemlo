@@ -58,3 +58,8 @@ desktop.ini
 # Testes
 coverage/
 .vitest/
+
+# Ficheiros de configuração transitórios do Vite/Vitest.
+# São criados e removidos pelo próprio Vite ao carregar `vite.config.ts`; ficam para trás
+# quando um processo é interrompido. Nunca devem entrar num commit.
+*.timestamp-*.mjs

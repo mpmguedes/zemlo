@@ -21,6 +21,7 @@ import { NotificationsPage } from './pages/NotificationsPage';
 import { IntegrationsPage } from './pages/integrations/IntegrationsPage';
 import { HomeAssistantPage } from './pages/integrations/HomeAssistantPage';
 import { ExportPage } from './pages/ExportPage';
+import { CsvImportPage } from './pages/import/CsvImportPage';
 import { SettingsPage } from './pages/settings/SettingsPage';
 import { ProfileSettingsPage } from './pages/settings/ProfileSettingsPage';
 import { PreferencesSettingsPage } from './pages/settings/PreferencesSettingsPage';
@@ -77,6 +78,9 @@ export function App() {
         <Route path="/integrations" element={<IntegrationsPage />} />
         <Route path="/integrations/home-assistant" element={<HomeAssistantPage />} />
         <Route path="/export" element={<ExportPage />} />
+        {/* Importação de CSV (§10). Fica ao lado da exportação de propósito: é a mesma
+            pergunta — "os meus dados" — vista do outro lado. */}
+        <Route path="/import" element={<CsvImportPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/settings/profile" element={<ProfileSettingsPage />} />
         <Route path="/settings/preferences" element={<PreferencesSettingsPage />} />

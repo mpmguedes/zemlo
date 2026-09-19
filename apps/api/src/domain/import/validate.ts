@@ -301,6 +301,159 @@ export function brokenReferenceIssues(broken: readonly BrokenReference[]): Impor
   );
 }
 
+/* -------------------------------------------------------------------------- */
+/* Referências obrigatórias em falta (§9.4)                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Tipos de registo que **não podem existir sem veículo**.
+ *
+ * A lista é derivada do esquema de persistência, e não de preferências: em
+ * `schema.prisma`, `FuelSession`, `OdometerReading`, `Expense`, `ChargingSession`,
+ * `MaintenanceRecord`, `InsurancePolicy`, `InspectionRecord`, `TaxRecord` e `Reminder`
+ * declaram `vehicleId String` — **obrigatório**. Só `Document` permite `vehicleId String?`
+ * (uma carta de condução não pertence a um veículo) e `Vehicle` é, ele próprio, o veículo.
+ *
+ * ## Porque é que esta regra existe, e não é redundante com `findBrokenReferences`
+ *
+ * `findBrokenReferences` responde a «esta referência aponta para algo que não existe?».
+ * Esta regra responde a uma pergunta diferente: «este registo **tem** a referência de que
+ * precisa para ser gravado?». Uma referência **ausente** não é uma referência **quebrada**,
+ * e tratá-la como tal seria errado — em `documents` e `events` a ausência é um valor
+ * legítimo, e é isso que o comentário do `findBrokenReferences` fixa.
+ *
+ * A distinção tinha um buraco: um registo de `fuel` sem `vehicleLocalId` passava na
+ * validação inteira, o plano dizia `ready`, e a escrita falhava a meio da transação com um
+ * erro do Prisma (`Argument \`vehicle\` is missing`) — um **500**, não um problema
+ * explicado. A §9.4 exige o contrário: *"bloqueante, detetada antes de qualquer escrita"*.
+ *
+ * ## O que esta função não pode saber
+ *
+ * Não sabe — nem pode vir a saber — **de onde** os registos vieram (§4.3). O bundle nativo
+ * nunca produz esta situação, porque o exportador escreve sempre `vehicleLocalId`; é o
+ * adaptador externo que a pode produzir. Mas a regra é do **domínio**, não do adaptador:
+ * escrevê-la aqui é o que garante que um segundo adaptador não herde o mesmo defeito, e é
+ * por isso que ela não menciona CSV em lado nenhum.
+ *
+ * Um registo cujo `kind` **não** está nesta lista mas que traga uma referência preenchida
+ * continua a ser verificado pelo `findBrokenReferences`, como antes.
+ */
+const KINDS_REQUIRING_VEHICLE: Readonly<Record<RecordKind, boolean>> = {
+  vehicle: false,
+  odometer: true,
+  expense: true,
+  fuel: true,
+  charging: true,
+  maintenance: true,
+  insurance: true,
+  inspection: true,
+  tax: true,
+  document: false,
+  reminder: true,
+  event: false,
+  suggestion: false,
+  notification: false,
+};
+
+/** Um registo que precisa de veículo e não o traz. */
+export interface MissingVehicleReference {
+  readonly record: CanonicalRecord;
+}
+
+/**
+ * Encontra registos que precisam de um veículo e não o referem.
+ *
+ * `undefined`, `null` e a cadeia vazia contam todos como ausência: a §5.3 diz que a
+ * ausência é representada por omissão ou `null`, e uma cadeia vazia é a mesma coisa escrita
+ * de outra maneira. Não contar a cadeia vazia deixaria passar exactamente o caso que a
+ * camada CSV produz quando uma coluna de matrícula existe mas está vazia.
+ */
+export function findMissingVehicleReferences(
+  records: readonly CanonicalRecord[],
+): MissingVehicleReference[] {
+  const missing: MissingVehicleReference[] = [];
+
+  for (const record of records) {
+    if (!KINDS_REQUIRING_VEHICLE[record.kind]) continue;
+
+    const target = record.references['vehicleLocalId'];
+    if (target === null || target === undefined) {
+      missing.push({ record });
+      continue;
+    }
+    if (typeof target !== 'string' || target.length === 0) {
+      missing.push({ record });
+    }
+  }
+
+  return missing;
+}
+
+/**
+ * Converte veículos em falta em problemas bloqueantes (§9.4).
+ *
+ * A mensagem é escrita para uma pessoa decidir: diz **que tipo de registo** é e **o que
+ * falta**, em vez de nomear a coluna interna. "Este abastecimento não diz a que veículo
+ * pertence" é accionável; "vehicleLocalId ausente" não é.
+ *
+ * É bloqueante, e não recuperável, por duas razões: o registo não pode ser gravado sem
+ * veículo (o esquema recusa), e adivinhar o veículo seria pior — atribuir consumos ao
+ * carro errado é uma corrupção silenciosa que a §8.4 proíbe. Um `suggestion` ou um
+ * `notification` nunca chegam aqui: a lista acima não os inclui.
+ */
+export function missingVehicleReferenceIssues(
+  missing: readonly MissingVehicleReference[],
+): ImportIssue[] {
+  return missing.map((item) =>
+    blocking(
+      'bundle.missing_vehicle_reference',
+      `Este registo (${describeKind(item.record.kind)}) não diz a que veículo pertence. Sem essa ligação não pode ser importado — e adivinhá-la poderia atribuí-lo ao carro errado.`,
+      {
+        localId: item.record.localId,
+        field: 'vehicleLocalId',
+        file: item.record.file,
+        line: item.record.line,
+      },
+    ),
+  );
+}
+
+/** Nome legível de um tipo de registo, para as mensagens de erro. */
+function describeKind(kind: RecordKind): string {
+  switch (kind) {
+    case 'vehicle':
+      return 'veículo';
+    case 'odometer':
+      return 'quilometragem';
+    case 'expense':
+      return 'despesa';
+    case 'fuel':
+      return 'abastecimento';
+    case 'charging':
+      return 'carregamento';
+    case 'maintenance':
+      return 'manutenção';
+    case 'insurance':
+      return 'seguro';
+    case 'inspection':
+      return 'inspeção';
+    case 'tax':
+      return 'imposto';
+    case 'document':
+      return 'documento';
+    case 'reminder':
+      return 'lembrete';
+    case 'event':
+      return 'evento';
+    case 'suggestion':
+      return 'sugestão';
+    case 'notification':
+      return 'notificação';
+    default:
+      return 'registo';
+  }
+}
+
 /**
  * Verifica se uma referência opcional tem forma de `localId` válida.
  *
@@ -585,6 +738,7 @@ export function validateRecords(records: readonly CanonicalRecord[]): Validation
   issues.push(...findDuplicateLocalIds(records));
   issues.push(...invalidReferenceFormatIssues(records));
   issues.push(...brokenReferenceIssues(findBrokenReferences(records)));
+  issues.push(...missingVehicleReferenceIssues(findMissingVehicleReferences(records)));
 
   /* ---- Problemas por registo ---- */
 
