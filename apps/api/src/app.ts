@@ -32,6 +32,7 @@ import { documentsRouter } from './http/routes/documents.js';
 import { financialRouter } from './http/routes/financial.js';
 import { healthRouter, metricsRouter } from './http/routes/health.js';
 import {
+  ACCEPTED_CSV_UPLOAD_TYPES,
   ACCEPTED_UPLOAD_TYPES,
   IMPORT_UPLOAD_MAX_BYTES,
   importRouter,
@@ -98,13 +99,20 @@ export function createApp(): Express {
    * outras rotas e todos os outros caminhos sob `/import/`.
    */
   /*
-   * As duas rotas de upload leem o corpo em bruto. O `type` é a lista fechada dos tipos
-   * do upload: sem ele, o `raw` consumiria também `application/json` e um pedido JSON a
-   * estas rotas deixaria de produzir a mensagem "isto não é um ZIP". O limite é
+   * As rotas de upload leem o corpo em bruto. O `type` é a união das listas fechadas dos
+   * dois formatos: sem ele, o `raw` consumiria também `application/json` e um pedido JSON a
+   * estas rotas deixaria de produzir a mensagem "isto não é um ficheiro". O limite é
    * verificado **enquanto** o corpo é lido.
+   *
+   * A união é feita **aqui**, no parser, e não nas listas de cada rota. As listas têm de
+   * ficar separadas (ver o docblock de `ACCEPTED_CSV_UPLOAD_TYPES`: partilhá-las fez um
+   * `text/plain` com bytes de ZIP passar a ser aceite como bundle), mas o parser que lê o
+   * corpo é um só e tem de saber ler tudo o que qualquer das rotas aceita. Juntá-las neste
+   * único ponto é o que mantém as duas propriedades: cada rota valida contra a sua lista, e
+   * o parser não fica cego para metade dos pedidos legítimos.
    */
   const parseNativeUpload = raw({
-    type: [...ACCEPTED_UPLOAD_TYPES],
+    type: [...ACCEPTED_UPLOAD_TYPES, ...ACCEPTED_CSV_UPLOAD_TYPES],
     limit: IMPORT_UPLOAD_MAX_BYTES,
   });
 

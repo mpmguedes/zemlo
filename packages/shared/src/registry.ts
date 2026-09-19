@@ -311,6 +311,578 @@ export const PAYMENT_METHODS = freeze([
 ]);
 
 /* -------------------------------------------------------------------------- */
+/* Dicionário de sinónimos de coluna para importação de ficheiros (§10.3)      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Campo canónico de um `CanonicalRecord` que uma coluna de ficheiro pode
+ * alimentar.
+ *
+ * É um tipo aberto (`string`) pela mesma razão que as categorias são `String`
+ * validadas e não `enum`: o vocabulário de campos vive no importador, não na
+ * base de dados, e um campo novo não deve obrigar a uma migração.
+ */
+export type CanonicalFieldName = string;
+
+/**
+ * Um sinónimo de coluna.
+ *
+ * `synonyms` são comparados após normalização (`normalizeColumnName`):
+ * minúsculas, sem acentos, sem pontuação, espaços colapsados e removidos.
+ * Escrever "Quilometragem" ou "quilometragem " ou "QUILOMETRAGEM" é o mesmo.
+ *
+ * A ordem da lista **é** a ordem de prioridade: um sinónimo declarado primeiro
+ * vence em caso de empate de confiança. `match` distingue a força da evidência:
+ *  - `exact`  — o nome normalizado coincide literalmente;
+ *  - `strong` — sinónimo inequívoco, mas não o nome canónico;
+ *  - `weak`   — sinónimo genérico que pode colidir com outro campo
+ *               (ex.: "tipo" pode ser categoria, tipo de manutenção ou tipo de
+ *               evento); nunca é aplicado sem confirmação.
+ */
+export interface ColumnSynonym {
+  readonly field: CanonicalFieldName;
+  readonly synonyms: readonly string[];
+  readonly match: 'exact' | 'strong' | 'weak';
+}
+
+/**
+ * Dicionário de sinónimos de coluna (§10.3).
+ *
+ * Vive aqui — ao lado das categorias — pela razão que a especificação indica:
+ * acrescentar um sinónimo não deve ser uma alteração espalhada pelo código.
+ * Quem importa lê daqui; não há uma segunda lista em lado nenhum.
+ *
+ * Inclui deliberadamente os **cabeçalhos que o próprio Zemlo exporta** (§5.4:
+ * `Matrícula`, `Data`, `Valor (€)`, `Litros`, `Quilometragem`, `Fornecedor`,
+ * `Descrição`, `Categoria`, `Pago`, `Notas`), para que o ciclo
+ * exportar → importar seja um caso suportado e testado, e não uma coincidência.
+ *
+ * A `match` reflete honestidade sobre a evidência: "descrição" aparece como
+ * sinónimo fraco de `category` (a tabela da §10.3 mostra-o) mas também como
+ * sinónimo forte de `description`. A ambiguidade é resolvida pelo mapeador com
+ * base no tipo de registo inferido — nunca escolhida em silêncio.
+ */
+export const COLUMN_SYNONYMS = freezeColumnSynonyms([
+  // --- Identificação e referências -----------------------------------------
+  // "matrícula" e "matricula" normalizam para o mesmo valor; declarar as duas
+  // é uma duplicação sem efeito, por isso fica apenas a forma sem acento.
+  { field: 'plate', match: 'exact', synonyms: ['matricula'] },
+  {
+    field: 'plate',
+    match: 'strong',
+    synonyms: ['plate', 'viatura', 'veículo', 'registo', 'nº de matrícula'],
+  },
+
+  // --- Datas ----------------------------------------------------------------
+  { field: 'date', match: 'exact', synonyms: ['data'] },
+  {
+    field: 'date',
+    match: 'strong',
+    synonyms: ['date', 'dia', 'fecha', 'data de compra', 'data do registo', 'data do movimento'],
+  },
+  {
+    field: 'date',
+    match: 'weak',
+    synonyms: ['quando', 'referência temporal'],
+  },
+
+  /*
+   * `recordedAt` — a data de uma leitura de quilometragem.
+   *
+   * ## Porque é que este campo precisava da sua própria entrada
+   *
+   * O vocabulário do odómetro usa `recordedAt` e não `date` (é a data em que a leitura foi
+   * **registada**, não a data de um evento). Sem estas entradas, um ficheiro de
+   * quilometragens com uma coluna `Data` não tinha **nenhum** candidato para essa coluna:
+   * o mapeador recusa atribuir um campo que não seja da `CANONICAL_FIELDS` do tipo, e o
+   * resultado era um campo obrigatório (`recordedAt`) que o utilizador não conseguia
+   * preencher a partir do ecrã de mapeamento — a importação ficava bloqueada sem remédio
+   * oferecido, que é exatamente o "beco sem saída" que a §11.3 proíbe.
+   *
+   * ## Porque é que são `strong` e não `exact`
+   *
+   * `Data` é `exact` para `date` — e é essa a ambiguidade real: a mesma coluna serve dois
+   * campos conforme o tipo. O mapeador resolve-a pelo contexto do tipo (`compatibleWithKind`
+   * em `mapping.ts`), que é a resposta certa: com o tipo `odometer` decidido, `Data` só
+   * pode ser `recordedAt`, porque `date` não está no vocabulário desse tipo.
+   *
+   * Uma entrada `exact` aqui competiria com a de `date` em pé de igualdade em qualquer
+   * contexto e tornaria o mapa ambíguo em ficheiros de **despesas** — onde `Data` é
+   * inequivocamente `date`. O peso `strong` deixa o contexto decidir sem nunca empatar.
+   */
+  {
+    field: 'recordedAt',
+    match: 'strong',
+    synonyms: ['data da leitura', 'data do registo', 'data da medição', 'registado em'],
+  },
+  {
+    field: 'recordedAt',
+    match: 'weak',
+    synonyms: ['data', 'date', 'dia', 'quando'],
+  },
+
+  // --- Valores monetários ---------------------------------------------------
+  { field: 'amountCents', match: 'exact', synonyms: ['valor', 'total'] },
+  {
+    field: 'amountCents',
+    match: 'strong',
+    synonyms: [
+      'montante',
+      'preço',
+      'custo',
+      'amount',
+      'valor total',
+      'valor pago',
+      'valor (€)',
+      'total (€)',
+      'importância',
+      'despesa',
+    ],
+  },
+  {
+    field: 'amountCents',
+    match: 'weak',
+    // "pago" fica de fora: é uma bandeira booleana, não um valor, e declará-lo
+    // aqui colidiria com `paid`. A ambiguidade de "pagamento" (valor vs método
+    // vs estado) é tratada pelo mapeador, que vê as três candidaturas.
+    synonyms: ['pagamento', 'a pagar', 'quanto'],
+  },
+
+  // --- Quilometragem --------------------------------------------------------
+  { field: 'odometerKm', match: 'exact', synonyms: ['km'] },
+  {
+    field: 'odometerKm',
+    match: 'strong',
+    synonyms: [
+      'quilómetros',
+      'quilometragem',
+      'odómetro',
+      'mileage',
+      'kms',
+      'km atual',
+      'quilometragem (km)',
+      'km do veículo',
+    ],
+  },
+  {
+    field: 'odometerKm',
+    match: 'weak',
+    synonyms: ['distância', 'percorridos'],
+  },
+
+  // --- Combustível ----------------------------------------------------------
+  { field: 'litres', match: 'exact', synonyms: ['litros'] },
+  {
+    field: 'litres',
+    match: 'strong',
+    synonyms: ['litres', 'l', 'quantidade', 'volume', 'litros (l)', 'qtd', 'quantidade (l)'],
+  },
+
+  // --- Eletricidade ---------------------------------------------------------
+  { field: 'energyKwh', match: 'exact', synonyms: ['kwh'] },
+  {
+    field: 'energyKwh',
+    match: 'strong',
+    synonyms: ['energia', 'energia (kwh)', 'kw', 'quilo-watt-hora', 'energia carregada'],
+  },
+  {
+    field: 'energyKwh',
+    match: 'weak',
+    synonyms: ['consumo'],
+  },
+
+  // --- Preços unitários -----------------------------------------------------
+  {
+    field: 'pricePerLitreCents',
+    match: 'strong',
+    synonyms: ['preço/litro', 'preço por litro', 'preço/litro (€)', '€/l', 'preço unitário'],
+  },
+  {
+    field: 'pricePerKwhCents',
+    match: 'strong',
+    synonyms: ['preço/kwh', 'preço por kwh', 'preço/kwh (€)', '€/kwh'],
+  },
+
+  // --- Iva ------------------------------------------------------------------
+  {
+    field: 'vatCents',
+    match: 'strong',
+    synonyms: ['iva', 'iva (€)', 'imposto', 'taxa de iva', 'vat'],
+  },
+
+  // --- Entidades ------------------------------------------------------------
+  { field: 'vendor', match: 'exact', synonyms: ['fornecedor'] },
+  {
+    field: 'vendor',
+    match: 'strong',
+    synonyms: ['posto', 'local', 'oficina', 'estabelecimento', 'vendor', 'fornecedor/prestador'],
+  },
+  {
+    field: 'vendor',
+    match: 'weak',
+    synonyms: ['loja', 'comerciante', 'entidade'],
+  },
+
+  // --- Classificação --------------------------------------------------------
+  { field: 'category', match: 'exact', synonyms: ['categoria'] },
+  {
+    field: 'category',
+    match: 'strong',
+    synonyms: ['type', 'tipo de despesa', 'classificação', 'rubrica'],
+  },
+  {
+    field: 'category',
+    match: 'weak',
+    synonyms: ['tipo', 'descrição', 'natureza'],
+  },
+
+  { field: 'description', match: 'exact', synonyms: ['descrição'] },
+  {
+    field: 'description',
+    match: 'strong',
+    synonyms: ['description', 'detalhe', 'detalhes', 'observação', 'observacoes', 'observação adicional'],
+  },
+
+  { field: 'notes', match: 'exact', synonyms: ['notas'] },
+  {
+    field: 'notes',
+    match: 'strong',
+    synonyms: ['notes', 'nota', 'comentário', 'comentarios', 'comentário livre', 'memo'],
+  },
+  {
+    field: 'type',
+    match: 'strong',
+    synonyms: ['tipo de manutenção', 'tipo de serviço', 'serviço', 'intervenção', 'trabalho efetuado'],
+  },
+  {
+    field: 'type',
+    match: 'weak',
+    synonyms: ['tipo'],
+  },
+
+  // --- Pagamento ------------------------------------------------------------
+  {
+    field: 'paymentMethod',
+    match: 'strong',
+    synonyms: ['pagamento', 'método de pagamento', 'meio de pagamento', 'forma de pagamento'],
+  },
+  {
+    field: 'paid',
+    match: 'strong',
+    synonyms: ['pago', 'liquidado', 'estado de pagamento'],
+  },
+
+  // --- Veículo: ficha técnica -----------------------------------------------
+  { field: 'make', match: 'exact', synonyms: ['marca'] },
+  { field: 'make', match: 'strong', synonyms: ['make', 'fabricante'] },
+
+  { field: 'model', match: 'exact', synonyms: ['modelo'] },
+  { field: 'model', match: 'strong', synonyms: ['model', 'versão comercial'] },
+
+  { field: 'version', match: 'exact', synonyms: ['versão'] },
+  { field: 'version', match: 'strong', synonyms: ['version', 'variante', 'acabamento'] },
+
+  { field: 'year', match: 'exact', synonyms: ['ano'] },
+  { field: 'year', match: 'strong', synonyms: ['year', 'ano de fabrico', 'ano de matrícula', 'ano do modelo'] },
+
+  { field: 'vin', match: 'exact', synonyms: ['vin'] },
+  { field: 'vin', match: 'strong', synonyms: ['chassis', 'número de chassis', 'nº de quadro', 'bastidor'] },
+
+  { field: 'fuelType', match: 'exact', synonyms: ['combustível'] },
+  {
+    field: 'fuelType',
+    match: 'strong',
+    synonyms: ['fuel', 'fuel type', 'tipo de combustível', 'propulsão', 'energia do veículo'],
+  },
+
+  { field: 'vehicleType', match: 'exact', synonyms: ['tipo de veículo'] },
+  { field: 'vehicleType', match: 'strong', synonyms: ['segmento', 'categoria do veículo'] },
+
+  { field: 'color', match: 'exact', synonyms: ['cor'] },
+  { field: 'color', match: 'strong', synonyms: ['color', 'pintura'] },
+
+  { field: 'nickname', match: 'strong', synonyms: ['alcunha', 'apelido', 'nome do veículo', 'nome'] },
+
+  // --- Seguro ---------------------------------------------------------------
+  { field: 'insurer', match: 'exact', synonyms: ['seguradora'] },
+  { field: 'insurer', match: 'strong', synonyms: ['seguro', 'companhia de seguros', 'insurer'] },
+  { field: 'policyNumber', match: 'strong', synonyms: ['apólice', 'nº de apólice', 'nº apólice', 'policy'] },
+  { field: 'startDate', match: 'strong', synonyms: ['início', 'data de início', 'vigência inicial'] },
+  { field: 'endDate', match: 'strong', synonyms: ['fim', 'data de fim', 'vencimento da apólice', 'validade'] },
+  { field: 'premiumCents', match: 'strong', synonyms: ['prémio', 'prémio (€)', 'valor do prémio'] },
+  { field: 'coverage', match: 'strong', synonyms: ['cobertura', 'tipo de cobertura', 'nível de cobertura'] },
+
+  // --- Inspeção -------------------------------------------------------------
+  { field: 'result', match: 'strong', synonyms: ['resultado', 'resultado da inspeção', 'resultado da inspeccao', 'result'] },
+  { field: 'expiresAt', match: 'strong', synonyms: ['expira em', 'válido até', 'validade até', 'próxima inspeção', 'proxima inspeccao'] },
+  { field: 'station', match: 'strong', synonyms: ['centro de inspeção', 'estação', 'ipo'] },
+
+  // --- Impostos -------------------------------------------------------------
+  { field: 'kind', match: 'strong', synonyms: ['tipo de imposto', 'imposto', 'tributo'] },
+  { field: 'dueDate', match: 'strong', synonyms: ['data limite', 'prazo', 'vence em', 'data de vencimento', 'vencimento'] },
+
+  // --- Documentos -----------------------------------------------------------
+  { field: 'name', match: 'exact', synonyms: ['nome'] },
+  { field: 'name', match: 'strong', synonyms: ['nome do documento', 'título', 'documento'] },
+  { field: 'fileName', match: 'strong', synonyms: ['ficheiro', 'arquivo', 'file'] },
+  { field: 'mimeType', match: 'strong', synonyms: ['tipo de ficheiro', 'formato'] },
+
+  // --- Lembretes / eventos --------------------------------------------------
+  { field: 'title', match: 'strong', synonyms: ['título do lembrete', 'assunto'] },
+  { field: 'title', match: 'strong', synonyms: ['título do evento', 'descrição do evento'] },
+
+  // --- Localização / carregamento -------------------------------------------
+  // "local" é explicitamente ambíguo na §10.4: tanto pode ser o fornecedor
+  // (oficina, posto) como o local de um carregamento. Declaramos ambos como
+  // fracos para que o mapeador veja a colisão e pergunte, em vez de escolher.
+  { field: 'location', match: 'strong', synonyms: ['localização', 'posto de carregamento'] },
+  { field: 'location', match: 'weak', synonyms: ['local', 'sítio'] },
+  { field: 'latitude', match: 'strong', synonyms: ['latitude', 'lat'] },
+  { field: 'longitude', match: 'strong', synonyms: ['longitude', 'lng', 'lon'] },
+
+  // --- Bandeiras ------------------------------------------------------------
+  { field: 'fullTank', match: 'strong', synonyms: ['depósito cheio', 'ateste', 'cheio'] },
+  { field: 'isCorrection', match: 'strong', synonyms: ['correção', 'é correção'] },
+  { field: 'isPublic', match: 'strong', synonyms: ['público', 'posto público'] },
+  { field: 'origin', match: 'strong', synonyms: ['origem', 'source'] },
+] as readonly ColumnSynonym[]);
+
+/**
+ * Aplica `Object.freeze` a cada entrada e ao array do dicionário.
+ *
+ * Não reutiliza `freeze()` porque a forma é diferente: aqui o array é de
+ * objetos com um campo `synonyms` que também precisa de ser congelado.
+ */
+function freezeColumnSynonyms(items: readonly ColumnSynonym[]): readonly ColumnSynonym[] {
+  for (const item of items) {
+    Object.freeze(item.synonyms);
+    Object.freeze(item);
+  }
+  return Object.freeze(items);
+}
+
+/**
+ * Normaliza o nome de uma coluna para comparação com o dicionário.
+ *
+ * Regras: minúsculas, sem acentos, sem pontuação de separação, espaços e
+ * sublinhados colapsados num único espaço e aparados. Unidades entre parênteses
+ * são removidas porque variam sem significado ("Valor (€)" ≡ "Valor"), exceto
+ * quando o conteúdo do parêntese é uma unidade que *desambigua* (kWh / L / km) —
+ * nesse caso o parêntese é mantido normalizado, para distinguir "Energia (kWh)"
+ * de "Energia (€)".
+ *
+ * `€` e `%` são preservados: fazem parte do significado.
+ */
+export function normalizeColumnName(name: string): string {
+  let value = name
+    .normalize('NFD')
+    // Remove diacríticos (acentos, til, cedilha) mantendo a letra base.
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+
+  // Mantém as unidades significativas antes de retirar a pontuação.
+  value = value.replace(/\(([^)]*)\)/g, (_match, inner: string) => {
+    const unit = inner.trim();
+    if (/^(kwh|l|km|€|\$|%|eur|euros?)$/.test(unit)) return ` ${unit} `;
+    return ' ';
+  });
+
+  value = value
+    // Mantém letras, dígitos, espaços, barra, euro e percentagem.
+    .replace(/[^a-z0-9\s/€%]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return value;
+}
+
+/**
+ * Sinónimos já normalizados, indexados por nome, para consulta O(1).
+ *
+ * Construído uma única vez no carregamento do módulo. A ordem de inserção
+ * preserva a prioridade declarada em `COLUMN_SYNONYMS` (a primeira entrada com
+ * a confiança mais alta vence), porque o mapeador percorre esta lista.
+ */
+export interface SynonymMatch {
+  readonly field: CanonicalFieldName;
+  readonly confidence: number;
+  readonly match: 'exact' | 'strong' | 'weak';
+}
+
+const SYNONYM_INDEX: ReadonlyMap<string, readonly SynonymMatch[]> = buildSynonymIndex();
+
+function buildSynonymIndex(): ReadonlyMap<string, readonly SynonymMatch[]> {
+  // Pesos por tipo de correspondência. Um sinónimo "exact" é o nome canónico
+  // declarado pelo próprio produto; declaramos explicitamente como exact.
+  const weight: Record<ColumnSynonym['match'], number> = {
+    exact: 0.95,
+    strong: 0.8,
+    weak: 0.4,
+  };
+
+  const index = new Map<string, SynonymMatch[]>();
+
+  for (const entry of COLUMN_SYNONYMS) {
+    for (const synonym of entry.synonyms) {
+      const key = normalizeColumnName(synonym);
+      if (key === '') continue;
+      const list = index.get(key) ?? [];
+      list.push({ field: entry.field, confidence: weight[entry.match], match: entry.match });
+      index.set(key, list);
+    }
+  }
+
+  for (const list of index.values()) {
+    // Ordem determinística: confiança descendente, depois ordem de declaração.
+    list.sort((a, b) => b.confidence - a.confidence);
+    Object.freeze(list);
+  }
+
+  return index;
+}
+
+/**
+ * Procura correspondências para o nome de uma coluna.
+ *
+ * Devolve **todas** as correspondências possíveis, ordenadas por confiança
+ * decrescente, em vez de escolher uma. A escolha é responsabilidade do mapeador,
+ * que conhece o contexto (tipo de registo inferido, outras colunas presentes) e
+ * que tem de saber quando *não* pode escolher sozinho (§10.4).
+ */
+export function lookupColumnSynonyms(columnName: string): readonly SynonymMatch[] {
+  return SYNONYM_INDEX.get(normalizeColumnName(columnName)) ?? [];
+}
+
+
+
+/**
+ * Vocabulário de campos canónicos por tipo de registo.
+ *
+ * **Tem de coincidir com `FIELD_MAP` em `apps/api/src/domain/import/normalize-records.ts`.**
+ * Existe aqui, e não só lá, porque o dicionário de sinónimos acima tem de apontar para
+ * nomes que existem: um sinónimo que aponte para `maintenanceType` quando o campo real é
+ * `type` produz um mapeamento que parece correto e nunca escreve nada. É um erro silencioso
+ * exatamente do tipo que a §10.4 pede para evitar.
+ *
+ * A verificação é feita por teste (`import-csv-synonyms.test.ts`): cada `field` declarado
+ * em `COLUMN_SYNONYMS` tem de pertencer a algum destes conjuntos.
+ *
+ * `REFERENCE_FIELDS` (referências entre registos) ficam de fora de propósito: não são
+ * colunas de valores, são ligações entre linhas do bundle, e o CSV genérico não as
+ * transporta (§15).
+ */
+export const CANONICAL_FIELDS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  vehicle: Object.freeze([
+    'plate',
+    'plateDisplay',
+    'vin',
+    'make',
+    'model',
+    'version',
+    'year',
+    'vehicleType',
+    'fuelType',
+    'color',
+    'nickname',
+  ]),
+  odometer: Object.freeze(['odometerKm', 'recordedAt', 'origin', 'isCorrection', 'notes']),
+  expense: Object.freeze([
+    'amountCents',
+    'vatCents',
+    'category',
+    'date',
+    'vendor',
+    'odometerKm',
+    'description',
+    'paymentMethod',
+    'paid',
+  ]),
+  fuel: Object.freeze([
+    'date',
+    'litres',
+    'amountCents',
+    'pricePerLitreCents',
+    'odometerKm',
+    'fullTank',
+    'station',
+    'fuelType',
+    'latitude',
+    'longitude',
+    'paymentMethod',
+    'notes',
+  ]),
+  charging: Object.freeze([
+    'date',
+    'energyKwh',
+    'amountCents',
+    'pricePerKwhCents',
+    'odometerKm',
+    'startSocPercent',
+    'endSocPercent',
+    'durationMinutes',
+    'location',
+    'isPublic',
+    'paymentMethod',
+    'notes',
+  ]),
+  maintenance: Object.freeze([
+    'date',
+    'type',
+    'amountCents',
+    'odometerKm',
+    'vendor',
+    'description',
+    'nextDate',
+    'nextOdometerKm',
+    'notes',
+  ]),
+  insurance: Object.freeze([
+    'insurer',
+    'policyNumber',
+    'startDate',
+    'endDate',
+    'premiumCents',
+    'amountCents',
+    'coverage',
+    'notes',
+  ]),
+  inspection: Object.freeze(['date', 'result', 'amountCents', 'odometerKm', 'expiresAt', 'station', 'notes']),
+  tax: Object.freeze(['kind', 'year', 'amountCents', 'date', 'dueDate', 'paid', 'notes']),
+  document: Object.freeze([
+    'name',
+    'category',
+    'date',
+    'expiresAt',
+    'fileName',
+    'mimeType',
+    'sizeBytes',
+    'contentPath',
+    'contentState',
+    'contentSha256',
+    'notes',
+  ]),
+  reminder: Object.freeze(['title', 'dueDate', 'dueOdometerKm', 'origin', 'notes']),
+  event: Object.freeze(['type', 'date', 'title', 'description']),
+  suggestion: Object.freeze(['key', 'type', 'status', 'reason']),
+  notification: Object.freeze(['topic', 'title', 'body', 'severity']),
+});
+
+/**
+ * Todos os nomes de campo canónicos, sem repetições, independentemente do tipo.
+ *
+ * É o conjunto contra o qual o dicionário de sinónimos é validado: um `field` que não
+ * pertença aqui é um erro de declaração, não uma funcionalidade futura.
+ */
+export const ALL_CANONICAL_FIELDS: ReadonlySet<string> = new Set(
+  Object.values(CANONICAL_FIELDS).flat(),
+);
+
+/** True quando o nome é um campo canónico conhecido de pelo menos um tipo de registo. */
+export function isCanonicalField(name: string): boolean {
+  return ALL_CANONICAL_FIELDS.has(name);
+}
+
+/* -------------------------------------------------------------------------- */
 /* Helpers                                                                     */
 /* -------------------------------------------------------------------------- */
 

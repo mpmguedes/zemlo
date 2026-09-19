@@ -365,3 +365,141 @@ Zemlo **nunca** publica uma entidade com um valor estimado apresentado como medi
 
 A exportação é registada em auditoria e nunca inclui `passwordHash`, `twoFactorSecret`
 nem credenciais de integrações.
+
+---
+
+## Importação (§3.2, §7, §8, §9.5)
+
+Duas camadas, com a mesma separação **analisar / aplicar** em ambas:
+
+```
+POST /import/preview      → analisa um bundle Zemlo. Não escreve nada.
+POST /import/apply        → aplica o plano aprovado. Escreve.
+POST /import/csv/preview  → analisa um CSV arbitrário. Não escreve nada.
+POST /import/csv/apply    → aplica o plano aprovado. Escreve.
+```
+
+A separação não é estética: a §11.3 exige que **nada seja escrito antes de o utilizador ver
+o que vai acontecer**. Duas rotas tornam a garantia estrutural — não existe um caminho de
+código que escreva e devolva um plano ao mesmo tempo.
+
+### Corpo e cabeçalhos
+
+O corpo é o **ficheiro em bruto**, não `multipart/form-data`.
+
+| Camada | `Content-Type` aceites |
+| --- | --- |
+| Bundle | `application/zip`, `application/x-zip-compressed`, `application/octet-stream` |
+| CSV | `text/csv`, `text/plain`, `application/octet-stream` |
+
+As duas listas são **separadas de propósito**: partilhá-las fez um `text/plain` com bytes de
+ZIP passar a ser aceite como bundle. `multipart/form-data` é recusado com **415** porque
+traria uma dependência para transportar um único ficheiro e converteria um erro claro
+("envia o ficheiro tal como está") num erro enganador ("isto não é um ZIP").
+
+`application/vnd.ms-excel` **não** é aceite: é o tipo do XLSX, que fica para fase posterior
+(decisão #9). Limite do corpo: 64 MiB.
+
+### Parâmetros da query
+
+| Parâmetro | Rota | Valores | Descrição |
+| --- | --- | --- | --- |
+| `plan` | `/import/apply` | JSON | o plano aprovado; só se usa o `bundleId`, para confronto |
+| `kind` | `/import/csv/*` | tipo de registo | força o tipo (§10.5: "o utilizador escolhe") |
+| `decisions` | `/import/csv/*` | JSON `[{ index, field \| null }]` | decisões de coluna; `null` = ignorar |
+| `dateOrder` | `/import/csv/*` | `dia-mes`, `mes-dia` | convenção de datas ambíguas (§10.4) |
+| `decimalStyle` | `/import/csv/*` | `virgula`, `ponto` | separador decimal (§10.4) |
+| `conflictPolicy` | `/import/csv/*` | `keep-existing`, `prefer-incoming`, `fill-empty`, `manual` | por omissão `fill-empty` (decisão 8) |
+| `identity` | `/import/csv/apply` | texto | a identidade devolvida pelo preview; divergência → **409** |
+
+Os identificadores da `conflictPolicy` são os do domínio. A §11.4 descreve-os em linguagem
+de utilizador — "manter o que tenho" = `keep-existing`, "usar o ficheiro" = `prefer-incoming`,
+"preencher apenas o que está vazio" = `fill-empty`, e `manual` é "decidir caso a caso". A
+tradução é da interface: a API usa os identificadores estáveis e a §11.3 proíbe conceitos
+técnicos **na apresentação**, não no contrato.
+
+Os `kind` aceites na Camada 2 são os que um ficheiro consegue exprimir: `vehicle`,
+`odometer`, `expense`, `fuel`, `charging`, `maintenance`, `insurance`, `inspection`, `tax`,
+`document`, `reminder`. Os restantes tipos do bundle (`event`, `suggestion`,
+`notification`) não são importáveis de CSV e são recusados com **400**, nomeando os aceites.
+
+### O `/import/csv/preview` devolve
+
+| Campo | Conteúdo |
+| --- | --- |
+| `identity` | `{ key, contentHash }` — a chave de idempotência e o `sha256` do ficheiro |
+| `detection` | codificação, separador, presença de cabeçalho, contagens, confiança, motivos |
+| `mapping.columns[]` | por coluna: `state`, `field`, `confidence`, `candidates`, `sample` |
+| `mapping.requiredFields[]` | campos obrigatórios que ficariam vazios |
+| `inference` | estado (`inequivoco`/`ambiguo`/`insuficiente`), evidência e alternativas |
+| `kind` | tipo usado, ou `null` quando a inferência não decidiu |
+| `preview[]` | até 20 linhas **já normalizadas** (§10.2, passo 5) |
+| `skipped[]` | linhas ignoradas, com o número de linha e o motivo |
+| `valueIssues[]` | valores ilegíveis, com a coluna a que pertencem |
+| `emptyReason` | aviso quando nada pôde ser construído |
+| `savedMap` | o mapa de colunas reutilizado, ou `null` |
+| `plan` | `state`, `counts`, `issueSummary`, `issues`, `entries` |
+
+Cada coluna tem **um de quatro estados** (`confirmado`, `sugerido`, `ambiguo`,
+`nao_mapeado`). A §10.4 é explícita: admitir a incerteza é parte do desenho. O sistema não
+escolhe em silêncio — uma coluna `Km/l` fica `ambiguo` e espera resposta.
+
+Nenhum registo canónico (`records`) é devolvido: são o que o `apply` recebe, e o `apply`
+reconstrói-os a partir do ficheiro.
+
+### O `/import/csv/apply` devolve
+
+Mesma forma do relatório do bundle (`applied`, `headline`, `summary`, `created`, `enriched`,
+`skipped`, `batches`, `issues`, `csv`) mais:
+
+| Campo | Conteúdo |
+| --- | --- |
+| `savedMap` | `{ reused, decisions, timesUsed, lastUsedAt, uncoveredColumns, unmatchedHeaders, ambiguousHeaders }` |
+
+O `csv` já vem serializado, para o relatório poder ser descarregado sem um segundo pedido.
+
+### Mapas de colunas guardados (§10.2, passo 9)
+
+Um mapa confirmado fica guardado **por utilizador e por forma de ficheiro**, o que faz a
+segunda importação do mesmo fornecedor ser um clique (§11.3: "Não pedir duas vezes").
+
+A "forma" é a **assinatura normalizada do cabeçalho** — nomes sem acentos nem pontuação,
+ordenados e com a contagem à frente (`5:data|litros|matricula|quilometragem|valor`). Assim:
+
+| Alteração no ficheiro | Muda a forma? | Efeito |
+| --- | --- | --- |
+| Renomear o ficheiro | não | o mapa continua a servir |
+| Acrescentar linhas | não | o mapa continua a servir |
+| Reordenar as colunas | **não** | as decisões são reaplicadas **por nome** |
+| `MATRICULA` em vez de `Matrícula` | não | a normalização absorve a diferença |
+| Acrescentar uma coluna | **sim** | o utilizador volta a confirmar |
+| Remover ou renomear uma coluna | **sim** | o utilizador volta a confirmar |
+
+**Não existe mapa global.** A chave inclui o `userId`, e a leitura é sempre por chave
+composta `(userId, kind, shapeKey)` — o mapa de uma conta nunca é visto por outra, nem como
+sugestão. Uma coluna chamada `Utilizador` no ficheiro não muda o destinatário: a conta vem
+**sempre** do token (§7.3).
+
+### Idempotência (§9.5)
+
+O identificador de idempotência de um CSV é `csv_<userId>_<sha256>[_<kind>]`. É um valor
+**opaco**: para o livro de idempotência tem o mesmo papel que o `bundleId` de um bundle.
+Reimportar o mesmo ficheiro não cria nada e di-lo ("Este ficheiro já tinha sido importado").
+Como a chave inclui o `userId`, o mesmo ficheiro importado noutra conta **cria tudo** — é o
+que permite exportar de uma conta e importar noutra.
+
+### Códigos de erro específicos
+
+| Situação | HTTP | `code` |
+| --- | --- | --- |
+| Plano/identidade não corresponde ao ficheiro | 409 | `conflict` |
+| CSV sem tipo determinado (§10.5) | 422 | `unprocessable` |
+| Importação bloqueada por registos em quarentena | 422 | `unprocessable` |
+| `kind` não importável de CSV | 400 | `validation_error` |
+| Decisão ou convenção inválida | 400 | `validation_error` |
+| `Content-Type` não aceite | 415 | `validation_error` |
+| Corpo ausente | 400 | `validation_error` |
+
+Os `details` do erro (incluindo o `reason` estável) são **registados nos logs mas nunca
+enviados ao cliente**: a mensagem é escrita em linguagem de utilizador, que é o que a §11.3
+exige ("zero conceitos técnicos").

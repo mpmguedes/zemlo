@@ -67,7 +67,21 @@ import { logger } from '../../core/logger.js';
 import { prisma } from '../../core/db.js';
 import { readZip, hasZipSignature, ZipRefusalError } from '../../domain/import/zip.js';
 import { BundleRefusalError } from '../../domain/import/bundle.js';
+import { parseCsv } from '../../domain/import/csv/parse.js';
+import {
+  applySavedMapToTable,
+  type ColumnDecision,
+} from '../../domain/import/csv/mapping.js';
+import type { DateOrder, DecimalStyle } from '../../domain/import/csv/values.js';
+import { CSV_SUPPORTED_KINDS, isCsvSupportedKind } from '../../domain/import/csv/infer-kind.js';
+import type { RecordKind } from '../../domain/import/validate.js';
+import { CONFLICT_POLICIES, type ConflictPolicy } from '../../domain/import/plan.js';
 import { previewImport } from '../../services/import/read.js';
+import { previewCsv } from '../../services/import/csv-preview.js';
+import {
+  findSavedMap,
+  saveColumnMap,
+} from '../../services/import/column-map.js';
 import {
   applyImport,
   ImportNotApplicableError,
@@ -116,7 +130,12 @@ export const UPLOAD_LIMITS = {
  * **antes** de o router ser resolvido, pelo que o único caminho que existe nessa altura é o
  * do pedido inteiro (`request.path` = `/api/v1/import/preview`).
  */
-export const IMPORT_UPLOAD_PATHS = ['/api/v1/import/preview', '/api/v1/import/apply'] as const;
+export const IMPORT_UPLOAD_PATHS = [
+  '/api/v1/import/preview',
+  '/api/v1/import/apply',
+  '/api/v1/import/csv/preview',
+  '/api/v1/import/csv/apply',
+] as const;
 
 /** Alias legível para o `app.ts`, que não deve conhecer o nome `UPLOAD_LIMITS`. */
 export const IMPORT_UPLOAD_MAX_BYTES = UPLOAD_LIMITS.maxUploadBytes;
@@ -180,9 +199,61 @@ export function isNativeImportUpload(method: string, path: string): boolean {
  * ficheiro): traria uma dependência para transportar um único ficheiro, e converteria um
  * erro claro ("envia o ficheiro tal como está") num erro enganador ("isto não é um ZIP").
  */
+/**
+ * Tipos de conteúdo aceites para o corpo de um **bundle**.
+ *
+ * Três, e a lista é fechada:
+ *
+ *  - `application/zip` — o tipo correto, e o que a aplicação enviará;
+ *  - `application/x-zip-compressed` — o que o Windows (e o Internet Explorer antes dele)
+ *    atribui a um `.zip`. Recusá-lo seria recusar um ficheiro válido por causa de um
+ *    cabeçalho que o sistema operativo do utilizador escreveu, e o utilizador não tem
+ *    forma de o mudar;
+ *  - `application/octet-stream` — o tipo genérico. Está aqui porque um cliente que não
+ *    conheça a extensão envia este por omissão, e o conteúdo é verificado a seguir pela
+ *    assinatura de qualquer forma. Aceitar o genérico **não** enfraquece nada: a decisão
+ *    real sobre "isto é um ZIP?" é a assinatura, não o cabeçalho.
+ *
+ * `multipart/form-data` **não** está na lista, e é uma decisão: traria uma dependência para
+ * transportar um único ficheiro, e converteria um erro claro ("envia o ficheiro tal como
+ * está") num erro enganador ("isto não é um ZIP").
+ *
+ * `text/plain` também **não** está, e a ausência é deliberada e verificada por teste: com
+ * ele, um ficheiro de texto com bytes que por acaso começassem pela assinatura de ZIP
+ * entraria como bundle. A verificação de tipo existe para recusar **antes** de olhar para o
+ * conteúdo, e alargá-la aqui torná-la-ia decorativa para metade dos casos que a motivaram.
+ */
 export const ACCEPTED_UPLOAD_TYPES = [
   'application/zip',
   'application/x-zip-compressed',
+  'application/octet-stream',
+] as const;
+
+/**
+ * Tipos de conteúdo aceites para o corpo de um **CSV** (Camada 2, §10).
+ *
+ * Lista própria, e não uma extensão da de cima. As duas chegaram a ser a mesma, e o efeito
+ * foi um defeito real apanhado por um teste existente: acrescentar `text/plain` para o CSV
+ * fez um `text/plain` com bytes de ZIP passar a ser aceite na rota do **bundle**, que é
+ * exatamente o que o teste `recusa um tipo textual mesmo que os bytes sejam de ZIP` proíbe.
+ *
+ * As duas rotas recebem ficheiros de naturezas diferentes, e a lista de tipos é a expressão
+ * dessa diferença. Partilhá-la faz com que alargar uma alargue a outra em silêncio — e o
+ * sentido do alargamento é sempre o mais permissivo.
+ *
+ *  - `text/csv` — o tipo correto;
+ *  - `text/plain` — o que muitos sistemas operativos e exportadores atribuem a um `.csv`;
+ *  - `application/octet-stream` — o genérico.
+ *
+ * `application/vnd.ms-excel` **não** está, de propósito: é o tipo do XLSX e do XLS, que a
+ * decisão #9 deixou explicitamente fora desta versão. Aceitá-lo prometeria uma leitura que
+ * não existe.
+ *
+ * Nem `application/zip`: um bundle não é um CSV, e o caminho do CSV não tem leitor de ZIP.
+ */
+export const ACCEPTED_CSV_UPLOAD_TYPES = [
+  'text/csv',
+  'text/plain',
   'application/octet-stream',
 ] as const;
 
@@ -353,18 +424,29 @@ async function withRefusals<T>(operation: () => Promise<T>): Promise<T> {
 /* -------------------------------------------------------------------------- */
 
 /*
- * Autenticação — as duas rotas, e sem exceções.
+ * Autenticação — as rotas de upload, e sem exceções.
  *
  * `request.path` aqui é relativo ao ponto de montagem, pelo que a comparação é sobre o
  * mesmo espaço de nomes que a isenção acima. Ver a nota sobre autenticação com
  * correspondência exata em `vehicles.ts`.
  *
- * O utilizador **nunca** vem do bundle (§7.3: "a conta vem sempre do token, nunca do
- * pedido"). O `manifest` pode declarar o que quiser sobre a conta de origem; `requireUser`
- * é a única fonte do `userId`, e é isso que torna impossível importar para outra conta.
+ * O utilizador **nunca** vem do ficheiro (§7.3: "a conta vem sempre do token, nunca do
+ * pedido"). O `manifest` pode declarar o que quiser sobre a conta de origem, e um CSV pode
+ * ter uma coluna chamada `Utilizador` — `requireUser` é a única fonte do `userId`, e é
+ * isso que torna impossível importar para outra conta.
+ *
+ * A lista é a mesma de `IMPORT_UPLOAD_PATHS`, mas em caminhos **relativos** ao ponto de
+ * montagem — e as duas têm de ser mantidas em sincronia. É por isso que a verificação é
+ * feita a partir de uma só lista interna, e não por duas condições escritas à mão: uma rota
+ * nova que ficasse a faltar aqui seria uma rota de importação **sem autenticação**, que é o
+ * pior defeito possível neste ficheiro.
  */
+const AUTHENTICATED_IMPORT_PATHS = IMPORT_UPLOAD_PATHS.map((path) =>
+  path.replace(/^\/api\/v1/, ''),
+);
+
 importRouter.use((request, response, next) => {
-  if (request.path !== '/import/preview' && request.path !== '/import/apply') {
+  if (!AUTHENTICATED_IMPORT_PATHS.includes(request.path)) {
     next();
     return;
   }
@@ -662,6 +744,660 @@ function parsePlanParam(request: Request): SubmittedPlan {
   }
 
   return { bundleId: typeof bundleId === 'string' ? bundleId : null };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Camada 2 — rotas de CSV (§3.2, §10)                                         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * As duas rotas de CSV, e porque são as mesmas duas do bundle.
+ *
+ * ```
+ * POST /import/csv/preview   → nada escrito. Deteção, mapeamento, plano.
+ * POST /import/csv/apply     → escreve. Relatório, e o mapa guardado.
+ * ```
+ *
+ * A separação é a mesma, e pela mesma razão (§7.1, §11.3): **nada acontece sem o
+ * utilizador ver o que vai acontecer**. Um `?dryRun=true` num só endpoint teria a mesma
+ * semântica e uma garantia mais fraca, exatamente como para o bundle.
+ *
+ * ## Porque é que são rotas novas e não um parâmetro no `/import/preview`
+ *
+ * Porque o que o cliente **envia** e o que **recebe** é diferente, e o tipo de conteúdo é
+ * diferente (`application/zip` vs `text/csv`). Um único endpoint teria de ramificar sobre o
+ * `Content-Type` para decidir qual dos dois pipelines corre — e um `Content-Type` errado
+ * passaria a produzir o pipeline errado com um erro confuso. Duas rotas tornam o pipeline
+ * explícito no caminho, que é o único sítio onde o cliente o pode declarar sem ambiguidade.
+ *
+ * ## O que é reutilizado, sem exceção
+ *
+ * Tudo o que é escrever. O `apply` chama o **mesmo** `applyImport` que o bundle usa, com os
+ * mesmos argumentos, e produz o **mesmo** `buildImportReport`. O que o CSV acrescenta é
+ * apenas o que é específico do CSV: a deteção, o mapeamento, e o mapa guardado no fim.
+ * Não há uma segunda transação, uma segunda idempotência nem um segundo relatório.
+ *
+ * ## O `bundleId` de um CSV é a chave de identidade do conteúdo
+ *
+ * O `apply` recebe `bundleId: preview.identity.key` — que é `csv_<userId>_<sha256>[_<tipo>]`.
+ * O livro de idempotência (§9.5) não sabe nem precisa de saber que o identificador vem de
+ * um CSV: para ele é uma string opaca, como o `bundleId` de um bundle. É isso que faz
+ * reimportar o mesmo CSV não criar nada, sem uma linha de código a mais.
+ */
+
+/**
+ * Lê o ficheiro CSV do pedido.
+ *
+ * Distinta de `readUploadedZip` porque as verificações são diferentes na mesma ordem —
+ * presença, tipo, conteúdo. O `Content-Type` é validado contra a lista fechada; o conteúdo
+ * **não** é verificado por assinatura, porque um CSV não tem uma: é texto, e o que prova
+ * que é um CSV é o parser conseguir encontrar linhas e colunas.
+ *
+ * A verificação que falta aqui é feita por `previewCsv`: um ficheiro vazio, um binário, ou
+ * um texto sem estrutura produzem lá uma análise com `emptyReason` preenchido, e a resposta
+ * diz ao utilizador o que se passou — que é melhor do que uma assinatura a dizer "não é um
+ * CSV" para um ficheiro que ele exportou de outra aplicação.
+ */
+function readUploadedCsv(request: Request): Uint8Array {
+  const contentType = request.headers['content-type'] ?? '';
+  const mediaType = contentType.split(';')[0]?.trim().toLowerCase() ?? '';
+
+  if (
+    !ACCEPTED_CSV_UPLOAD_TYPES.includes(mediaType as (typeof ACCEPTED_CSV_UPLOAD_TYPES)[number])
+  ) {
+    throw new AppError(
+      mediaType === '' ? 400 : 415,
+      'validation_error',
+      mediaType === ''
+        ? 'O ficheiro tem de ser enviado com o cabeçalho Content-Type: text/csv.'
+        : 'O ficheiro tem de ser enviado como texto CSV, com o cabeçalho Content-Type: text/csv.',
+      {
+        fields: [
+          { path: 'content-type', message: `Tipo de conteúdo não suportado: ${mediaType || '(ausente)'}.` },
+        ],
+      },
+    );
+  }
+
+  const body = request.body as unknown;
+
+  if (body === undefined || body === null || (Buffer.isBuffer(body) && body.byteLength === 0)) {
+    throw new AppError(
+      400,
+      'validation_error',
+      'Não recebemos nenhum ficheiro. Escolhe o ficheiro CSV e volta a tentar.',
+      { fields: [{ path: 'body', message: 'O ficheiro é obrigatório.' }] },
+    );
+  }
+
+  if (!Buffer.isBuffer(body)) {
+    throw new AppError(400, 'validation_error', 'O corpo do pedido não pôde ser lido como um ficheiro.');
+  }
+
+  return new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+}
+
+/**
+ * Lê as opções do fluxo CSV a partir da query string.
+ *
+ * ## Porque é que as decisões viajam na query
+ *
+ * Pelo mesmo motivo do plano do bundle: o corpo está ocupado pelo ficheiro, e o corpo é um
+ * só. As decisões são uma lista de `{ index, field }` — pequena, e não os dados.
+ *
+ * ## Porque é que tudo é validado, apesar de vir do nosso cliente
+ *
+ * Porque o cliente é um intermediário. Uma decisão com um `index` que não existe ou um
+ * `field` inventado não pode entrar no caminho de escrita — e, mais importante, **não pode
+ * entrar no mapa guardado**. Um mapa guardado com um campo inválido envenenaria todas as
+ * importações futuras daquele formato, e o utilizador não teria como saber porquê.
+ *
+ * A validação é de **forma**; a validação de **coerência** (o campo é candidato daquela
+ * coluna?) é feita por `resolveMapping`, que já a sabe fazer e a reporta em `invalid`. Não
+ * se duplica aqui.
+ */
+function parseCsvOptions(request: Request): {
+  kind?: RecordKind;
+  decisions?: readonly ColumnDecision[];
+  dateOrder?: DateOrder;
+  decimalStyle?: DecimalStyle;
+  conflictPolicy?: ConflictPolicy;
+  decoded: Record<string, unknown>;
+} {
+  const decoded: Record<string, unknown> = {};
+
+  const readJson = (name: string): unknown => {
+    const raw = request.query[name];
+    if (typeof raw !== 'string' || raw.length === 0) return undefined;
+
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      decoded[name] = parsed;
+      return parsed;
+    } catch {
+      throw new AppError(400, 'validation_error', `O campo «${name}» não é válido.`, {
+        fields: [{ path: name, message: 'Não é JSON válido.' }],
+      });
+    }
+  };
+
+  const options: {
+    kind?: RecordKind;
+    decisions?: readonly ColumnDecision[];
+    dateOrder?: DateOrder;
+    decimalStyle?: DecimalStyle;
+    conflictPolicy?: ConflictPolicy;
+    decoded: Record<string, unknown>;
+  } = { decoded };
+
+  /* ---- tipo de registo (§10.5: "o utilizador escolhe") ---- */
+
+  const kindRaw = request.query.kind;
+  if (typeof kindRaw === 'string' && kindRaw.length > 0) {
+    /*
+     * A validação usa `isCsvSupportedKind` e não uma lista local.
+     *
+     * É a mesma lista que o serviço usa para decidir se consegue construir registos. Uma
+     * segunda lista aqui divergiria da primeira, e o efeito seria aceitar um `kind` que o
+     * serviço depois recusa — ou pior, recusar um que ele sabe tratar.
+     */
+    if (!isCsvSupportedKind(kindRaw)) {
+      throw new AppError(
+        400,
+        'validation_error',
+        `«${kindRaw}» não é um tipo de registo que se possa importar de um ficheiro.`,
+        {
+          fields: [
+            {
+              path: 'kind',
+              message: `Tipos aceites: ${CSV_SUPPORTED_KINDS.join(', ')}.`,
+            },
+          ],
+        },
+      );
+    }
+    options.kind = kindRaw as RecordKind;
+  }
+
+  /* ---- decisões de coluna ---- */
+
+  const decisionsRaw = readJson('decisions');
+  if (decisionsRaw !== undefined) {
+    if (!Array.isArray(decisionsRaw)) {
+      throw new AppError(400, 'validation_error', 'As decisões enviadas não são válidas.', {
+        fields: [{ path: 'decisions', message: 'Tem de ser uma lista.' }],
+      });
+    }
+
+    const decisions: ColumnDecision[] = [];
+    for (const entry of decisionsRaw) {
+      if (typeof entry !== 'object' || entry === null) {
+        throw new AppError(400, 'validation_error', 'As decisões enviadas não são válidas.', {
+          fields: [{ path: 'decisions', message: 'Cada decisão tem de ser um objeto.' }],
+        });
+      }
+
+      const { index, field } = entry as { index?: unknown; field?: unknown };
+
+      if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) {
+        throw new AppError(400, 'validation_error', 'As decisões enviadas não são válidas.', {
+          fields: [{ path: 'decisions.index', message: 'O índice tem de ser um inteiro não negativo.' }],
+        });
+      }
+
+      /*
+       * `null` é aceite e é uma resposta legítima (§10.4: "se a resposta for 'nenhuma',
+       * ignora-se"). A distinção entre `null` e ausente é deliberada e é validada: um
+       * `field` que não seja `null` nem string é um erro, e não se assume `null` por
+       * omissão — assumir seria transformar um erro do cliente numa coluna ignorada em
+       * silêncio, que é o que a §9.2 proíbe.
+       */
+      if (field !== null && typeof field !== 'string') {
+        throw new AppError(400, 'validation_error', 'As decisões enviadas não são válidas.', {
+          fields: [
+            { path: 'decisions.field', message: 'O campo tem de ser texto ou null para ignorar a coluna.' },
+          ],
+        });
+      }
+
+      decisions.push({ index, field });
+    }
+
+    options.decisions = decisions;
+  }
+
+  /* ---- convenções da §10.4 ---- */
+
+  const dateOrderRaw = request.query.dateOrder;
+  if (typeof dateOrderRaw === 'string' && dateOrderRaw.length > 0) {
+    if (dateOrderRaw !== 'dia-mes' && dateOrderRaw !== 'mes-dia') {
+      throw new AppError(400, 'validation_error', 'A ordem de datas indicada não é válida.', {
+        fields: [{ path: 'dateOrder', message: 'Tem de ser «dia-mes» ou «mes-dia».' }],
+      });
+    }
+    options.dateOrder = dateOrderRaw;
+  }
+
+  const decimalRaw = request.query.decimalStyle;
+  if (typeof decimalRaw === 'string' && decimalRaw.length > 0) {
+    if (decimalRaw !== 'virgula' && decimalRaw !== 'ponto') {
+      throw new AppError(400, 'validation_error', 'O separador decimal indicado não é válido.', {
+        fields: [{ path: 'decimalStyle', message: 'Tem de ser «virgula» ou «ponto».' }],
+      });
+    }
+    options.decimalStyle = decimalRaw;
+  }
+
+  /* ---- política de conflito (decisão 8; por omissão `fill-empty`) ---- */
+
+  const policyRaw = request.query.conflictPolicy;
+  if (typeof policyRaw === 'string' && policyRaw.length > 0) {
+    /*
+     * Os identificadores da política vêm de `CONFLICT_POLICIES`, a fonte única do domínio.
+     * A mensagem lista-os a partir de lá em vez de os repetir: uma lista escrita à mão na
+     * mensagem de erro é a primeira a ficar desatualizada, e uma mensagem que enumera
+     * opções que já não existem é pior do que uma que não enumera nenhuma.
+     */
+    if (!(CONFLICT_POLICIES as readonly string[]).includes(policyRaw)) {
+      throw new AppError(400, 'validation_error', 'A política de conflito indicada não é válida.', {
+        fields: [
+          {
+            path: 'conflictPolicy',
+            message: `Políticas aceites: ${CONFLICT_POLICIES.join(', ')}.`,
+          },
+        ],
+      });
+    }
+    options.conflictPolicy = policyRaw as ConflictPolicy;
+  }
+
+  return options;
+}
+
+/**
+ * Analisa um CSV e devolve deteção, mapeamento, pré-visualização e plano.
+ *
+ * **Não escreve nada**, como o `/import/preview`. É o passo 3 do fluxo da §11.2 — o
+ * "Analisar" depois do qual a conta ainda está exatamente como estava.
+ *
+ * ## O mapa guardado (§10.2 passo 9)
+ *
+ * Quando o utilizador ainda não enviou decisões e existe um mapa guardado para esta forma
+ * de ficheiro **nesta conta**, as decisões do mapa são aplicadas. É o "um clique" que a
+ * §10.2 pede: o utilizador reconhece o formato e não repete o mapeamento.
+ *
+ * A ordem é deliberada: o que o utilizador envia agora **ganha** ao que ficou guardado. Um
+ * mapa é um ponto de partida, e a confirmação do momento é a última palavra — o contrário
+ * faria uma correção de hoje ser ignorada em favor de uma decisão antiga.
+ *
+ * ## O que a resposta diz sobre o mapa
+ *
+ * A resposta inclui `savedMap` com o que foi reutilizado e o que não foi (`uncoveredColumns`,
+ * `unmatchedHeaders`, `ambiguousHeaders`). É a informação que o ecrã do passo 4 (§10.2) usa
+ * para destacar colunas não reconhecidas — que é precisamente o que a especificação exige
+ * depois de um formato mudar.
+ */
+importRouter.post(
+  '/import/csv/preview',
+  asyncHandler(async (request, response) => {
+    const user = requireUser(request);
+    const bytes = readUploadedCsv(request);
+    const options = parseCsvOptions(request);
+
+    /*
+     * As decisões guardadas só são usadas quando o cliente não enviou nenhumas.
+     *
+     * Misturar as duas seria pior do que qualquer das alternativas: uma decisão guardada
+     * que o utilizador já substituiu voltaria a aparecer, e o ecrã mostraria um mapeamento
+     * que não corresponde ao que ele acabou de confirmar.
+     */
+    let decisions = options.decisions;
+    let savedMap: SavedMapSummary | null = null;
+
+    if ((decisions === undefined || decisions.length === 0) && options.kind !== undefined) {
+      const table = parseCsv(bytes, {
+        ...(typeof request.query.maxRows === 'string'
+          ? { maxRows: Number.parseInt(request.query.maxRows, 10) }
+          : {}),
+      });
+
+      const found = await findSavedMap(prisma, {
+        userId: user.id,
+        kind: options.kind,
+        headers: table.headers,
+      });
+
+      if (found !== null) {
+        const applied = applySavedMapToTable(table, found);
+        decisions = applied.decisions;
+
+        savedMap = {
+          reused: true,
+          decisions: applied.decisions.length,
+          timesUsed: found.timesUsed,
+          lastUsedAt: found.lastUsedAt.toISOString(),
+          /**
+           * As colunas que o mapa **não** cobre sobem para a resposta.
+           *
+           * É o mecanismo que deteta a mudança de formato: se o fornecedor acrescentou uma
+           * coluna, a assinatura já não coincide e o mapa não é encontrado. Mas se a
+           * assinatura coincidir e **ainda assim** houver colunas não cobertas — o que
+           * acontece quando o mapa guardado não decidiu tudo, porque o utilizador só
+           * corrigiu as ambíguas —, o utilizador tem de as ver na mesma.
+           */
+          uncoveredColumns: applied.uncoveredColumns,
+          unmatchedHeaders: applied.unmatchedHeaders,
+          ambiguousHeaders: applied.ambiguousHeaders,
+        };
+      }
+    }
+
+    const preview = await previewCsv({
+      bytes,
+      userId: user.id,
+      prisma,
+      ...(options.kind !== undefined ? { kind: options.kind } : {}),
+      ...(decisions !== undefined && decisions.length > 0 ? { decisions } : {}),
+      ...(options.dateOrder !== undefined ? { dateOrder: options.dateOrder } : {}),
+      ...(options.decimalStyle !== undefined ? { decimalStyle: options.decimalStyle } : {}),
+      ...(options.conflictPolicy !== undefined ? { conflictPolicy: options.conflictPolicy } : {}),
+    });
+
+    response.json(toCsvPreviewBody(preview, savedMap));
+  }),
+);
+
+/**
+ * Aplica um plano de CSV. **Escreve**, e devolve o relatório.
+ *
+ * O corpo é o CSV. O plano aprovado e as decisões viajam na *query string*.
+ *
+ * ## A defesa contra "o plano não é deste ficheiro"
+ *
+ * O `preview` recalcula tudo a partir dos **bytes deste pedido**, e o identificador que
+ * recebe é confrontado com o do plano enviado. A comparação é a mesma do bundle, e é uma
+ * comparação de **conteúdo** e não de nome: o `identity.key` inclui o `sha256` dos bytes,
+ * pelo que um ficheiro diferente falha a correspondência mesmo que tenha o mesmo nome. Um
+ * ficheiro com o **mesmo** conteúdo é, para todos os efeitos, o mesmo ficheiro — e aí não
+ * há nada a proteger.
+ *
+ * ## Porque é que o plano enviado não instrui a escrita
+ *
+ * Exatamente como no bundle: o plano que governa a escrita é o que o servidor acabou de
+ * produzir a partir dos bytes. O valor recebido só pode fazer uma coisa — falhar a
+ * correspondência. Não há forma de o cliente escrever algo que não esteja no ficheiro.
+ *
+ * ## O mapa guardado é escrito **depois** de a escrita ter sucesso
+ *
+ * A ordem importa. Guardar o mapa antes seria guardar uma decisão que pode não ter
+ * resultado em nada — e o utilizador teria um mapa para um formato que nunca importou, que
+ * voltaria a ser aplicado na tentativa seguinte mesmo que o problema fosse outro.
+ *
+ * Só se guarda quando houve escrita (`report.applied`) e quando houve pelo menos uma
+ * decisão. Uma importação que não escreveu nada não confirma mapeamento nenhum, e guardar
+ * um mapa vazio seria guardar uma promessa sem conteúdo.
+ */
+importRouter.post(
+  '/import/csv/apply',
+  asyncHandler(async (request, response) => {
+    const user = requireUser(request);
+    const bytes = readUploadedCsv(request);
+    const options = parseCsvOptions(request);
+
+    const decisions = options.decisions;
+
+    const preview = await previewCsv({
+      bytes,
+      userId: user.id,
+      prisma,
+      ...(options.kind !== undefined ? { kind: options.kind } : {}),
+      ...(decisions !== undefined && decisions.length > 0 ? { decisions } : {}),
+      ...(options.dateOrder !== undefined ? { dateOrder: options.dateOrder } : {}),
+      ...(options.decimalStyle !== undefined ? { decimalStyle: options.decimalStyle } : {}),
+      ...(options.conflictPolicy !== undefined ? { conflictPolicy: options.conflictPolicy } : {}),
+    });
+
+    /* --- Correspondência plano/ficheiro --- */
+
+    const submitted = parseIdentityParam(request);
+
+    if (submitted.identity !== null && submitted.identity !== preview.identity.key) {
+      throw new AppError(
+        409,
+        'conflict',
+        'O plano não corresponde a este ficheiro. Analisa o ficheiro novamente antes de importar.',
+        { details: { reason: 'plan.csv_mismatch' } },
+      );
+    }
+
+    /*
+     * Um CSV que não produziu tipo não pode ser aplicado.
+     *
+     * Não é o mesmo que um plano bloqueado: aqui não houve sequer registos a construir. A
+     * §10.5 termina com "se a inferência for ambígua, o utilizador escolhe" — pelo que a
+     * mensagem tem de pedir **a escolha**, e não descrever os dados.
+     *
+     * O `emptyReason` do serviço é reaproveitado quando explica algo sobre o **ficheiro**
+     * (linhas ilegíveis, valores que não se interpretam), porque nesse caso é a informação
+     * mais útil que existe. Mas quando ele é o texto genérico de "não consegui construir
+     * nada", não acrescenta nada ao utilizador — e vale mais a mensagem que nomeia a ação
+     * em falta. A distinção é feita pela presença de `kind`, não pelo texto do `emptyReason`:
+     * comparar strings de apresentação seria frágil e quebraria à primeira tradução.
+     */
+    if (preview.kind === null) {
+      throw new AppError(
+        422,
+        'unprocessable',
+        'Não foi possível perceber que tipo de registos este ficheiro contém. Escolhe o tipo e volta a tentar.',
+        {
+          details: {
+            reason: 'import.csv.kind-undetermined',
+            inference: preview.inference.state,
+            ...(preview.emptyReason !== null ? { detail: preview.emptyReason } : {}),
+          },
+        },
+      );
+    }
+
+    /* --- Escrita: o mesmo `applyImport` do núcleo da Camada 1 --- */
+
+    let applied;
+    try {
+      applied = await applyImport({
+        plan: preview.plan,
+        records: preview.records,
+        // O `bundleId` de um CSV é a chave de identidade do conteúdo. Ver o docblock acima.
+        bundleId: preview.identity.key,
+        userId: user.id,
+        prisma,
+      });
+    } catch (error) {
+      if (error instanceof ImportNotApplicableError) {
+        throw new AppError(422, 'unprocessable', error.message, {
+          details: { reason: `import.${error.reason}` },
+        });
+      }
+      throw error;
+    }
+
+    const report = buildImportReport({
+      plan: preview.plan,
+      applied,
+      bundleId: preview.identity.key,
+    });
+
+    /* --- Mapa guardado: só depois de a escrita ter sucesso --- */
+
+    let savedMap: SavedMapSummary | null = null;
+
+    if (report.applied && decisions !== undefined && decisions.length > 0) {
+      const saved = await saveColumnMap(prisma, {
+        userId: user.id,
+        kind: preview.kind,
+        headers: preview.detection.headers,
+        decisions: decisions.map((decision) => ({ index: decision.index, field: decision.field })),
+        delimiter: preview.detection.delimiter,
+        encoding: preview.detection.encoding,
+        dateOrder: options.dateOrder ?? null,
+        decimalStyle: options.decimalStyle ?? null,
+      });
+
+      savedMap = {
+        reused: false,
+        decisions: saved.decisions.length,
+        timesUsed: saved.timesUsed,
+        lastUsedAt: saved.lastUsedAt.toISOString(),
+        uncoveredColumns: [],
+        unmatchedHeaders: [],
+        ambiguousHeaders: [],
+      };
+    }
+
+    /* --- Auditoria (§7.3) --- */
+
+    if (report.applied) {
+      await audit('user.imported_data', {
+        userId: user.id,
+        ipAddress: request.meta.ipAddress,
+        userAgent: request.meta.userAgent,
+        entityType: 'import',
+        entityId: preview.identity.key,
+        metadata: {
+          source: 'csv',
+          records: report.created.length,
+          enriched: report.enriched.length,
+          batches: report.batches,
+          // Nunca o conteúdo do ficheiro (§7.3, §30) — só o tipo de registo.
+          kind: preview.kind,
+        },
+      });
+    } else {
+      logger.info('importação CSV sem alterações', {
+        userId: user.id,
+        kind: preview.kind,
+      });
+    }
+
+    response.json(toCsvReportBody(report, savedMap));
+  }),
+);
+
+/* -------------------------------------------------------------------------- */
+/* Corpo das respostas de CSV                                                  */
+/* -------------------------------------------------------------------------- */
+
+/** O que a resposta diz sobre um mapa guardado — reutilizado ou recém-guardado. */
+interface SavedMapSummary {
+  /** `true` quando veio da base de dados; `false` quando foi guardado agora. */
+  readonly reused: boolean;
+  readonly decisions: number;
+  readonly timesUsed: number;
+  readonly lastUsedAt: string;
+  readonly uncoveredColumns: readonly string[];
+  readonly unmatchedHeaders: readonly string[];
+  readonly ambiguousHeaders: readonly string[];
+}
+
+/**
+ * A resposta do `/import/csv/preview`.
+ *
+ * ## O que vai, e o que não vai
+ *
+ * Vai a deteção (passos 1–2), o mapeamento com os quatro estados (passos 3–4), a
+ * pré-visualização normalizada de ~20 linhas (passo 5), os erros por linha (passo 6), os
+ * duplicados via plano (passo 7) e as contagens do plano.
+ *
+ * **Não** vão os `records` canónicos. São o que o `apply` recebe, e o `apply` reconstrói-os
+ * a partir do ficheiro — enviá-los ao cliente seria enviar dados de escrita por um caminho
+ * onde eles não são precisos, e dar-lhes um aspeto de contrato que não têm. O `plan` sim,
+ * porque é o que o utilizador aprovou e o que identifica a operação.
+ */
+function toCsvPreviewBody(
+  preview: Awaited<ReturnType<typeof previewCsv>>,
+  savedMap: SavedMapSummary | null,
+): Record<string, unknown> {
+  return {
+    identity: preview.identity,
+    detection: preview.detection,
+    mapping: preview.mapping,
+    inference: preview.inference,
+    kind: preview.kind,
+    preview: preview.preview,
+    skipped: preview.skipped,
+    valueIssues: preview.valueIssues,
+    emptyReason: preview.emptyReason,
+    savedMap,
+    plan: {
+      state: preview.plan.state,
+      counts: preview.plan.counts,
+      issueSummary: preview.plan.issueSummary,
+      issues: preview.plan.issues,
+      entries: preview.plan.entries,
+    },
+  };
+}
+
+/**
+ * A resposta do `/import/csv/apply`.
+ *
+ * Mesma forma do relatório do bundle, mais o `savedMap` — que é o que permite ao passo 9 da
+ * §10.2 dizer *"Guardei este mapa para a próxima vez"* com um número em vez de uma promessa.
+ */
+function toCsvReportBody(
+  report: ReturnType<typeof buildImportReport>,
+  savedMap: SavedMapSummary | null,
+): Record<string, unknown> {
+  return {
+    bundleId: report.bundleId,
+    applied: report.applied,
+    headline: report.headline,
+    summary: report.summary,
+    created: report.created,
+    enriched: report.enriched,
+    skipped: report.skipped,
+    batches: report.batches,
+    issues: report.issues,
+    csv: reportToCsv(report),
+    savedMap,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Validação dos parâmetros de identidade                                      */
+/* -------------------------------------------------------------------------- */
+
+/** A identidade do ficheiro a aplicar, reduzida ao que interessa confrontar. */
+interface SubmittedIdentity {
+  readonly identity: string | null;
+}
+
+/**
+ * Lê o identificador do ficheiro a partir da query.
+ *
+ * Aceita `identity` e, por compatibilidade com o vocabulário do bundle, `bundleId` — a
+ * mesma coisa com dois nomes, e o nome do bundle continua a ser aceite porque é o que a
+ * interface já conhece. Não se aceitam os dois em simultâneo: seria ambíguo, e uma
+ * ambiguidade num caminho de escrita resolve-se recusando, não escolhendo.
+ *
+ * Ausente é `null`, e `null` **não** faz a verificação passar por omissão — faz a
+ * correspondência ser **ignorada**, o que é diferente e é deliberado: sem identificador não
+ * há nada a confrontar. A defesa que resta é a mais forte de todas e não depende deste
+ * valor: os registos a escrever são sempre os que o servidor acabou de construir a partir
+ * dos bytes deste pedido.
+ */
+function parseIdentityParam(request: Request): SubmittedIdentity {
+  const identity = request.query.identity;
+  const bundleId = request.query.bundleId;
+
+  if (typeof identity === 'string' && identity.length > 0) {
+    return { identity };
+  }
+
+  if (typeof bundleId === 'string' && bundleId.length > 0) {
+    return { identity: bundleId };
+  }
+
+  return { identity: null };
 }
 
 /* -------------------------------------------------------------------------- */

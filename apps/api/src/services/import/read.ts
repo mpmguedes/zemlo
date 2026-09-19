@@ -169,7 +169,7 @@ function civilDate(value: unknown): string | null {
  * está certo: os registos que dependem dele também não existem, logo não há nada com que
  * coincidir.
  */
-function vehicleIdTranslator(
+export function vehicleIdTranslator(
   existingVehicles: readonly { id: string; plate: string }[],
   bundleVehicles: readonly CanonicalRecord[],
 ): ReadonlyMap<string, string> {
@@ -213,8 +213,15 @@ function readText(value: unknown): string | undefined {
  * cada serviço a escrevesse por si, bastaria um esquecimento num deles para uma importação
  * passar a comparar contra dados de outra conta — e o sintoma seria um "já existe" num
  * registo que o utilizador nunca viu, sem nada que apontasse para a causa.
+ *
+ * ## Porque é que é exportada
+ *
+ * O adaptador de CSV (`services/import/csv-preview.ts`) precisa exatamente do mesmo estado
+ * para o mesmo `buildPlan`. A alternativa era copiar as sete consultas — e a cópia seria
+ * uma segunda implementação da regra de isolamento, ou seja, uma segunda oportunidade de a
+ * esquecer. Uma função exportada é uma regra que só existe uma vez.
  */
-async function readAccountState(
+export async function readAccountState(
   prisma: PrismaClient,
   userId: string,
   vehicleLocalId: ReadonlyMap<string, string>,

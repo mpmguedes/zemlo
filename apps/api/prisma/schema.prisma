@@ -99,6 +99,7 @@ model User {
   organizationMembers OrganizationMember[]
   auditLogs        AuditLog[]
   importBookEntries ImportBookEntry[]
+  columnMaps        ColumnMap[]
 
   @@index([authProvider, authProviderId])
 }
@@ -817,6 +818,93 @@ model ImportBookEntry {
   @@unique([userId, bundleId, localId])
   @@index([userId, bundleId])
   @@index([expiresAt])
+}
+
+/* ========================================================================== */
+/* Importação — mapa de colunas da Camada 2 (§10.2, §11.3)                    */
+/* ========================================================================== */
+
+/// Mapa de colunas confirmado pelo utilizador, para a Camada 2 (CSV).
+///
+/// A §10.2 (passo 9) e a §11.3 ("Não pedir duas vezes") pedem que o mapa fique
+/// guardado **por utilizador e por forma de ficheiro**: a segunda importação do
+/// mesmo fornecedor passa a ser um clique em vez de um ecrã de mapeamento.
+///
+/// ## Porque é que a chave é a assinatura do cabeçalho e não o nome do ficheiro
+///
+/// Um nome é um rótulo: `export.csv`, `export (1).csv` e `Movimentos 2026.csv`
+/// são o mesmo formato. O que define a "forma" é **o conjunto de colunas** — é
+/// isso que faz o mapa fazer sentido ou não. A `shapeKey` é a assinatura
+/// normalizada das colunas (nomes normalizados, ordenados, ligados por `|`),
+/// pelo que:
+///
+///  - **mudar uma linha** não muda a forma → o mapa continua a servir;
+///  - **acrescentar uma coluna** muda a forma → mapa novo, e o utilizador volta a
+///    confirmar (é a "mudança de formato" que a §10.2 manda detetar);
+///  - **renomear o ficheiro** não muda nada.
+///
+/// ## Isolamento por conta
+///
+/// O `userId` faz parte da chave única, como no livro de idempotência. Não existe
+/// nenhum mapa global: o mapa de um utilizador **nunca** é visto por outro, nem
+/// como sugestão. É por isso que a leitura é sempre `findUnique` sobre a chave
+/// composta, e nunca uma pesquisa por `shapeKey` sozinha.
+///
+/// ## O que é guardado, e o que não é
+///
+/// Só ficam as **decisões** (que coluna é que campo), não os valores do ficheiro.
+/// Guardar amostras de valores seria guardar dados do utilizador que não são
+/// precisos para reaplicar o mapa, e a §7.3 pede o mínimo. As convenções que a
+/// §10.4 manda guardar (`dateOrder`, `decimalStyle`) ficam aqui porque a
+/// especificação o diz explicitamente: "a resposta fica guardada no mapa".
+model ColumnMap {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Assinatura normalizada das colunas. Ver o docblock do modelo.
+  shapeKey String
+  /// Nomes das colunas tal como estavam no ficheiro, para o relatório poder
+  /// mostrar o que foi reconhecido sem reinterpretar a assinatura. É a única
+  /// informação do ficheiro guardada aqui, e é sobre a **forma**, não sobre o
+  /// conteúdo: um cabeçalho não é um dado pessoal.
+  headers Json
+
+  /// Tipo de registo a que este mapa se aplica (`fuel`, `expense`, …). Faz parte
+  /// da chave porque o mesmo cabeçalho pode servir dois tipos com significados
+  /// diferentes: numa tabela `Data;Valor;Litros`, `Litros` é litros; numa tabela
+  /// `Data;Valor;Categoria`, a mesma coluna não existe — mas `Data;Valor;Tipo`
+  /// mapeia para `type` num caso e para `category` no outro.
+  kind String
+
+  /// Decisões de coluna: `[{ index, field }]`. `field: null` = ignorar a coluna,
+  /// que a §10.4 diz ser uma resposta legítima.
+  decisions Json
+
+  /// Separação de campos do ficheiro (`;`, `,`, `\t`). Guardada para o relatório
+  /// poder reconstruir a leitura sem reanalisar, e para detetar que o ficheiro do
+  /// mesmo fornecedor mudou de separador.
+  delimiter String
+  /// Codificação detetada (`utf-8`, `utf-8-bom`, `windows-1252`).
+  encoding  String
+
+  /// Convenção de datas confirmada (§10.4), quando o utilizador teve de decidir.
+  /// `null` quando era inequívoca — nesse caso não há nada a recordar.
+  dateOrder String?
+  /// Convenção de separador decimal confirmada (§10.4).
+  decimalStyle String?
+
+  /// Quantas vezes este mapa foi aplicado. Serve para ordenar sugestões e para o
+  /// utilizador ver que um mapa está a ser usado (o relatório di-lo).
+  timesUsed Int      @default(0)
+  /// Última aplicação. Distingue mapas vivos de mapas esquecidos.
+  lastUsedAt DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, kind, shapeKey])
+  @@index([userId, kind])
 }
 
 /* ========================================================================== */

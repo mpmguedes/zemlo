@@ -89,6 +89,11 @@ async function main() {
     ['integration', 'integrações'],
     ['session', 'sessões'],
     ['vehicleEvent', 'eventos'],
+    // O livro de idempotência e o mapa de colunas da Camada 2 são dados por utilizador: um
+    // órfão significaria um mapa que ninguém pode ver (a leitura é sempre pela chave
+    // composta com o `userId`) e que nunca é apagado — uma fuga silenciosa de armazenamento.
+    ['importBookEntry', 'entradas do livro de importação'],
+    ['columnMap', 'mapas de colunas guardados'],
   ];
 
   for (const [model, label] of userScoped) {
