@@ -354,9 +354,13 @@ Zemlo **nunca** publica uma entidade com um valor estimado apresentado como medi
 
 ## Exportação (§54)
 
-| Método | Caminho | Descrição |
-| --- | --- | --- |
-| GET | `/export?format=json\|csv&vehicleId=&from=&to=` | `Content-Disposition: attachment` |
+Existem **dois** artefactos de exportação, com propósitos diferentes. Não são duas versões
+do mesmo ficheiro: um é para **ler**, o outro é para **voltar a entrar**.
+
+| Método | Caminho | Artefacto | Descrição |
+| --- | --- | --- | --- |
+| GET | `/export?format=json\|csv&vehicleId=&from=&to=` | legado | `Content-Disposition: attachment` |
+| GET | `/export/bundle?vehicleId=` | bundle nativo (ZIP) | `Content-Type: application/zip`, `Content-Disposition: attachment` |
 
 - **JSON**: cópia fiel e completa, com `meta.formatVersion` para reimportação futura.
   Dinheiro em cêntimos, datas civis em `YYYY-MM-DD`.
@@ -365,6 +369,41 @@ Zemlo **nunca** publica uma entidade com um valor estimado apresentado como medi
 
 A exportação é registada em auditoria e nunca inclui `passwordHash`, `twoFactorSecret`
 nem credenciais de integrações.
+
+### `/export` (legado, §54)
+
+Mantém-se **inalterado**, incluindo os parâmetros `format`, `vehicleId`, `from` e `to`. É o
+formato que serve o utilizador que quer inspecionar ou reutilizar os dados fora do Zemlo.
+
+### `/export/bundle` (nativo, §3.2)
+
+Devolve o **ZIP do Zemlo**: o mesmo formato que `POST /import/preview` e `POST /import/apply`
+leem. É o artefacto da cópia de segurança.
+
+- **Formato**: ZIP, produzido pelo escritor oficial do domínio (`ZipWriter`), com um
+  `manifest.json` (`bundleId`, `formatVersion`, `createdBy`, `scope`) e um ficheiro por tipo
+  de registo. O leitor da importação aceita-o **sem uma única alteração**.
+- **Autenticação**: obrigatória, como na rota legada. O `userId` vem da sessão; nunca da query.
+- **Isolamento**: o bundle de um utilizador nunca contém registos de outro, em nenhum modo.
+- **Âmbito**: sem `vehicleId` é `full-account`; com `vehicleId` é o veículo indicado, e o
+  âmbito fica declarado no `manifest.scope` (`kind` + `vehicleLocalId`).
+- **Documentos**: os bytes reais são incluídos e o `sha256` do `manifest` é calculado sobre
+  eles. Um documento cujo conteúdo não exista em disco **não** é omitido em silêncio: entra
+  na lista `missingContent` e o preview assinala-o como pendente (nunca como importado).
+- **Nome**: `<produto>-bundle-<YYYY-MM-DD>.zip`.
+- **Limitações**: o âmbito por datas (`from`/`to`) **não** existe nesta rota — o bundle é um
+  artefacto de restauro, e um recorte temporal não é restaurável sem revisitar o que ficou de
+  fora. Enviar `from`/`to` é ignorado. O XLSX continua fora de âmbito (decisão #9).
+
+### Legado vs. nativo
+
+| | `/export` | `/export/bundle` |
+| --- | --- | --- |
+| Serve para | ler / reutilizar fora do Zemlo | restaurar no Zemlo |
+| Formato | JSON ou CSV | ZIP do Zemlo |
+| Reimportável | não (é o legado) | **sim**, por `/import/preview` + `/import/apply` |
+| Âmbito por datas | sim | não |
+| Escritor | `services/export.ts` | `domain/import/zip-writer.ts` (oficial) |
 
 ---
 
@@ -383,6 +422,13 @@ A separação não é estética: a §11.3 exige que **nada seja escrito antes de
 o que vai acontecer**. Duas rotas tornam a garantia estrutural — não existe um caminho de
 código que escreva e devolva um plano ao mesmo tempo.
 
+A interface tem **um** ponto de entrada (`/import`) para as duas camadas. O utilizador
+escolhe um ficheiro e o tipo decide o caminho: um `.zip` (ou `.zemlo`) vai para a Camada 1,
+qualquer outro ficheiro vai para a Camada 2. As duas camadas partilham o **mesmo** pipeline
+no servidor — ler → normalizar → validar → deduplicar → planear → aplicar → relatar. Não
+existe um caminho de código paralelo para o ZIP: `application/zip` apenas escolhe **qual**
+leitor corre, e o leitor é o único juiz do contrato.
+
 ### Corpo e cabeçalhos
 
 O corpo é o **ficheiro em bruto**, não `multipart/form-data`.
@@ -399,6 +445,12 @@ traria uma dependência para transportar um único ficheiro e converteria um err
 
 `application/vnd.ms-excel` **não** é aceite: é o tipo do XLSX, que fica para fase posterior
 (decisão #9). Limite do corpo: 64 MiB.
+
+Aceitar mais tipos **não** afrouxa o contrato da Camada 1: um ZIP que não seja um bundle Zemlo
+é recusado pelo leitor (`readZip` → `readBundle` → `normalizeRecords`), com o mesmo conjunto
+de erros de sempre — arquivo corrompido, arquivo vazio, entrada inválida, `sha256` que não
+bate, `formatVersion` incompatível, referência quebrada. A lista de tipos alargou **o que
+chega ao leitor**, não **o que o leitor aceita**.
 
 ### Parâmetros da query
 

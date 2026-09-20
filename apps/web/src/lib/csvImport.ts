@@ -26,7 +26,6 @@ import type {
   ColumnMapping,
   ColumnState,
   CsvDetection,
-  CsvPreviewResponse,
   CsvRecordPreview,
   DateOrder,
   DecimalStyle,
@@ -341,6 +340,30 @@ export interface PlanRow {
 }
 
 /**
+ * As contagens mínimas que as quatro linhas da §11.2 precisam de ler.
+ *
+ * ## Porque é que este tipo é estrutural e não o das contagens do CSV
+ *
+ * As duas camadas de importação produzem as **mesmas** contagens — é a §11.2 que as define,
+ * não o formato do ficheiro —, mas declaram-nas em contratos diferentes (`PlanCounts` da
+ * Camada 2, `BundlePlanCounts` da Camada 1). Amarrar esta função ao tipo do CSV obrigaria a
+ * Camada 1 a converter as suas contagens numa forma alheia só para as poder mostrar, e essa
+ * conversão seria um sítio a mais onde um número se pode perder.
+ *
+ * Pedir apenas os campos que a função lê resolve-o pela forma: qualquer dos dois contratos
+ * satisfaz este tipo, e uma contagem nova num deles não obriga a mexer aqui.
+ */
+export interface PlanCountsView {
+  create: number;
+  exact: number;
+  probable: number;
+  quarantined: number;
+  skipped: number;
+  enriching: number;
+  conflicting: number;
+}
+
+/**
  * As quatro linhas do passo 3 da §11.2, na ordem em que aparecem no ecrã.
  *
  * A ordem é fixa e não ordenada por contagem: o utilizador aprende-a uma vez e passa a
@@ -349,7 +372,7 @@ export interface PlanRow {
  * que é uma informação, não um ruído. As linhas condicionais (conflitos, quarentena) só
  * aparecem quando têm conteúdo, porque aí a ausência já é o valor por omissão.
  */
-export function planRows(counts: CsvPreviewResponse['plan']['counts']): PlanRow[] {
+export function planRows(counts: PlanCountsView): PlanRow[] {
   const rows: PlanRow[] = [
     {
       label: 'Criar',
@@ -452,8 +475,15 @@ const ACTION_LABELS: Readonly<Record<PlanEntry['action'], string>> = Object.free
   skipped: 'Não importar',
 });
 
-export function actionLabel(action: PlanEntry['action']): string {
-  return ACTION_LABELS[action] ?? action;
+/**
+ * Traduz uma ação do plano para linguagem de utilizador.
+ *
+ * O parâmetro é `string` e não a união fechada do domínio, porque as duas camadas declaram
+ * as suas ações em tipos próprios e ambas passam por aqui. Um valor desconhecido devolve-se
+ * tal como veio: é preferível mostrar um identificador do que uma linha em branco.
+ */
+export function actionLabel(action: string): string {
+  return ACTION_LABELS[action as PlanEntry['action']] ?? action;
 }
 
 const CONFLICT_LABELS: Readonly<Record<string, string>> = Object.freeze({

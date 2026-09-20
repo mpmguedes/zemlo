@@ -6,7 +6,8 @@ import { errorMessage, errorRequestId } from '../../api/errors';
 import { applyCsvImport, previewCsvImport } from '../../api/queries';
 import type { ColumnDecision, CsvApplyResponse, CsvPreviewResponse, DateOrder, DecimalStyle, RecordKind } from '../../api/queries';
 import { DetectionStep } from './DetectionStep';
-import { Dropzone } from './Dropzone';
+import { BundleImportFlow } from './BundleImportFlow';
+import { Dropzone, type ChosenKind } from './Dropzone';
 import { KindStep } from './KindStep';
 import { MappingStep } from './MappingStep';
 import { PlanStep } from './PlanStep';
@@ -65,6 +66,22 @@ export function CsvImportPage() {
 
   const [file, setFile] = useState<File | null>(null);
   const [phase, setPhase] = useState<Phase>('escolher');
+
+  /**
+   * Que pipeline está a tratar o ficheiro escolhido.
+   *
+   * `null` enquanto nada foi escolhido. A partir daí, é o que decide qual dos dois fluxos
+   * desenha o ecrã — e é `null` que faz a Dropzone aparecer.
+   *
+   * ## Porque é que a escolha é feita uma vez e não a cada render
+   *
+   * A classificação (`classifyFile`) olha para o nome e o MIME do ficheiro, e ambos são
+   * estáveis enquanto o ficheiro for o mesmo. Recalculá-la a cada render daria o mesmo
+   * resultado, mas criaria a ilusão de que o ecrã pode mudar de pipeline sozinho — e um
+   * ecrã que muda de fluxo sem o utilizador pedir é exatamente o que torna uma importação
+   * imprevisível. Fixá-la na escolha torna a transição explícita.
+   */
+  const [chosenKind, setChosenKind] = useState<ChosenKind | null>(null);
 
   /** O resultado da última análise. Tudo o que os passos mostram vem daqui. */
   const [analysis, setAnalysis] = useState<CsvPreviewResponse | null>(null);
@@ -137,13 +154,23 @@ export function CsvImportPage() {
   );
 
   const choose = useCallback(
-    (chosen: File) => {
+    (chosen: File, kind: ChosenKind) => {
       setFile(chosen);
+      setChosenKind(kind);
       setReport(null);
       setDecisions(new Map());
       setKind(null);
       setDateOrder(null);
       setDecimalStyle(null);
+
+      /*
+       * Um ZIP não passa por aqui: o seu fluxo (`BundleImportFlow`) arranca a análise por
+       * conta própria assim que monta. Disparar a análise de CSV seria enviar um ZIP para a
+       * rota do CSV — que o recusaria com um erro cuja causa o utilizador não conseguiria
+       * adivinhar, porque o ficheiro que ele escolheu é válido.
+       */
+      if (kind === 'zip') return;
+
       run(
         { file: chosen, kind: null, decisions: [], dateOrder: null, decimalStyle: null },
         'escolher',
@@ -224,6 +251,7 @@ export function CsvImportPage() {
 
   const restart = useCallback(() => {
     setFile(null);
+    setChosenKind(null);
     setAnalysis(null);
     setReport(null);
     setDecisions(new Map());
@@ -240,14 +268,17 @@ export function CsvImportPage() {
   const analysing = phase === 'analisar';
   const showSteps = phase !== 'escolher' && phase !== 'analisar' && analysis !== null;
 
+  /** O ficheiro escolhido é um bundle: o fluxo é outro, mais curto e sem mapeamento. */
+  const isBundle = chosenKind === 'zip' && file !== null;
+
   return (
     <div className="z-page">
       <PageHeader
         title="Importar de um ficheiro"
-        subtitle="Traz dados de outra aplicação a partir de um CSV. Nada é escrito até tu confirmares."
+        subtitle="Traz dados de outra aplicação a partir de um CSV, ou repõe uma cópia de segurança do Zemlo. Nada é escrito até tu confirmares."
         back={{ to: '/export', label: 'Os teus dados' }}
         actions={
-          showSteps ? (
+          showSteps || isBundle ? (
             <Button variant="ghost" onClick={restart}>
               Começar de novo
             </Button>
@@ -255,13 +286,21 @@ export function CsvImportPage() {
         }
       />
 
+      {/*
+       * A barra de passos é do CSV e não aparece no fluxo do bundle. Os seus cinco passos
+       * (tipo → colunas → revisão → relatório) descrevem um percurso que um bundle não faz:
+       * ele já traz o tipo e as colunas resolvidos. Mostrá-la com passos a saltar seria
+       * dizer ao utilizador que faltou fazer algo que nunca lhe foi pedido.
+       */}
       {showSteps ? <Steps current={stepIndex(phase)} /> : null}
 
-      {phase === 'escolher' || analysing ? (
+      {isBundle ? (
+        <BundleImportFlow file={file} onRestart={restart} />
+      ) : phase === 'escolher' || analysing ? (
         <Dropzone file={file} busy={analysing} onChoose={choose} />
       ) : null}
 
-      {analyse.isError ? (
+      {!isBundle && analyse.isError ? (
         <InlineError
           message={errorMessage(analyse.error)}
           requestId={errorRequestId(analyse.error)}
@@ -333,7 +372,7 @@ export function CsvImportPage() {
         </>
       ) : null}
 
-      {apply.isError && report === null ? (
+      {!isBundle && apply.isError && report === null ? (
         <InlineError
           message={errorMessage(apply.error)}
           requestId={errorRequestId(apply.error)}
@@ -342,9 +381,9 @@ export function CsvImportPage() {
       ) : null}
 
       {/* Fase 9: o relatório. */}
-      {report !== null ? <ReportStep report={report} onRestart={restart} /> : null}
+      {!isBundle && report !== null ? <ReportStep report={report} onRestart={restart} /> : null}
 
-      {phase === 'escolher' && !analysing ? <HowItWorks /> : null}
+      {!isBundle && phase === 'escolher' && !analysing ? <HowItWorks /> : null}
     </div>
   );
 }
@@ -431,14 +470,15 @@ function HowItWorks() {
       <ol className="z-steps-list">
         <li>
           <span>
-            <strong>Escolhe o ficheiro.</strong> Qualquer CSV — do Excel, do Google Sheets ou de
-            outra aplicação. Não precisa de ter um formato específico.
+            <strong>Escolhe o ficheiro.</strong> Um CSV de outra aplicação, ou uma cópia de
+            segurança do Zemlo. Não precisa de ter um formato específico.
           </span>
         </li>
         <li>
           <span>
             <strong>Percebo o que lá está.</strong> Deteto a codificação, o separador e o
-            cabeçalho, e comparo cada coluna com os campos que o Zemlo conhece.
+            cabeçalho, e comparo cada coluna com os campos que o Zemlo conhece. Num ZIP, leio o
+            índice do ficheiro e verifico a integridade de tudo o que ele declara.
           </span>
         </li>
         <li>
@@ -475,6 +515,11 @@ function HowItWorks() {
           <li>
             <strong>CSV</strong> com separador <span className="z-mono">;</span> (Excel em
             português), <span className="z-mono">,</span> ou tabulação.
+          </li>
+          <li>
+            <strong>ZIP</strong> de uma cópia de segurança do Zemlo (Definições → os teus
+            dados → transferir cópia de segurança). Traz os documentos e as relações, e o
+            Zemlo verifica a integridade antes de escrever.
           </li>
           <li>
             <strong>Codificação</strong> UTF-8, UTF-8 com BOM ou CP1252 (o formato do Excel

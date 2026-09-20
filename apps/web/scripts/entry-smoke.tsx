@@ -63,6 +63,9 @@ function routes(vehicleId: string): Array<[string, string]> {
     ['Integrações', '/integrations'],
     ['Home Assistant', '/integrations/home-assistant'],
     ['Exportar', '/export'],
+    // A importação cobre as duas camadas no mesmo ecrã (§3.2): um CSV de outra aplicação e
+    // um ZIP do Zemlo. A rota é a mesma, e é por isso que ela aparece aqui uma só vez.
+    ['Importar', '/import'],
     ['Definições', '/settings'],
     ['Definições — perfil', '/settings/profile'],
     ['Definições — preferências', '/settings/preferences'],

@@ -12,19 +12,80 @@ import { formatBytes } from '../../lib/format';
  * fingir um botão. O `z-dropzone` é a superfície visível e o alvo do arrasto no ambiente de
  * trabalho — as duas funcionalidades, um só controlo.
  *
+ * ## Dois formatos, um só ponto de entrada
+ *
+ * Este ecrã aceita **CSV** e **ZIP** — as duas camadas da §3.2 — e encaminha cada um para o
+ * seu pipeline. A alternativa seria um ecrã por formato, mas isso obrigaria o utilizador a
+ * saber qual tem em mãos antes de o escolher: uma distinção nossa, apresentada como um
+ * problema dele.
+ *
+ * A escolha entre os dois não é adivinhada pela extensão sozinha: a extensão é um sinal, e
+ * o conteúdo é a verdade. O **tipo MIME e a extensão** são usados aqui para encaminhar, e o
+ * servidor decide em definitivo ao olhar para os bytes — um `.zip` renomeado para `.csv`
+ * chega ao pipeline do CSV e é lá recusado, e não é este ficheiro que tem de o impedir.
+ *
  * ## Porque é que o `accept` não é a única defesa
  *
- * `accept=".csv,text/csv"` filtra o seletor, mas não é uma garantia: em vários sistemas o
+ * `accept=".csv,.txt,.zip,…"` filtra o seletor, mas não é uma garantia: em vários sistemas o
  * seletor deixa escolher "todos os ficheiros", e um `.txt` com CSV lá dentro é um caso
  * legítimo. A validação de verdade acontece no servidor, que olha para os bytes. Aqui só se
  * recusa o que é **claramente** outra coisa (uma folha de cálculo, uma imagem) e a mensagem
  * diz o que fazer, em vez de aceitar e falhar mais tarde com um erro técnico.
  */
 
+/**
+ * O tipo de ficheiro que o utilizador escolheu.
+ *
+ *  - `csv`   — texto para a Camada 2, com mapeamento de colunas e convenções a confirmar;
+ *  - `zip`   — um bundle Zemlo para a Camada 1, já interpretado e com integridade a verificar;
+ *  - `outro` — manifestamente outra coisa; a Dropzone recusa e explica porquê.
+ */
+export type ChosenKind = 'csv' | 'zip';
+
 export interface DropzoneProps {
   file: File | null;
   busy: boolean;
-  onChoose: (file: File) => void;
+  onChoose: (file: File, kind: ChosenKind) => void;
+}
+
+/**
+ * Classifica um ficheiro escolhido, sem o abrir.
+ *
+ * ## Porque é que a extensão e o MIME são ambos consultados
+ *
+ * Nenhum dos dois é fiável sozinho. O Windows reporta `application/x-zip-compressed` para
+ * um ZIP e `text/plain` para muitos CSV; alguns browsers reportam
+ * `application/octet-stream` para tudo. Exigir os dois concordarem recusaria ficheiros
+ * legítimos; confiar só num deles deixaria passar os outros. Aceita-se qualquer um dos
+ * sinais como indicação de encaminhamento — e a decisão final é sempre do servidor, que lê
+ * os bytes.
+ *
+ * ## Porque é que `application/zip` no CSV não é aceite
+ *
+ * Um ZIP anda em sentido contrário: se o MIME diz ZIP e a extensão diz `.csv`, o ficheiro é
+ * ambíguo e vale mais recusá-lo aqui do que enviá-lo para o pipeline errado. A regra é:
+ * **qualquer sinal de ZIP manda para a Camada 1**, porque é o pipeline que verifica a
+ * integridade e recusa o que não for um bundle — o inverso não é verdade, e o CSV não
+ * consegue detetar que recebeu um ZIP.
+ */
+export function classifyFile(candidate: File): ChosenKind | 'outro' {
+  const lower = candidate.name.toLowerCase();
+  const mime = candidate.type.toLowerCase();
+
+  // Folhas de cálculo: nem CSV nem bundle. A recusa é específica e diz o que fazer.
+  if (lower.endsWith('.xlsx') || lower.endsWith('.xls') || lower.endsWith('.numbers')) {
+    return 'outro';
+  }
+
+  const looksZip =
+    lower.endsWith('.zip') ||
+    lower.endsWith('.zemlo') ||
+    mime === 'application/zip' ||
+    mime === 'application/x-zip-compressed';
+
+  if (looksZip) return 'zip';
+
+  return 'csv';
 }
 
 export function Dropzone({ file, busy, onChoose }: DropzoneProps) {
@@ -35,29 +96,17 @@ export function Dropzone({ file, busy, onChoose }: DropzoneProps) {
   const accept = (candidate: File | undefined) => {
     if (!candidate) return;
 
-    /*
-     * Recusa-se o que é manifestamente outro formato. A extensão é verificada **e** o tipo
-     * MIME: um `.xlsx` chega com `application/vnd.openxmlformats-officedocument...`, mas há
-     * browsers que reportam `application/octet-stream` para tudo, e nesse caso a extensão é a
-     * única pista. Aceitar os dois sinais cobre as duas situações sem duplicar a mensagem.
-     */
-    const lower = candidate.name.toLowerCase();
-    if (lower.endsWith('.xlsx') || lower.endsWith('.xls') || lower.endsWith('.numbers')) {
+    const kind = classifyFile(candidate);
+
+    if (kind === 'outro') {
       setRejection(
         'As folhas de cálculo ainda não são aceites. Abre o ficheiro e guarda como CSV (no Excel: Ficheiro → Guardar como → CSV UTF-8).',
       );
       return;
     }
 
-    if (lower.endsWith('.zip') || lower.endsWith('.zemlo')) {
-      setRejection(
-        'Este é um ficheiro de exportação do Zemlo. Para o reimportar, usa a opção de restaurar uma cópia de segurança.',
-      );
-      return;
-    }
-
     setRejection(null);
-    onChoose(candidate);
+    onChoose(candidate, kind);
   };
 
   return (
@@ -84,7 +133,9 @@ export function Dropzone({ file, busy, onChoose }: DropzoneProps) {
           <input
             ref={input}
             type="file"
-            accept=".csv,.txt,text/csv,text/plain"
+            // `.zip` antes de `.csv`: a ordem não tem significado para o `accept`, mas
+            // deixar os dois explícitos é o que faz o seletor nativo mostrar ambos.
+            accept=".csv,.txt,.zip,.zemlo,text/csv,text/plain,application/zip,application/x-zip-compressed"
             onChange={(event) => {
               accept(event.target.files?.[0]);
               // Limpar o valor permite escolher o mesmo ficheiro outra vez depois de um erro.
@@ -119,8 +170,8 @@ export function Dropzone({ file, busy, onChoose }: DropzoneProps) {
             </>
           ) : (
             <>
-              <span className="z-strong">Escolhe um ficheiro CSV</span>
-              <span className="z-xs">ou arrasta-o para aqui</span>
+              <span className="z-strong">Escolhe um ficheiro</span>
+              <span className="z-xs">CSV de outra aplicação, ou um ZIP do Zemlo</span>
             </>
           )}
 

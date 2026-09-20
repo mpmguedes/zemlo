@@ -19,7 +19,7 @@
 
 import { Router } from 'express';
 import type { HomeAssistantSpec } from '@zemlo/shared';
-import { zIntegrationCreateRequest, zIntegrationUpdateRequest } from '@zemlo/shared';
+import { PRODUCT, zIntegrationCreateRequest, zIntegrationUpdateRequest } from '@zemlo/shared';
 import { asyncHandler, created, noContent, parseBody, requireUser } from '../../http/handlers.js';
 import { requireAuth } from '../../http/middleware.js';
 import { config } from '../../core/config.js';
@@ -476,11 +476,61 @@ function buildHomeAssistantSpec(input: HomeAssistantSpecInput): HomeAssistantSpe
 /* Exportação (§54)                                                            */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Rotas de exportação — **dois artefactos diferentes, dois endereços diferentes**.
+ *
+ * ## Porque é que o bundle nativo não substituiu `GET /export`
+ *
+ * As duas rotas exportam "os dados do utilizador", e é precisamente por isso que a
+ * tentação de as fundir é grande. A §54 descreve a exportação legada como um JSON achatado
+ * e um CSV para folha de cálculo — um formato **de leitura**, sem `localId`, sem
+ * referências normalizadas, sem `manifest`. O bundle nativo (§5.2) é outra coisa: um ZIP
+ * com `manifest.json`, `.jsonl` por tipo e os bytes dos documentos, pensado para ser
+ * **reimportado** com fidelidade total (§3.1).
+ *
+ * Confundi-los teria dois efeitos, ambos maus:
+ *
+ *  1. o `ExportPage` passaria a oferecer um ZIP onde o utilizador espera um JSON para
+ *     abrir numa ferramenta, e vice-versa;
+ *  2. os consumidores existentes de `GET /export` — a interface, o `verify`, o
+ *     `verify:integration` e o `verify:auth` — verificam a **forma** do JSON legado
+ *     (`meta.formatVersion === 1`, `vehicles.length === 2`, o BOM do CSV) e deixariam de
+ *     passar. Não é uma questão de gosto: é um contrato em uso.
+ *
+ * O bundle nativo ganha, por isso, um endereço próprio: `GET /export/bundle`.
+ *
+ * ## Porque é que o caminho é `/export/bundle`
+ *
+ * O sufixo nomeia o **artefacto**, com o vocabulário que o resto do código já usa
+ * (`export-bundle.ts`, `domain/import/bundle.ts`, `readBundle`, `manifest.bundleId`).
+ * `/export/native` descreveria a implementação em vez do resultado, e `/bundle` sozinho
+ * perderia a associação a "levar os meus dados", que é a pergunta a que esta família de
+ * rotas responde.
+ *
+ * ## A autenticação é a mesma, e é exacta
+ *
+ * Os dois caminhos estão na lista abaixo e ambos passam pelo mesmo `requireAuth()`. A
+ * correspondência é **exacta** pelo motivo explicado em `vehicles.ts`: um `use()` sem
+ * âmbito devolveria 401 num endereço inexistente, e um prefixo faria `/export-x` parecer
+ * autenticado. Um caminho novo tem de ser acrescentado à lista — e é isso que torna o
+ * esquecimento um erro visível, não uma porta aberta.
+ */
 export const exportRouter = Router();
+
+/**
+ * Caminho da exportação legada (§54): JSON achatado ou CSV.
+ *
+ * Declarado como constante porque o guarda de autenticação e a rota têm de concordar sobre
+ * ele, e uma divergência entre os dois seria uma rota sem autenticação.
+ */
+const LEGACY_EXPORT_PATH = '/export';
+
+/** Caminho do bundle nativo (§5.2, §13): ZIP reimportável. */
+const NATIVE_EXPORT_PATH = '/export/bundle';
 
 // Ver a nota sobre autenticação com correspondência exata em `vehicles.ts`.
 exportRouter.use((request, response, next) => {
-  if (request.path !== '/export') {
+  if (request.path !== LEGACY_EXPORT_PATH && request.path !== NATIVE_EXPORT_PATH) {
     next();
     return;
   }
@@ -496,7 +546,7 @@ exportRouter.use((request, response, next) => {
  * identificar mais tarde (§30, §56).
  */
 exportRouter.get(
-  '/export',
+  LEGACY_EXPORT_PATH,
   asyncHandler(async (request, response) => {
     const user = requireUser(request);
     const format = request.query.format === 'csv' ? 'csv' : 'json';
@@ -519,5 +569,109 @@ exportRouter.get(
 
     response.type('application/json; charset=utf-8').send(JSON.stringify(bundle, null, 2));
     logger.info('exportação de dados concluída', { userId: user.id, formato: format });
+  }),
+);
+
+/**
+ * Exporta o **bundle nativo** — o ZIP que `POST /import/preview` já sabe ler.
+ *
+ * ## O que esta rota é, e o que não é
+ *
+ * É a metade que faltava do ciclo da §13: `buildBundle` e `writeZip` existiam, estavam
+ * testados (`import-export-cycle.test.ts`), e não tinham **nenhum consumidor de produção**.
+ * Um utilizador não conseguia obter o formato que o importador aceita — a exportação
+ * devolvia JSON e CSV, e nenhum dos dois é um bundle. Esta rota fecha esse circuito sem
+ * construir um segundo escritor: chama os dois serviços que já existem, na ordem em que os
+ * testes os exercitam.
+ *
+ * ## O que garante a compatibilidade com o leitor
+ *
+ * Nada aqui decide o formato. `buildBundle` produz as entradas a partir do contrato do
+ * bundle, e `writeZip` escreve-as cumprindo os invariantes que `readZip` verifica. A
+ * garantia de que o resultado atravessa o leitor sem uma alteração neste não é uma
+ * promessa desta rota — é uma propriedade dos dois serviços, provada pela §13.2. A rota
+ * limita-se a não a estragar: não reescreve entradas, não as reordena, não as recomprime.
+ *
+ * ## Os filtros
+ *
+ * Só `vehicleId`, e de propósito. O bundle nativo tem referências entre registos
+ * (`localId`) e um âmbito temporal exigiria decidir o que fazer com um documento cujo
+ * veículo está fora da janela, ou com um lembrete que aponta para uma leitura omitida —
+ * decisões de produto que a §5.7 não toma e que não se inventam aqui. O âmbito por veículo
+ * é o que a §5.7 permite, e é declarado no `manifest` para que um bundle filtrado nunca
+ * seja confundido com um bundle incompleto.
+ *
+ * ## O `skipDocumentBytes` não é usado
+ *
+ * O armazenamento de produção (`documentStorage()`) é passado sempre. A opção de omitir os
+ * bytes existe para o caso de o armazenamento não estar disponível, e nesse caso
+ * `buildBundle` **declara** os documentos como `missingContent` em vez de os esconder. Uma
+ * exportação nunca pode falhar por causa de um anexo (§5.6), e é por isso que a ausência
+ * de um ficheiro é um campo do resultado e não uma excepção — mas omitir os bytes quando o
+ * armazenamento existe seria exportar menos do que o utilizador pediu.
+ *
+ * ## A auditoria
+ *
+ * Registada como a exportação legada, com o tipo de artefacto explícito: distinguir as
+ * duas no registo é o que permite responder mais tarde à pergunta "que exportação foi
+ * esta?" sem inferir do tamanho (§30, §56).
+ */
+exportRouter.get(
+  NATIVE_EXPORT_PATH,
+  asyncHandler(async (request, response) => {
+    const user = requireUser(request);
+
+    const [{ buildBundle }, { writeZip }, { documentStorage }] = await Promise.all([
+      import('../../services/export-bundle.js'),
+      import('../../domain/import/zip-writer.js'),
+      import('../../services/document-storage.js'),
+    ]);
+
+    const bundle = await buildBundle({
+      userId: user.id,
+      prisma,
+      // A versão da aplicação e o ambiente vão para `manifest.createdBy`: são o que
+      // permite, mais tarde, perceber com que versão do Zemlo este bundle foi escrito.
+      appVersion: config.version,
+      environment: config.nodeEnv,
+      today: today(request),
+      // O âmbito por veículo (§5.7). Ausente, exporta a conta inteira.
+      ...(typeof request.query.vehicleId === 'string' ? { vehicleId: request.query.vehicleId } : {}),
+      storage: documentStorage(),
+    });
+
+    const bytes = writeZip(bundle.entries);
+
+    /*
+     * O nome do ficheiro segue a convenção do legado — `zemlo-export-<data>.<ext>` — e
+     * acrescenta `bundle`, para que dois ficheiros descarregados no mesmo dia não sejam
+     * indistinguíveis na pasta de transferências do utilizador. É a diferença entre os dois
+     * formatos que o utilizador precisa de reconhecer, e o nome do ficheiro é onde ele a vê
+     * primeiro.
+     *
+     * O produto vem de `PRODUCT.name` e não de um literal: o legado usa `zemlo-` escrito à
+     * mão, e repeti-lo aqui criaria uma segunda fonte para o nome do produto — a primeira
+     * vez que divergissem, os dois ficheiros deixariam de partilhar o prefixo que os
+     * agrupa.
+     */
+    const fileName = `${PRODUCT.name.toLowerCase()}-bundle-${today(request)}.zip`;
+    response.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    response.type('application/zip');
+
+    /*
+     * Os bytes vão tal como saíram do escritor. `writeZip` devolve um `Uint8Array` sobre o
+     * buffer que construiu; o `send` do Express envia-o sem conversão, o que é o que
+     * preserva o CRC calculado sobre os bytes reais. Qualquer normalização aqui —
+     * reencodar, juntar, cortar — invalidaria o arquivo que o leitor valida.
+     */
+    response.send(Buffer.from(bytes));
+
+    logger.info('exportação do bundle nativo concluída', {
+      userId: user.id,
+      artefacto: 'bundle',
+      entradas: bundle.entries.length,
+      documentosSemConteudo: bundle.missingContent.length,
+      bytes: bytes.byteLength,
+    });
   }),
 );

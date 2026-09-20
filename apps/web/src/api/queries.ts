@@ -29,6 +29,7 @@ import type {
   VehicleUpdateRequest,
 } from '@zemlo/shared';
 import { api } from './client';
+import type { BundleApplyResponse, BundlePreviewResponse } from './bundleImport';
 import type {
   CsvApplyResponse,
   CsvImportParams,
@@ -369,6 +370,26 @@ export const fetchExport = (params: {
 }): Promise<{ blob: Blob; fileName: string | null }> =>
   api.download('/export', { query: { ...params } });
 
+/**
+ * Descarrega o **bundle nativo** — o ZIP que o importador do Zemlo sabe reabrir (§5.2).
+ *
+ * ## Porque é que isto é uma função própria e não um `format` a mais
+ *
+ * Os dois artefactos servem propósitos diferentes e têm formas diferentes: o JSON/CSV
+ * legado existe para o utilizador **ler** os seus dados (uma folha de cálculo, um
+ * script), e o bundle existe para os **trazer de volta** com fidelidade total. Juntá-los
+ * atrás de um `format` faria a interface tratar como variantes dois ficheiros que não
+ * partilham nem o tipo MIME nem o consumidor.
+ *
+ * O `vehicleId` é o único filtro do bundle. O âmbito temporal não existe deste lado, e a
+ * ausência é deliberada (§5.7): um bundle com referências entre registos não pode ser
+ * cortado por datas sem decidir o que fazer com o que fica órfão.
+ */
+export const fetchExportBundle = (params: {
+  vehicleId?: string;
+}): Promise<{ blob: Blob; fileName: string | null }> =>
+  api.download('/export/bundle', { query: { ...params } });
+
 /* -------------------------------------------------------------------------- */
 /* Importação de CSV (Camada 2, §10)                                           */
 /* -------------------------------------------------------------------------- */
@@ -382,6 +403,65 @@ export const fetchExport = (params: {
  * `charset=utf-8` num ficheiro CP1252 produziria uma deteção a discutir com o cabeçalho.
  */
 const CSV_CONTENT_TYPE = 'text/csv';
+
+/**
+ * O `Content-Type` com que o bundle nativo é enviado.
+ *
+ * `application/zip` é o tipo verdadeiro do ficheiro e o primeiro da lista fechada que a
+ * rota de importação aceita. Enviar `application/octet-stream` também funcionaria — está
+ * na mesma lista —, mas declarar o tipo correto é o que permite à API nomear a causa
+ * quando o ficheiro enviado não é o que se esperava.
+ *
+ * Ao contrário do CSV, aqui **não há** deteção de codificação nem de separador: o tipo
+ * não é uma hipótese a confirmar, é o formato do artefacto. O que a API valida é a
+ * assinatura do ZIP e a integridade declarada no manifest.
+ */
+const BUNDLE_CONTENT_TYPE = 'application/zip';
+
+/**
+ * Analisa um bundle nativo **sem escrever nada** (§7.1).
+ *
+ * O ficheiro é enviado tal como o utilizador o escolheu — sem reencodar, sem recomprimir,
+ * sem reabrir. É a mesma razão do CSV: o `bundleId` e os `sha256` declarados no manifest
+ * referem-se aos bytes **originais**, e tocar neles invalidaria a verificação de
+ * integridade que o leitor faz.
+ *
+ * Não há `decisions` nem convenções a enviar. Um bundle já traz os seus valores
+ * interpretados: a única coisa que o utilizador decide é aplicar ou não.
+ */
+export const previewBundleImport = (file: Blob): Promise<BundlePreviewResponse> =>
+  api.upload<BundlePreviewResponse>('/import/preview', file, BUNDLE_CONTENT_TYPE);
+
+/**
+ * Aplica o plano aprovado. **Escreve** — e devolve o relatório (§11.5).
+ *
+ * O corpo é o **mesmo** ZIP que o `preview` leu, e o plano aprovado viaja na *query*, em
+ * `?plan=…`. É a assinatura que a rota define: o corpo já está ocupado pelo ficheiro, e o
+ * servidor **reanalisa os bytes** em vez de confiar no plano que recebe. O plano diz o que
+ * fazer; os registos vêm sempre da fonte que os sabe interpretar — o bundle lido neste
+ * pedido.
+ *
+ * ## Porque é que o plano é confiado apesar de ser recalculado
+ *
+ * Não é uma contradição: o `apply` reconstrói os registos a partir dos bytes e usa o
+ * plano recebido para saber **o que fazer com eles**. Recalcular o plano no `apply` abriria
+ * a janela de divergência entre a revisão e a escrita que a §11.3 não perdoa.
+ *
+ * ## Porque é que se aceita a resposta do preview inteira
+ *
+ * O plano que a rota do `apply` lê é um subconjunto do corpo do `preview` — o `bundleId`,
+ * para confronto. Como a forma do `preview` já **contém** tudo o que o `apply` usa, exigir
+ * aqui um tipo separado obrigaria a interface a desembrulhar a resposta antes de a
+ * reenviar, e esse desembrulho seria um sítio a mais onde um campo se pode perder. Reenviar
+ * o corpo tal como veio é o que garante que o que o utilizador aprovou é o que chega.
+ */
+export const applyBundleImport = (
+  file: Blob,
+  plan: BundlePreviewResponse,
+): Promise<BundleApplyResponse> =>
+  api.upload<BundleApplyResponse>('/import/apply', file, BUNDLE_CONTENT_TYPE, {
+    query: { plan: JSON.stringify(plan) },
+  });
 
 /**
  * Analisa um CSV **sem escrever nada** (§7.1).
@@ -471,6 +551,28 @@ export type { OdometerResult, TimelineItemKind };
  * `@zemlo/shared`, para que uma mudança de sítio seja um único ficheiro a ajustar.
  */
 export type { RecordKind } from '@zemlo/shared';
+
+/*
+ * Os tipos da Camada 1 (bundle nativo) são reexportados ao lado dos da Camada 2, para que
+ * um ecrã de importação tenha uma única origem — `/api` — e não precise de saber em que
+ * ficheiro cada camada declara o seu contrato.
+ */
+export type {
+  BundleApplyResponse,
+  BundleConflictKind,
+  BundleIssueSummary,
+  BundleMatchedRecord,
+  BundlePlan,
+  BundlePlanAction,
+  BundlePlanCounts,
+  BundlePlanEntry,
+  BundlePlanState,
+  BundlePreviewResponse,
+  BundleReportedEnrichment,
+  BundleReportedRecord,
+  BundleReportedSkip,
+} from './bundleImport';
+
 export type {
   ColumnDecision,
   ColumnMapping,
