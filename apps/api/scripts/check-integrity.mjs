@@ -9,7 +9,8 @@
  * Uso: node scripts/check-integrity.mjs
  */
 
-import { PrismaClient } from '@zemlo/prisma-sqlite';
+import { PrismaClient as PrismaClientPostgres } from '@zemlo/prisma-postgres';
+import { PrismaClient as PrismaClientSqlite } from '@zemlo/prisma-sqlite';
 import { loadEnv } from './load-env.mjs';
 
 /*
@@ -19,7 +20,15 @@ import { loadEnv } from './load-env.mjs';
  */
 loadEnv();
 
-const prisma = new PrismaClient();
+const provider = process.env.DATABASE_PROVIDER;
+
+if (provider !== 'postgresql' && provider !== 'sqlite') {
+  throw new Error(`DATABASE_PROVIDER inválido ou ausente: ${provider ?? '(ausente)'}`);
+}
+
+const prisma = provider === 'postgresql'
+  ? new PrismaClientPostgres()
+  : new PrismaClientSqlite();
 
 let problems = 0;
 
