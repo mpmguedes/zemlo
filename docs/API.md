@@ -431,6 +431,7 @@ Os `kind` aceites na Camada 2 são os que um ficheiro consegue exprimir: `vehicl
 | `detection` | codificação, separador, presença de cabeçalho, contagens, confiança, motivos |
 | `mapping.columns[]` | por coluna: `state`, `field`, `confidence`, `candidates`, `sample` |
 | `mapping.requiredFields[]` | campos obrigatórios que ficariam vazios |
+| `mapping.valueAmbiguities[]` | convenções que exigem resposta: `code`, `field`, `question`, `alternatives[]`, `affectedLines[]` |
 | `inference` | estado (`inequivoco`/`ambiguo`/`insuficiente`), evidência e alternativas |
 | `kind` | tipo usado, ou `null` quando a inferência não decidiu |
 | `preview[]` | até 20 linhas **já normalizadas** (§10.2, passo 5) |
@@ -443,6 +444,76 @@ Os `kind` aceites na Camada 2 são os que um ficheiro consegue exprimir: `vehicl
 Cada coluna tem **um de quatro estados** (`confirmado`, `sugerido`, `ambiguo`,
 `nao_mapeado`). A §10.4 é explícita: admitir a incerteza é parte do desenho. O sistema não
 escolhe em silêncio — uma coluna `Km/l` fica `ambiguo` e espera resposta.
+
+### `mapping.columns[].state` e `mapping.valueAmbiguities[]` são perguntas diferentes
+
+Os dois campos parecem sobrepor-se, e não sobrepõem: respondem a **"que campo é esta
+coluna?"** e a **"o que diz este valor?"**. Uma coluna pode estar `confirmado` quanto ao
+campo e ainda assim ter os valores por interpretar.
+
+| Campo | A pergunta | Estado de partida |
+| --- | --- | --- |
+| `mapping.columns[].state` | que campo canónico corresponde a esta coluna? | `ambiguo` quando o **significado da coluna** é incerto (`Km/l` entre odómetro e consumo) |
+| `mapping.valueAmbiguities[]` | como se lê este valor? | vazio quando a coluna está por mapear; preenchido quando a **convenção dos valores** é incerta |
+
+O caso que torna a distinção concreta é uma coluna `Data` de um ficheiro com datas
+`03/04/2026` sem nenhum valor que desempate. A coluna está `confirmado` — é `date`, e não há
+outro candidato. Mas `3 de abril` e `4 de março` continuam ambos válidos, e é isso que
+aparece aqui:
+
+```jsonc
+// POST /import/csv/preview — excerto de `mapping`
+{
+  "columns": [
+    { "index": 1, "header": "Data", "state": "confirmado", "field": "date", "confidence": 0.9 }
+  ],
+  "valueAmbiguities": [
+    {
+      "code": "data_ambigua",
+      "field": "date",
+      "question": "«03/04/2026» pode ser 3 de abril ou 4 de março. Qual é a convenção deste ficheiro?",
+      "alternatives": [
+        { "label": "dia-mês", "value": "2026-04-03", "preview": ["2026-04-03"] },
+        { "label": "mês-dia", "value": "2026-03-04", "preview": ["2026-03-04"] }
+      ],
+      "affectedLines": []
+    }
+  ]
+}
+```
+
+Cada entrada traz a **pergunta já escrita** em português, as interpretações possíveis com a
+sua pré-visualização, e as linhas afectadas. A resposta viaja de volta como `dateOrder` ou
+`decimalStyle` — as mesmas convenções da tabela de parâmetros da query —, pelo que responder
+aqui e responder no selector de convenções são a **mesma** operação.
+
+Os `code` possíveis são os quatro casos explícitos da §10.4:
+
+| `code` | O que está em dúvida | Resposta |
+| --- | --- | --- |
+| `data_ambigua` | `03/04/2026` — dia-mês ou mês-dia | `dateOrder` |
+| `separador_decimal` | `1,589` — um vírgula cinco ou mil quinhentos e oitenta e nove | `decimalStyle` |
+| `unidade_ambigua` | `Km/l` — consumo em km por litro ou litros por 100 km | uma entrada de `resolvedUnits` |
+| `moedas_multiplas` | mais de uma moeda no mesmo ficheiro | — (as linhas afectadas vão para quarentena) |
+
+`moedas_multiplas` é o único caso em que `affectedLines` é preenchido: a ambiguidade é **da
+linha** (cada linha traz a sua moeda) e não da coluna, pelo que não há uma convenção única a
+responder. Isolar essas linhas é o que permite importar o resto em vez de bloquear o ficheiro
+por causa de uma linha em dólares.
+
+`unidade_ambigua` é o caso em que `field` vem **vazio**, e a razão explica-o: `Km/l` não
+corresponde a nenhum campo canónico — é uma **razão derivada**, e o Zemlo não a guarda. A
+chave de `resolvedUnits` é o **cabeçalho da coluna** (a string `Km/l`, tal como o ficheiro a
+escreveu) e não um nome de campo, porque é o cabeçalho que identifica o que está a ser
+respondido. Aceita os valores `km-por-litro`, `litros-por-100km` e `ignorar`.
+
+**Enquanto houver uma `valueAmbiguity` por responder, a coluna não tem valores.** Se o
+ficheiro ficar sem nenhum registo construído, o `emptyReason` apresenta a **pergunta** —
+*"Falta uma resposta para continuar. «03/04/2026» pode ser 3 de abril ou 4 de março…"* — e
+não "valores ilegíveis": um valor legível que aguarda uma resposta não é um erro do ficheiro,
+e mandar o utilizador corrigir um ficheiro correcto é o beco sem saída que a §11.3 proíbe.
+A ambiguidade é apresentada como **causa** e as linhas ignoradas como consequência, porque é
+isso que são.
 
 Nenhum registo canónico (`records`) é devolvido: são o que o `apply` recebe, e o `apply`
 reconstrói-os a partir do ficheiro.
@@ -488,13 +559,68 @@ Reimportar o mesmo ficheiro não cria nada e di-lo ("Este ficheiro já tinha sid
 Como a chave inclui o `userId`, o mesmo ficheiro importado noutra conta **cria tudo** — é o
 que permite exportar de uma conta e importar noutra.
 
+### Problemas bloqueantes do plano
+
+O plano traz os problemas encontrados em `plan.issues[]`. Cada um tem `severity`, `code`,
+`message` e, quando aplicável, `localId`, `field`, `file` e `line` — os quatro **no mesmo
+nível** que o `code`, não aninhados.
+
+| `severity` | Efeito |
+| --- | --- |
+| `info` | não altera o resultado |
+| `recoverable` | o registo entra com a lacuna declarada (qualidade `partial`) |
+| `blocking` | o plano fica `blocked` e o `apply` é recusado (**422** `unprocessable`) |
+
+Só os códigos abaixo são bloqueantes, e nenhum deles tem remédio **dentro** do ficheiro:
+
+| `code` | Quando | Porque é bloqueante |
+| --- | --- | --- |
+| `record.missing_required_field` | um campo obrigatório do tipo está ausente ou nulo | o registo não pode ser gravado, e a falta é do ficheiro |
+| `bundle.missing_vehicle_reference` | o registo pertence a um veículo (`fuel`, `expense`, …) mas não traz a ligação | não pode ser gravado sem veículo, e adivinhá-lo atribuiria consumos ao carro errado |
+| `bundle.broken_reference` | uma referência aponta para um `localId` que o ficheiro não define | a aresta não pode ser resolvida e a escrita falharia no meio |
+| `bundle.duplicate_local_id` | dois registos do ficheiro partilham o mesmo `localId` | as referências tornam-se ambíguas, e o resultado passaria a depender da ordem de chegada (§13.3) |
+| `bundle.invalid_local_id` | o `localId` não respeita o formato (§5.6) | acaba num caminho de pasta, e é a primeira defesa contra escrita fora da área temporária (§13.4) |
+| `bundle.invalid_reference_format` | a referência não é um `localId` aceitável | idem |
+| `document.content_path_missing` | o documento declara conteúdo e o caminho não vem no bundle | um documento sem conteúdo apresentado como completo seria uma perda silenciosa |
+| `manifest.bundle_id_invalid` | o `manifest` não traz um `bundleId` válido | sem ele não há chave de idempotência, e reimportar duplicaria tudo |
+
+Quase todos são da **Camada 1**: um CSV não tem `manifest`, não escreve referências por
+`localId` nem transporta conteúdo de documentos. Dois, porém, aparecem nas duas camadas —
+`record.missing_required_field` e `bundle.missing_vehicle_reference` — e é por isso que este
+último merece a explicação seguinte.
+
+Um `blocking` bloqueia o plano **inteiro**, e não só o registo: `plan.state` passa a
+`blocked` logo que exista um. A quarentena é por registo, mas o veredicto do plano é
+conjunto — o `apply` recusa tudo com **422**, para que o utilizador veja o problema antes de
+metade dos dados entrar.
+
+O `bundle.missing_vehicle_reference` é o caso que exige explicação, porque o prefixo
+`bundle.` confunde: o código **não** é exclusivo da Camada 1. A ligação ao veículo é uma
+aresta do contrato `CanonicalRecord` (§4.3), e o núcleo valida-a da mesma forma para os dois
+adaptadores. O prefixo é o do **domínio** que produziu a regra, não o da camada que a
+accionou. (A `bundle.broken_reference` é o par deste código: aquela dispara quando a
+referência existe mas não resolve, esta quando nunca chegou a ser escrita.)
+
+Na prática ele aparece mais na Camada 2 do que na Camada 1, e não por acaso: um bundle
+exportado pelo Zemlo escreve sempre o `vehicleLocalId` (o exportador fá-lo a partir da
+relação na base de dados), ao passo que um CSV o tem de **derivar** de uma coluna
+`Matrícula`. Quando o adaptador do CSV consegue — uma matrícula repetida basta — a ligação é
+criada, e o veículo é sintetizado se o ficheiro não trouxer a ficha. Quando o CSV tem
+registos de despesa mas **nenhuma** coluna de matrícula, não há aresta a derivar e este é o
+problema que aparece.
+
+O `message` nomeia o tipo em linguagem de utilizador — *"Este abastecimento não diz a que
+veículo pertence"* — enquanto o `field` diz `vehicleLocalId`. A §11.3 exige zero conceitos
+técnicos **na apresentação**; o `field` existe para a interface ter o dado estruturado sem o
+mostrar.
+
 ### Códigos de erro específicos
 
 | Situação | HTTP | `code` |
 | --- | --- | --- |
 | Plano/identidade não corresponde ao ficheiro | 409 | `conflict` |
 | CSV sem tipo determinado (§10.5) | 422 | `unprocessable` |
-| Importação bloqueada por registos em quarentena | 422 | `unprocessable` |
+| Plano com um problema bloqueante (ver acima) | 422 | `unprocessable` |
 | `kind` não importável de CSV | 400 | `validation_error` |
 | Decisão ou convenção inválida | 400 | `validation_error` |
 | `Content-Type` não aceite | 415 | `validation_error` |

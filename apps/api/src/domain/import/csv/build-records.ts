@@ -26,7 +26,7 @@
  * aqui adivinha.
  */
 
-import { isValidLocalId, LOCAL_ID_MAX_LENGTH } from '../ids.js';
+import { isValidLocalId, LOCAL_ID_MAX_LENGTH, LOCAL_ID_PREFIXES } from '../ids.js';
 import { normalizePlateForCompare } from '../normalize.js';
 import { dedupeKeysFor } from '../plan.js';
 import type { CanonicalRecord, RecordKind } from '../validate.js';
@@ -427,7 +427,7 @@ export function buildCanonicalRecords(
       // Já existe um registo de veículo que cobre esta matrícula: é ele o referido.
       if (describedVehicles.has(plateKey)) continue;
 
-      const vehicleLocalId = makeLocalId('veh', sourceId, reference.firstLine);
+      const vehicleLocalId = makeLocalId(defaultPrefix('vehicle'), sourceId, reference.firstLine);
 
       synthesized.push({
         kind: 'vehicle',
@@ -636,7 +636,8 @@ function referencesFor(
   const reference = plateRefs.get(plate);
 
   const vehicleLocalId =
-    described ?? (reference ? makeLocalId('veh', sourceId, reference.firstLine) : undefined);
+    described ??
+    (reference ? makeLocalId(defaultPrefix('vehicle'), sourceId, reference.firstLine) : undefined);
 
   if (vehicleLocalId === undefined) return {};
 
@@ -760,45 +761,32 @@ function canonicalizeFields(
 /**
  * Prefixo de `localId` por tipo de registo.
  *
- * Duplica intencionalmente `LOCAL_ID_PREFIXES` de `ids.ts`? **Não.** O módulo `ids.ts`
- * exporta a tabela como tipo fechado sobre os tipos do bundle, e o CSV acrescenta um tipo
- * que o bundle não usa da mesma forma (`vehicle` a partir de uma tabela). A derivação aqui
- * é uma função pura sobre a mesma convenção de três letras, e é o teste que garante que
- * coincide com `ids.ts` — evitando que a duplicação se transforme em divergência.
+ * **Não duplica `LOCAL_ID_PREFIXES`** — lê-o. A tabela de `ids.ts` é a única fonte
+ * canónica da convenção de três letras, e este adaptador limita-se a projectá-la sobre os
+ * `RecordKind` que constrói.
+ *
+ * ## Porque é que isto já foi uma tabela própria, e porque deixou de ser
+ *
+ * Durante a Camada 2 existiu aqui um `switch` com a convenção repetida à mão, justificado
+ * por o CSV acrescentar um tipo que o bundle não usa da mesma forma (`vehicle` a partir de
+ * uma tabela). O comentário prometia que *"é o teste que garante que coincide com `ids.ts`"*
+ * — mas esse teste nunca chegou a existir, e sem ele a duplicação divergiu exactamente como
+ * era previsível: `inspection` saía daqui como `insp` e da tabela canónica como `isp`. O
+ * mesmo registo importado por CSV e por bundle produzia identificadores diferentes.
+ *
+ * A lição não é "faltava um teste" — é que uma cópia de uma constante que ninguém verifica
+ * é uma divergência à espera de acontecer. Ler a tabela em vez de a copiar torna a
+ * divergência impossível por construção, e o teste de paridade em
+ * `test/import-csv-prefixes.test.ts` continua a guardar a fronteira (incluindo o caso em que
+ * alguém acrescenta um tipo a um lado e se esquece do outro).
+ *
+ * O `default` continua a existir para tipos que o CSV não constrói (`event`, `suggestion`,
+ * `notification`, `audit`): um registo desses nunca deve chegar aqui, e `rec` é um
+ * identificador válido e honesto em vez de uma excepção que pararia uma importação inteira
+ * por causa de uma linha.
  */
 function defaultPrefix(kind: RecordKind): string {
-  switch (kind) {
-    case 'vehicle':
-      return 'veh';
-    case 'odometer':
-      return 'odo';
-    case 'expense':
-      return 'exp';
-    case 'fuel':
-      return 'fuel';
-    case 'charging':
-      return 'chg';
-    case 'maintenance':
-      return 'mnt';
-    case 'insurance':
-      return 'ins';
-    case 'inspection':
-      return 'insp';
-    case 'tax':
-      return 'tax';
-    case 'document':
-      return 'doc';
-    case 'reminder':
-      return 'rem';
-    case 'event':
-      return 'evt';
-    case 'suggestion':
-      return 'sug';
-    case 'notification':
-      return 'ntf';
-    default:
-      return 'rec';
-  }
+  return LOCAL_ID_PREFIXES[kind] ?? 'rec';
 }
 
 /**
