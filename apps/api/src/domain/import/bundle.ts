@@ -206,11 +206,26 @@ export interface RawBundleRecord {
 }
 
 /**
- * Os bytes de um documento, verificados mas **não** persistidos (A26, decisão 2).
+ * Os bytes de um documento, tal como vieram no bundle (§5.6, decisão 1).
  *
- * Existe para que o relatório possa declarar quantos bytes foram verificados e descartados
- * — a limitação não pode ficar escondida (§11.3). O `sha256` de cada um já foi conferido
- * contra o manifest quando este o declara.
+ * ## Porque é que os bytes viajam agora
+ *
+ * Durante muito tempo este tipo existiu para o relatório poder declarar quantos bytes foram
+ * verificados e descartados — a limitação não podia ficar escondida (§11.3). Mas a §5.6
+ * exige que os documentos sejam exportados **e reimportados byte a byte**, e a §13.2 exige
+ * uma comparação por `sha256` entre as duas pontas. Um `sha256` calculado e deitado fora
+ * prova que os bytes estavam certos no momento da leitura; não põe os bytes no destino.
+ *
+ * `data` é o que fecha essa lacuna: os bytes reais, já verificados contra o manifest,
+ * prontos a serem guardados. O leitor **continua** a não persistir nada — quem escreve é a
+ * fase `apply` —, pelo que a §7.1 ("nenhuma escrita antes do `apply`") não é afectada.
+ *
+ * ## Porque é que `bytes` (contagem) e `data` (conteúdo) coexistem
+ *
+ * `bytes` responde a "quanto pesa?" e é o que o relatório mostra; `data` é o conteúdo. O
+ * primeiro não se deriva do segundo por acidente: um relatório que precise só do tamanho
+ * não deve obrigar a carregar o conteúdo, e um teste que verifique o tamanho não deve poder
+ * passar por engano sobre um conteúdo vazio.
  */
 export interface DocumentBytes {
   /** Caminho no bundle: `documents/<localId>/<nome>`. */
@@ -219,9 +234,17 @@ export interface DocumentBytes {
   readonly localId: string;
   /** Nome original do ficheiro, tal como consta no caminho. */
   readonly fileName: string;
+  /** Tamanho em bytes, medido sobre os bytes reais. */
   readonly bytes: number;
   /** `sha256` calculado sobre os bytes **reais**, não sobre o declarado. */
   readonly sha256: string;
+  /**
+   * O conteúdo, para ser guardado pela fase `apply` (§5.6).
+   *
+   * É o único campo deste tipo que transporta dados em vez de os descrever — e existe
+   * porque a fidelidade byte a byte da §13.2 não é verificável de outra forma.
+   */
+  readonly data: Uint8Array;
 }
 
 /**
@@ -797,11 +820,12 @@ function readAccountFile(
 }
 
 /**
- * Lê os bytes dos documentos, **verificando mas não persistindo** (A26, regra 4).
+ * Lê os bytes dos documentos e devolve-os, verificados (§5.6).
  *
- * Não há camada de armazenamento nesta fase (decisão 2). Estes bytes existem para que o
- * relatório possa declarar quantos foram verificados e descartados — a limitação não pode
- * ficar escondida (§11.3). Persistir seria alargar o âmbito, não cumpri-lo.
+ * Não persiste nada: a escrita é da fase `apply`, e a §7.1 proíbe qualquer escrita antes
+ * dela. O que este passo faz é **preparar** os bytes — conferi-los contra o manifest,
+ * medir o tamanho real e calcular o digest — para que o `apply` receba conteúdo já
+ * validado em vez de um ficheiro por inspeccionar.
  *
  * Um caminho que não siga `documents/<localId>/<nome>` é recusado: o `localId` é a única
  * ligação entre os bytes e os metadados do documento, e sem ele os bytes são inúteis.
@@ -840,8 +864,14 @@ function readDocumentBytes(
       localId: rest.slice(0, separator),
       fileName: rest.slice(separator + 1),
       bytes: entry.uncompressedBytes,
-      // Digest sobre os bytes REAIS. É verificação de integridade, não persistência.
+      // Digest sobre os bytes REAIS. É a identidade do ficheiro (§5.6), e é o valor que a
+      // §13.2 compara entre a origem e o destino.
       sha256: sha256Hex(entry.data),
+      // O conteúdo, para a fase `apply` o guardar. Uma cópia e não a referência: o
+      // `ZipEntry` pertence ao resultado da leitura do ZIP, e o `apply` corre depois de o
+      // utilizador ter revisto — deixar os bytes dependentes do ciclo de vida de outro
+      // objecto seria guardar dados por interposta pessoa.
+      data: Uint8Array.from(entry.data),
     });
   }
 

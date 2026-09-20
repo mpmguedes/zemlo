@@ -575,6 +575,14 @@ importRouter.post(
       applied = await applyImport({
         plan: preview.plan,
         records: preview.records,
+        /*
+         * Os bytes dos documentos que o `preview` acabou de verificar. Vêm do bundle lido
+         * **neste** pedido, pela mesma razão que os registos: o que é escrito tem de ser o
+         * que foi mostrado, e um binário transportado pelo cliente seria conteúdo de
+         * escrita vindo de fora (§7.3). O `preview` já os conferiu contra o manifest, pelo
+         * que aqui só faltava guardá-los.
+         */
+        documentBytes: preview.bundle.documentBytes,
         bundleId: preview.bundle.bundleId,
         userId: user.id,
         prisma,

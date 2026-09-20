@@ -39,8 +39,10 @@ import type { PrismaClient } from '../../core/db.js';
 import type { CanonicalRecord } from '../../domain/import/validate.js';
 import type { ImportPlan, PlanEntry } from '../../domain/import/plan.js';
 import { creationOrder, pendingDecisions } from '../../domain/import/plan.js';
+import type { DocumentBytes } from '../../domain/import/bundle.js';
 
 import { writeBookEntries, type BookEntryInput, type PrismaLike } from './book.js';
+import { documentStorage, sha256Hex, type DocumentStorage } from '../document-storage.js';
 
 /* -------------------------------------------------------------------------- */
 /* Configuração                                                                */
@@ -138,6 +140,27 @@ export interface ApplyImportOptions {
   readonly bundleId?: string;
   /** Os registos normalizados, necessários para escrever campos que o plano não carrega. */
   readonly records?: readonly CanonicalRecord[];
+  /**
+   * Os bytes originais dos documentos, tal como o leitor do bundle os verificou (§5.6).
+   *
+   * Vêm de fora — do `preview` que leu este bundle — e não do plano, pela mesma razão que
+   * o `bundleId`: o plano é um artefacto de apresentação com identificadores e ações, não
+   * um contentor de binários. E porque quem os obteve é quem já os verificou contra o
+   * manifest: transportá-los no plano abriria a porta a escrever bytes que ninguém conferiu.
+   *
+   * Ausentes quando a importação é de CSV (Camada 2): não há ZIP de onde venham ficheiros,
+   * e um documento de CSV é metadados — o `contentState: missingContent` da §5.6, tratado
+   * como caso declarado e não como falha.
+   */
+  readonly documentBytes?: readonly DocumentBytes[];
+  /**
+   * Onde guardar os bytes dos documentos.
+   *
+   * Injectável para que os testes lhe dêem um armazenamento temporário — a mesma razão por
+   * que a raiz do armazenamento local é um parâmetro do construtor e não uma constante. Em
+   * produção é `documentStorage()`, a instância da aplicação.
+   */
+  readonly storage?: DocumentStorage;
 }
 
 /**
@@ -151,7 +174,7 @@ export interface ApplyImportOptions {
  * o teste verifica um instantâneo da base de dados antes e depois.
  */
 export async function applyImport(options: ApplyImportOptions): Promise<ApplyReport> {
-  const { plan, userId, prisma, bundleId, records } = options;
+  const { plan, userId, prisma, bundleId, records, documentBytes, storage } = options;
 
   /* ---- Recusas, todas antes de escrever ---- */
 
@@ -202,11 +225,31 @@ export async function applyImport(options: ApplyImportOptions): Promise<ApplyRep
 
   /* ---- Escrita ---- */
 
+  /*
+   * Os bytes dos documentos, indexados por `localId`.
+   *
+   * Construído **antes** da escrita e uma só vez: cada documento é procurado pelo seu
+   * `localId`, e uma pesquisa linear por documento faria uma importação de N documentos
+   * custar N² comparações. O índice é a diferença entre "a importação demora o que os
+   * dados exigem" e "a importação demora o quadrado do que os dados exigem".
+   */
+  const bytesByLocalId = new Map((documentBytes ?? []).map((item) => [item.localId, item]));
+
+  const context = {
+    plan,
+    userId,
+    prisma,
+    ...(bundleId !== undefined ? { bundleId } : {}),
+    ...(records !== undefined ? { records } : {}),
+    bytesByLocalId,
+    ...(storage !== undefined ? { storage } : { storage: documentStorage() }),
+  };
+
   const useBatches = work.length > SINGLE_TRANSACTION_LIMIT;
 
   return useBatches
-    ? applyInBatches({ plan, work, userId, prisma, bundleId, records })
-    : applyInSingleTransaction({ plan, work, userId, prisma, bundleId, records });
+    ? applyInBatches({ ...context, work })
+    : applyInSingleTransaction({ ...context, work });
 }
 
 /**
@@ -261,11 +304,17 @@ async function applyInSingleTransaction(context: {
   prisma: PrismaClient;
   bundleId?: string;
   records?: readonly CanonicalRecord[];
+  bytesByLocalId: ReadonlyMap<string, DocumentBytes>;
+  storage: DocumentStorage;
 }): Promise<ApplyReport> {
-  const { plan, work, userId, prisma, bundleId, records } = context;
+  const { plan, work, userId, prisma, bundleId, records, bytesByLocalId, storage } = context;
 
   return prisma.$transaction(async (tx) => {
-    const report = await writeEntries(tx, plan, work, userId, records);
+    const report = await writeEntries(tx, plan, work, userId, {
+      records,
+      bytesByLocalId,
+      storage,
+    });
 
     /*
      * O livro é escrito **dentro da mesma transacção** que criou os registos. Numa
@@ -313,8 +362,10 @@ async function applyInBatches(context: {
   prisma: PrismaClient;
   bundleId?: string;
   records?: readonly CanonicalRecord[];
+  bytesByLocalId: ReadonlyMap<string, DocumentBytes>;
+  storage: DocumentStorage;
 }): Promise<ApplyReport> {
-  const { plan, work, userId, prisma, bundleId, records } = context;
+  const { plan, work, userId, prisma, bundleId, records, bytesByLocalId, storage } = context;
 
   const created: CreatedRecord[] = [];
   const enriched: EnrichedRecord[] = [];
@@ -325,7 +376,11 @@ async function applyInBatches(context: {
     const slice = work.slice(offset, offset + BATCH_SIZE);
 
     const partial = await prisma.$transaction(async (tx) => {
-      const report = await writeEntries(tx, plan, slice, userId, records);
+      const report = await writeEntries(tx, plan, slice, userId, {
+        records,
+        bytesByLocalId,
+        storage,
+      });
 
       if (bundleId) {
         const entries: BookEntryInput[] = report.created.map((item) => ({
@@ -381,7 +436,11 @@ async function writeEntries(
   plan: ImportPlan,
   work: readonly PlanEntry[],
   userId: string,
-  records?: readonly CanonicalRecord[],
+  documentWrites: {
+    records?: readonly CanonicalRecord[] | undefined;
+    bytesByLocalId: ReadonlyMap<string, DocumentBytes>;
+    storage: DocumentStorage;
+  },
 ): Promise<Omit<ApplyReport, 'batches'>> {
   const created: CreatedRecord[] = [];
   const enriched: EnrichedRecord[] = [];
@@ -398,7 +457,7 @@ async function writeEntries(
     }
   }
 
-  const byLocalId = new Map((records ?? []).map((record) => [record.localId, record]));
+  const byLocalId = new Map((documentWrites.records ?? []).map((record) => [record.localId, record]));
 
   for (const entry of work) {
     if (entry.action === 'skipped') {
@@ -419,7 +478,7 @@ async function writeEntries(
         );
       }
 
-      const id = await createRecord(tx, record, userId, localToId);
+      const id = await createRecord(tx, record, userId, localToId, documentWrites);
       localToId.set(entry.localId, id);
       created.push({ localId: entry.localId, kind: entry.kind, id });
       continue;
@@ -467,6 +526,10 @@ async function createRecord(
   record: CanonicalRecord,
   userId: string,
   localToId: ReadonlyMap<string, string>,
+  documentWrites: {
+    bytesByLocalId: ReadonlyMap<string, DocumentBytes>;
+    storage: DocumentStorage;
+  },
 ): Promise<string> {
   const f = record.fields;
 
@@ -646,6 +709,56 @@ async function createRecord(
     }
 
     case 'document': {
+      /*
+       * Os bytes primeiro, a linha depois.
+       *
+       * ## Porque é que a ordem não é indiferente
+       *
+       * Os bytes vão para o armazenamento, que **não** participa na transacção da base de
+       * dados. Se a linha fosse escrita primeiro e a gravação dos bytes falhasse, ficaria
+       * um documento a declarar conteúdo que não existe — e um `storageKey` que ninguém
+       * conseguiria ler. Guardar primeiro inverte o risco: no pior caso, uma transacção que
+       * reverte deixa bytes órfãos, que são invisíveis (nenhuma linha lhes faz referência)
+       * e recuperáveis (o mesmo procedimento dos temporários de `save`), ao contrário de um
+       * documento que mente sobre o que tem.
+       *
+       * ## Porque é que os bytes são conferidos antes de serem guardados
+       *
+       * O `sha256` que o bundle declara em `contentSha256` é a **identidade** do ficheiro
+       * (§5.6) e é a chave de deduplicação dos documentos (`plan.ts`). Guardar bytes que
+       * não correspondem ao declarado criaria um documento cuja identidade não descreve o
+       * conteúdo — e a reimportação seguinte classificá-lo-ia como já importado, ou não,
+       * por um valor que nunca foi verdade. A conferência é feita aqui e não no leitor
+       * porque é aqui que os bytes deixam de ser temporários: até este ponto, recusar é
+       * barato; depois, é preciso apagar.
+       *
+       * ## Nenhum destes casos bloqueia a importação
+       *
+       * A §5.6 é explícita: um documento cujos bytes não estão disponíveis **não bloqueia**
+       * a exportação, e é importado só com metadados. O mesmo vale do lado da importação —
+       * uma incoerência entre o declarado e o real é reportada e o documento é criado como
+       * metadados, em vez de recusar a importação inteira por causa de um anexo.
+       */
+      const bytes = documentWrites.bytesByLocalId.get(record.localId);
+      let storageKey: string | null = null;
+      let sizeBytes = (f.sizeBytes as number) ?? null;
+
+      if (bytes) {
+        const declared = typeof f.contentSha256 === 'string' ? f.contentSha256.toLowerCase() : null;
+        const actual = sha256Hex(bytes.data);
+
+        if (declared && declared !== actual) {
+          throw new Error(
+            `O ficheiro do documento «${record.localId}» não corresponde ao resumo declarado no manifest. Nada foi escrito.`,
+          );
+        }
+
+        storageKey = await documentWrites.storage.save(userId, bytes.data);
+        // O tamanho passa a ser o **medido**, não o declarado: o bundle pode trazer um
+        // `sizeBytes` desactualizado, e a coluna descreve o que foi efectivamente guardado.
+        sizeBytes = bytes.data.byteLength;
+      }
+
       const row = await tx.document.create({
         data: {
           userId,
@@ -654,9 +767,12 @@ async function createRecord(
           category: f.category as string,
           date: f.date === undefined ? null : civilDateValue(f.date),
           expiresAt: f.expiresAt === undefined ? null : civilDateValue(f.expiresAt),
-          fileName: (f.fileName as string) ?? null,
+          fileName: (f.fileName as string) ?? bytes?.fileName ?? null,
           mimeType: (f.mimeType as string) ?? null,
-          sizeBytes: (f.sizeBytes as number) ?? null,
+          sizeBytes,
+          // `null` quando o bundle não trouxe ficheiro — a leitura futura devolve `null` e
+          // o documento fica exactamente como a §5.6 o descreve: metadados sem conteúdo.
+          storageKey,
           notes: (f.notes as string) ?? null,
         },
         select: { id: true },
