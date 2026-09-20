@@ -13,6 +13,7 @@ import express, { type Express, type Router, raw } from 'express';
 import { API_BASE_PATH, PRODUCT } from '@zemlo/shared';
 import { describeConfig } from './core/config.js';
 import { logger } from './core/logger.js';
+import { describeEmail, registerEmailSender } from './services/email.js';
 import {
   corsMiddleware,
   errorHandler,
@@ -424,8 +425,18 @@ function mountWebApp(app: Express): void {
   });
 }
 
-/** Regista no log o resumo da configuração no arranque, sem revelar segredos. */
+/**
+ * Regista no log o resumo da configuração no arranque, sem revelar segredos.
+ *
+ * Começa por ligar o transporte de email. Fazê-lo aqui, e não no módulo, é deliberado:
+ * `registerEmailSender` pode recusar (produção sem SMTP), e uma exceção a sair do
+ * carregamento de um módulo seria um erro de importação difícil de ler em vez de uma
+ * mensagem de configuração. Aqui, a falha aparece com as outras do arranque e antes de a
+ * porta abrir.
+ */
 export function logStartup(): void {
+  registerEmailSender();
   logger.info(`${PRODUCT.name} API a arrancar`, { versao: PRODUCT.version });
+  logger.info(`  ${describeEmail()}`);
   for (const line of describeConfig()) logger.info(`  ${line}`);
 }

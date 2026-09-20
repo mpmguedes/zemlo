@@ -5,6 +5,8 @@ import { useSession } from './app/SessionContext';
 import { Logo } from './components/Logo';
 import { EmptyState, LoadingBlock } from './ui/primitives';import { LoginPage } from './pages/auth/LoginPage';
 import { SignUpPage } from './pages/auth/SignUpPage';
+import { ForgotPasswordPage } from './pages/auth/ForgotPasswordPage';
+import { ResetPasswordPage } from './pages/auth/ResetPasswordPage';
 import { OnboardingPage } from './pages/auth/OnboardingPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { VehiclesPage } from './pages/vehicles/VehiclesPage';
@@ -45,6 +47,19 @@ export function App() {
       {/* Rotas públicas. */}
       <Route path="/login" element={<RedirectIfAuthenticated><LoginPage /></RedirectIfAuthenticated>} />
       <Route path="/signup" element={<RedirectIfAuthenticated><SignUpPage /></RedirectIfAuthenticated>} />
+      {/* Recuperação de password. Ficam ao lado do login porque é de lá que se chega a
+          ambas — e porque quem abre o link do email não tem sessão, pela definição do
+          problema. O `RedirectIfAuthenticated` é o mesmo do login: quem já tem sessão não
+          precisa de recuperar nada, e reencaminhá-lo evita que fique preso num formulário
+          que não se aplica. */}
+      <Route
+        path="/recuperar-password"
+        element={<RedirectIfAuthenticated><ForgotPasswordPage /></RedirectIfAuthenticated>}
+      />
+      <Route
+        path="/repor-password"
+        element={<RedirectIfAuthenticated><ResetPasswordPage /></RedirectIfAuthenticated>}
+      />
 
       {/* Onboarding: exige sessão, mas não a estrutura completa (ainda não há veículos). */}
       <Route

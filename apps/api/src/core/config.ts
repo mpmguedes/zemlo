@@ -302,10 +302,13 @@ export function describeConfig(): string[] {
      * Distingue "sem SMTP" de "SMTP configurado". A recuperação de password existe nos
      * dois casos, mas sem SMTP o link é registado no log em vez de entregue — e quem
      * opera a instalação tem de o saber sem ter de ler o código.
+     *
+     * O transporte efetivo é registado logo a seguir, por `registerEmailSender()`, que é
+     * quem sabe se a entrega está mesmo ligada; esta linha descreve a configuração.
      */
     `email: ${
       config.email.enabled
-        ? `SMTP configurado (${config.email.host}) — entrega real por ligar`
+        ? `SMTP configurado (${config.email.host}:${config.email.port})`
         : 'entrega inativa (sem SMTP) — links de recuperação registados no log'
     }`,
     `Home Assistant: ${config.homeAssistant.enabled ? 'ativo' : 'inativo (sem broker MQTT)'}`,

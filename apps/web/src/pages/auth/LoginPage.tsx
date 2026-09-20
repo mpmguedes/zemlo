@@ -172,6 +172,9 @@ export function LoginPage() {
         <p className="z-auth__footer">
           Ainda não tens conta? <Link to="/signup">Criar conta</Link>
         </p>
+        <p className="z-auth__footer">
+          <Link to="/recuperar-password">Esqueci-me da password</Link>
+        </p>
       </div>
     </div>
   );

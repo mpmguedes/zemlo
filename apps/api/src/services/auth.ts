@@ -21,7 +21,12 @@
  */
 
 import type { AuthSessionResponse, CivilDate, TwoFactorSetupResponse, UserProfile } from '@zemlo/shared';
-import { DEFAULT_TIME_ZONE, isValidTimeZone, todayIn } from '@zemlo/shared';
+import {
+  DEFAULT_TIME_ZONE,
+  PASSWORD_RESET_TTL_MINUTES as PASSWORD_RESET_TTL_MINUTES_SHARED,
+  isValidTimeZone,
+  todayIn,
+} from '@zemlo/shared';
 import { config } from '../core/config.js';
 import {
   consumeRecoveryCode,
@@ -473,11 +478,11 @@ const PASSWORD_RESET_PURPOSE = 'password-reset';
 /**
  * Duração do link de recuperação, em minutos.
  *
- * Uma hora é o compromisso habitual: dá tempo a quem vai buscar o email noutro
- * dispositivo, sem deixar um link válido a circular durante dias no histórico de uma
- * caixa de correio.
+ * O valor vive em `@zemlo/shared` porque o ecrã de confirmação do pedido e a página que
+ * consome o token afirmam-no ao utilizador; tê-lo escrito aqui também seria a forma de o
+ * ver divergir do que lhe prometemos.
  */
-const PASSWORD_RESET_TTL_MINUTES = 60;
+const PASSWORD_RESET_TTL_MINUTES = PASSWORD_RESET_TTL_MINUTES_SHARED;
 
 /**
  * Pede a recuperação de password.
@@ -528,16 +533,35 @@ export async function requestPasswordReset(
 
   const resetUrl = `${config.publicBaseUrl}/repor-password?token=${encodeURIComponent(token)}`;
 
+  /*
+   * O email é escrito para ser útil a quem o recebe sem saber o que é o Zemlo.
+   *
+   * Três coisas têm de estar visíveis sem abrir nada: **o que é** (a assinatura do
+   * produto, porque uma caixa de correio recebe muitos emails e "reposição de password"
+   * sozinho não diz de onde vem), **o que fazer** (o link, com a validade ao lado — um
+   * prazo longe do link obriga a procurá-lo), e **o que fazer se não foi pedido** (a
+   * única parte que interessa a quem recebeu isto por engano).
+   *
+   * O que não entra: a password atual (nunca é enviada, nem parcialmente), e nenhum dado
+   * da conta além do endereço que já é o destinatário. Um email de recuperação que liste
+   * registos ou veículos transforma uma caixa de correio comprometida numa fuga de dados
+   * (§31).
+   */
   await sendEmail({
     to: user.email,
     subject: 'Zemlo — reposição da tua password',
     text: [
+      'Zemlo — reposição de password',
+      '',
       'Recebemos um pedido para repor a password da tua conta Zemlo.',
       '',
-      `Abre este endereço para escolher uma nova password (válido ${PASSWORD_RESET_TTL_MINUTES} minutos):`,
+      `Abre este endereço para escolheres uma nova password. O link é válido durante ${PASSWORD_RESET_TTL_MINUTES} minutos:`,
       resetUrl,
       '',
-      'Se não foste tu, ignora este email: a tua password atual continua a funcionar.',
+      'Se não foste tu, ignora este email. A tua password atual continua a funcionar e não é',
+      'preciso fazer mais nada.',
+      '',
+      'Por segurança, a Zemlo nunca te pede a password por email.',
     ].join('\n'),
   });
 

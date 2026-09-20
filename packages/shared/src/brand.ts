@@ -85,6 +85,21 @@ export const BRAND = {
   state: STATE,
 } as const;
 
+/**
+ * Validade do link de recuperação de password, em minutos.
+ *
+ * Vive aqui — e não escrita à mão em cada sítio que a menciona — porque é afirmada em
+ * três pontos que têm de concordar sempre: a constante que o servidor usa para expirar o
+ * token (`PASSWORD_RESET_TTL_MINUTES` em `services/auth.ts`, que importa esta), o texto
+ * do email que o utilizador recebe ("o link é válido durante X minutos") e o ecrã que
+ * confirma o pedido. Se divergissem, o produto mentia à pessoa no momento exacto em que
+ * ela está sem acesso à conta — o pior sítio possível para uma mentira pequena.
+ *
+ * A unidade é minutos, como no email e no servidor. Converter para "1 hora" no texto é
+ * responsabilidade de quem apresenta.
+ */
+export const PASSWORD_RESET_TTL_MINUTES = 60;
+
 export type BrandState = keyof typeof STATE;
 
 /** Gera o bloco `:root { --z-... }` consumido por `apps/web`. */

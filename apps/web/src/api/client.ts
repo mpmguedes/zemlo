@@ -489,6 +489,23 @@ export const auth = {
   async me(): Promise<UserProfile> {
     return api.get<UserProfile>('/me');
   },
+
+  /**
+   * Pede a recuperação de password.
+   *
+   * A resposta é a mesma exista ou não a conta — a API responde 202 com uma mensagem
+   * uniforme e este método não devolve nada que a distinga. O ecrã não pode, por isso,
+   * mostrar "email enviado" de forma condicional: mostra a mesma confirmação nos dois
+   * casos, que é o que impede o formulário de ser um oráculo de existência de contas.
+   */
+  async requestPasswordReset(email: string): Promise<void> {
+    await api.post('/auth/password-reset', { email });
+  },
+
+  /** Conclui a recuperação com o token recebido por email. */
+  async confirmPasswordReset(token: string, newPassword: string): Promise<{ revokedSessions: number }> {
+    return api.post('/auth/password-reset/confirm', { token, newPassword });
+  },
 };
 
 /* -------------------------------------------------------------------------- */
