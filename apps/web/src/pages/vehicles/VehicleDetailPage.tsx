@@ -1195,11 +1195,10 @@ function TaxesTab({ vehicleId }: { vehicleId: string }) {
 /**
  * Documentos deste veículo.
  *
- * Os **bytes não passam pela API** (§17): o Zemlo guarda metadados e uma referência opaca ao
- * ficheiro, porque servir ficheiros exigiria reimplementar (intervalos, retoma, cache) o que
- * o armazenamento de objetos já faz melhor. Esta ficha mostra por isso o nome do ficheiro e
- * a validade — e explica honestamente onde vive o conteúdo, em vez de mostrar um botão
- * "Descarregar" que não levaria a lado nenhum.
+ * A API serve os bytes de um documento (`GET /documents/:id/content`, §A17.1), mas esta
+ * ficha mostra a lista e delega a ação na página de detalhe: é lá que se transfere, se
+ * edita e se elimina. Aqui interessa o que se lê de relance — o nome do ficheiro e a
+ * validade.
  */
 function DocumentsTab({ vehicleId }: { vehicleId: string }) {
   const documents = useDocuments(vehicleId);

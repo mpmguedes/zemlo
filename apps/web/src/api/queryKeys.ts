@@ -109,6 +109,7 @@ export const queryKeys = {
   documents: {
     list: (params: { vehicleId?: string; limit?: number }) =>
       ['documents', 'list', params.vehicleId ?? 'all', params.limit ?? 50] as const,
+    detail: (documentId: string) => ['documents', 'detail', documentId] as const,
     expiring: (withinDays: number) => ['documents', 'expiring', withinDays] as const,
   },
 

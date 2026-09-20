@@ -248,8 +248,29 @@ export const fetchExpiringDocuments = (withinDays = 60): Promise<DocumentsExpiri
 export const createDocument = (payload: Record<string, unknown>): Promise<DocumentRecord> =>
   api.post<DocumentRecord>('/documents', payload);
 
+export const fetchDocument = (documentId: string): Promise<DocumentRecord> =>
+  api.get<DocumentRecord>(`/documents/${encodeURIComponent(documentId)}`);
+
+export const updateDocument = (
+  documentId: string,
+  payload: Record<string, unknown>,
+): Promise<DocumentRecord> =>
+  api.patch<DocumentRecord>(`/documents/${encodeURIComponent(documentId)}`, payload);
+
 export const deleteDocument = (documentId: string): Promise<void> =>
   api.delete(`/documents/${encodeURIComponent(documentId)}`);
+
+/**
+ * Transferência dos bytes de um documento.
+ *
+ * O nome do ficheiro vem do `Content-Disposition` da API, que já o sanitizou — reconstruí-lo
+ * aqui a partir do nome do documento produziria um nome diferente do que ficou registado em
+ * auditoria e desfaria a sanitização.
+ */
+export const downloadDocument = (
+  documentId: string,
+): Promise<{ blob: Blob; fileName: string | null }> =>
+  api.download(`/documents/${encodeURIComponent(documentId)}/content`);
 
 /* -------------------------------------------------------------------------- */
 /* Lembretes                                                                   */

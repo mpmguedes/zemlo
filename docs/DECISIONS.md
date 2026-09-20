@@ -316,9 +316,9 @@ funcionalidade: o utilizador deixa de contar com o aviso e perde a inspeção.
 
 ---
 
-## A17. Documentos: metadados sim, bytes não
+## A17. Documentos: metadados sim, bytes só a partir de 2026-09-18
 
-**Decisão.** A API guarda nome, categoria, datas, validade e uma referência opaca
+**Decisão original.** A API guarda nome, categoria, datas, validade e uma referência opaca
 (`storageKey`) ao ficheiro. No MVP não serve os bytes.
 
 **Porquê.** Servir ficheiros de uma API Node significa reimplementar, mais cedo ou mais
@@ -330,6 +330,42 @@ pedido numa operação com custo de banda.
 **O que fica implementado e é testável agora.** O que o produto precisa primeiro: saber
 que documento existe, de que veículo, e quando expira — que é o que alimenta o cartão de
 estado, o calendário e o alerta de validade (§6, §7, §22).
+
+---
+
+### A17.1. Revisão: a transferência passou a existir
+
+**Decisão.** A API passou a servir os bytes, em `GET /api/v1/documents/:documentId/content`.
+A rota exige sessão (está na allowlist de autenticação do router de documentos), verifica a
+propriedade **antes** de tocar no armazenamento — `requireRecord('document', userId, id)`,
+pelo que o id de outra conta responde 404 — e lê os bytes pelo único caminho de acesso
+existente, `DocumentStorage.read(userId, storageKey)`.
+
+**Porque é que isto não contradiz A17.** As duas razões invocadas acima continuam verdadeiras
+e delimitam o que **não** se construiu: não há intervalos de bytes, nem retoma, nem cache de
+borda; a resposta é servida de uma vez, o que é adequado aos ficheiros que este produto
+guarda (Documento Único, apólices, certificados). E a autorização continua a ser verificada
+num único ponto, a cada pedido, em vez de congelada num URL assinado — não existem links
+partilháveis nem validade a gerir.
+
+O que **continua** a não existir é o upload: os bytes só entram no armazenamento pelo
+importador de bundle (`services/import/apply.ts`) ou por escrita directa no directório.
+A omissão deixou de ser de capacidade (ler) e passou a ser de entrada (escrever).
+
+**Notas de implementação que valem a pena reter.**
+
+- O `Content-Type` anunciado passa por uma **lista de permissão**. Um `mimeType` gravado na
+  base de dados vem do cliente que criou o documento: servido como `text/html` ou
+  `image/svg+xml`, executaria na origem da API e leria os tokens guardados pela aplicação.
+  Tipos activos são rebaixados a `application/octet-stream`.
+- O nome do ficheiro é sanitizado antes de entrar no `Content-Disposition`: controlos
+  removidos (injeção de cabeçalho), caminhos descartados, controlos bidirecionais removidos
+  (disfarce de extensão), e truncagem a 120 caracteres.
+- Um erro de chave no armazenamento (`StorageKeyError`) é convertido em 404 na rota. Um 403
+  distinguiria "a chave não é tua" de "o documento não tem ficheiro" — e essa distinção,
+  vista de fora, é um oráculo.
+- A `storageKey` deixou de ser um campo editável na interface. Expô-la convidava a alterá-la
+  à mão, que é a única forma de partir a ligação entre o registo e o ficheiro.
 
 ---
 

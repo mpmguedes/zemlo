@@ -439,6 +439,43 @@ export function useCreateDocument() {
   });
 }
 
+/** Um documento pelo id, para a página de detalhe (§17). */
+export function useDocument(documentId: string) {
+  return useQuery({
+    queryKey: queryKeys.documents.detail(documentId),
+    queryFn: () => q.fetchDocument(documentId),
+    enabled: documentId.length > 0,
+  });
+}
+
+/**
+ * Edição dos metadados. Invalida a lista **e** o detalhe: o `PATCH` devolve o documento
+ * atualizado, mas a lista e o cartão de validades derivam de outros campos (os dias para
+ * expirar são calculados no servidor, com o fuso do utilizador), pelo que reutilizar a
+ * resposta em vez de refazer a consulta mostraria valores que o servidor não confirmou.
+ */
+export function useUpdateDocument(documentId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: Record<string, unknown>) => q.updateDocument(documentId, payload),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: queryKeys.documents.detail(documentId) });
+      invalidateRecords(client);
+    },
+  });
+}
+
+/**
+ * Transferência dos bytes. É uma mutação, e não uma consulta: dispara um efeito no browser
+ * (guardar um ficheiro), não produz estado a cachear, e interessa saber se está em curso
+ * para desativar o botão.
+ */
+export function useDownloadDocument() {
+  return useMutation({
+    mutationFn: (documentId: string) => q.downloadDocument(documentId),
+  });
+}
+
 export function useDeleteDocument() {
   const client = useQueryClient();
   return useMutation({

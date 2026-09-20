@@ -180,12 +180,17 @@ registo é associado ao veículo mais recentemente atualizado.
 | --- | --- | --- |
 | GET | `/documents?vehicleId=&limit=&cursor=` | lista (inclui documentos sem veículo) |
 | GET | `/documents/expiring?withinDays=60` | a expirar, para o cartão de estado |
-| POST | `/documents` | metadados + `storageKey`. **Os bytes não passam pela API** |
-| GET/PATCH/DELETE | `/documents/:id` | — |
+| POST | `/documents` | cria o registo e os metadados. **Não aceita ficheiros** |
+| GET/PATCH/DELETE | `/documents/:id` | detalhe, edição de metadados, eliminação |
+| GET | `/documents/:id/content` | **transfere os bytes** do ficheiro (§A17.1) |
 
-A API guarda metadados e uma referência opaca ao ficheiro; servir bytes exigiria
-reimplementar um servidor de ficheiros (intervalos, retoma, cache) que o armazenamento
-de objetos já faz melhor.
+A transferência exige sessão, é restrita ao dono do documento, e o `Content-Type` só é
+anunciado quando o tipo está numa lista de permissão — tipos activos (`text/html`,
+`image/svg+xml`) são servidos como `application/octet-stream`.
+
+O que continua a não existir é o **upload**: os bytes só entram no armazenamento pelo
+importador de bundle ou por escrita directa. Não há `multipart`, e a API nunca escreve
+ficheiros a partir de um pedido.
 
 ---
 

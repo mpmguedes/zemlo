@@ -28,13 +28,17 @@ import {
 } from '@zemlo/shared';
 import { asyncHandler, created, noContent, parseBody, parseQuery, requireUser } from '../../http/handlers.js';
 import { requireAuth } from '../../http/middleware.js';
+import { AppError, notFound } from '../../core/errors.js';
+import { logger } from '../../core/logger.js';
 import {
   createDocument,
   deleteDocument,
   documentsExpiringSoon,
+  downloadDocument,
   getDocument,
   listDocuments,
   updateDocument,
+  type DocumentContent,
 } from '../../services/documents.js';
 import { today } from '../../http/middleware.js';
 
@@ -61,6 +65,7 @@ const documentsRouterAuth = [
   '/documents',
   '/documents/expiring',
   '/documents/:documentId',
+  '/documents/:documentId/content',
 ].map(toRouteRegExp);
 
 documentsRouter.use((request, response, next) => {
@@ -120,6 +125,59 @@ documentsRouter.patch(
     const user = requireUser(request);
     const body = parseBody(zDocumentUpdateRequest, request) as DocumentUpdateRequest;
     response.json(await updateDocument(user.id, request.params.documentId ?? '', body));
+  }),
+);
+
+/**
+ * Transferência dos bytes de um documento.
+ *
+ * Segue a convenção já usada no exportador (`http/routes/integrations.ts`):
+ * `Content-Disposition` com o nome do ficheiro, depois o tipo, depois os bytes — e uma
+ * linha de registo que nomeia o documento mas não o seu conteúdo.
+ *
+ * Duas notas sobre o que **não** aparece nesta rota:
+ *
+ *  - **A `storageKey` não é lida do pedido.** O serviço resolve-a a partir do documento,
+ *    já filtrado pelo dono. Não há aqui caminho nem parâmetro de chave, pelo que não há
+ *    nada para manipular.
+ *  - **O 403 do serviço é convertido em 404.** Um documento cuja chave aponta para fora do
+ *    espaço do utilizador é um defeito de dados que merece ser distinguido no serviço;
+ *    servido ao cliente como 403, diria que o documento existe. Fora daqui, os dois casos
+ *    são o mesmo "não encontrámos esse documento".
+ */
+documentsRouter.get(
+  '/documents/:documentId/content',
+  asyncHandler(async (request, response) => {
+    const user = requireUser(request);
+    const documentId = request.params.documentId ?? '';
+
+    let content: DocumentContent;
+    try {
+      content = await downloadDocument(user.id, documentId);
+    } catch (error) {
+      if (error instanceof AppError && error.status === 403) {
+        throw notFound('Não encontrámos esse documento.');
+      }
+      throw error;
+    }
+
+    /*
+     * O nome já vem sanitizado do serviço; aqui só se escreve o cabeçalho. `attachment`
+     * impede que um tipo ativo seja renderizado na origem da API, mesmo que a lista de
+     * tipos seguros deixasse passar algum.
+     */
+    response.setHeader('Content-Disposition', `attachment; filename="${content.fileName}"`);
+    response.type(content.contentType);
+    response.setHeader('Content-Length', String(content.bytes.byteLength));
+
+    logger.info('documento transferido', {
+      userId: user.id,
+      documentId,
+      vehicleId: content.vehicleId,
+      sizeBytes: content.sizeBytes,
+    });
+
+    response.send(content.bytes);
   }),
 );
 

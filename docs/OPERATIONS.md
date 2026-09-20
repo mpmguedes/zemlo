@@ -405,5 +405,8 @@ Para que ninguém procure em vão:
 - **Trabalho agendado.** As notificações são materializadas quando o utilizador abre a
   aplicação, o que para o MVP é equivalente. `syncNotifications` já é idempotente e pode
   correr em lote quando o agendador existir.
-- **Upload de ficheiros.** A API guarda metadados e uma referência opaca; os bytes vivem
-  num armazenamento de objetos, que ainda não está configurado (§A17).
+- **Upload de ficheiros.** A API **serve** os bytes de um documento que já exista no
+  armazenamento (`GET /api/v1/documents/:id/content`, autenticado e restrito ao dono — §A17),
+  mas **não aceita** ficheiros novos: não há `multipart`, nem escrita pela API. Os bytes
+  entram pelo importador de bundle ou por escrita directa no directório de documentos
+  (`DOCUMENT_STORAGE_DIR`; por omissão `data/documents-storage/` ao lado da base de dados).

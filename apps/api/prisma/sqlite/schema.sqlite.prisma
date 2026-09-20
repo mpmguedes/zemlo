@@ -550,7 +550,8 @@ model Document {
   fileName  String?
   mimeType  String?
   sizeBytes Int?
- /// Referência opaca no armazenamento de objetos. Os bytes não passam pela API no MVP.
+ /// Referência opaca no armazenamento. Os bytes são servidos por
+ /// `GET /documents/:id/content` (autenticado, restrito ao dono); o upload não existe.
   storageKey String?
   notes     String?
   source    Json?

@@ -16,6 +16,7 @@ import { RecordsPage } from './pages/records/RecordsPage';
 import { RecordDetailPage } from './pages/records/RecordDetailPage';
 import { RemindersPage } from './pages/records/RemindersPage';
 import { DocumentsPage } from './pages/DocumentsPage';
+import { DocumentDetailPage } from './pages/DocumentDetailPage';
 import { StatsPage } from './pages/StatsPage';
 import { TimelinePage } from './pages/TimelinePage';
 import { CalendarPage } from './pages/CalendarPage';
@@ -86,6 +87,7 @@ export function App() {
         <Route path="/records/:kind" element={<RecordsPage />} />
         <Route path="/records/reminders" element={<RemindersPage />} />
         <Route path="/documents" element={<DocumentsPage />} />
+        <Route path="/documents/:documentId" element={<DocumentDetailPage />} />
         <Route path="/stats" element={<StatsPage />} />
         <Route path="/timeline" element={<TimelinePage />} />
         <Route path="/calendar" element={<CalendarPage />} />

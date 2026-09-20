@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { DOCUMENT_CATEGORIES, optionLabel } from '@zemlo/shared';
-import { useCreateDocument, useDeleteDocument, useDocuments, useVehicles } from '../api/hooks';
+import { useCreateDocument, useDocuments, useVehicles } from '../api/hooks';
 import { errorMessage, errorRequestId } from '../api/errors';
 import { ApiError } from '../api/client';
 import { Button, Card, Chip, InlineError, LoadingBlock, PageHeader, Section } from '../ui/primitives';
@@ -14,21 +14,20 @@ import { useToast } from '../ui/Toaster';
 /**
  * Documentos (§17).
  *
- * A limitação mais importante deste ecrã está na API e é **assumida aqui de forma explícita**:
- * o Zemlo guarda **metadados** e uma referência opaca ao ficheiro (`storageKey`), e os bytes
- * não passam pela API. Implementar o carregamento de ficheiros pela API significaria
- * reimplementar um servidor de ficheiros — intervalos, retoma, cache, verificação de
- * integridade — que o armazenamento de objetos já faz melhor.
+ * A lista mostra o que existe e liga ao detalhe de cada documento, onde se edita e se
+ * transfere o ficheiro. A distinção é deliberada: a lista é para varrer, o detalhe é para
+ * agir sobre um documento — e "Descarregar" e "Eliminar" não devem ficar a um clique de
+ * distância uma da outra.
  *
- * Por isso este ecrã não tem um `<input type="file">` a fingir: pede o **nome do ficheiro e
- * a referência no armazenamento**, e explica onde o conteúdo vive. É a diferença entre uma
- * funcionalidade incompleta e uma funcionalidade honesta sobre os seus limites (§49, §59).
+ * O que continua a **não** existir é o carregamento de ficheiros: este ecrã cria o
+ * registo e os metadados, e a transferência serve ficheiros que já estejam no
+ * armazenamento (por exemplo, vindos de uma importação). Não há um `<input type="file">` a
+ * fingir que faz mais do que isso (§49, §59).
  */
 export function DocumentsPage() {
   const vehicles = useVehicles();
   const documents = useDocuments(undefined, 200);
   const create = useCreateDocument();
-  const remove = useDeleteDocument();
   const toast = useToast();
 
   const [showForm, setShowForm] = useState(false);
@@ -42,7 +41,6 @@ export function DocumentsPage() {
     date: '',
     expiresAt: '',
     fileName: '',
-    storageKey: '',
     notes: '',
   });
 
@@ -66,8 +64,6 @@ export function DocumentsPage() {
     if (expiresAt) payload.expiresAt = expiresAt;
     const fileName = textOrUndefined(form.values.fileName);
     if (fileName) payload.fileName = fileName;
-    const storageKey = textOrUndefined(form.values.storageKey);
-    if (storageKey) payload.storageKey = storageKey;
     const notes = textOrUndefined(form.values.notes);
     if (notes) payload.notes = notes;
 
@@ -81,7 +77,6 @@ export function DocumentsPage() {
         date: '',
         expiresAt: '',
         fileName: '',
-        storageKey: '',
         notes: '',
       });
       toast.show('Documento guardado.', { variant: 'ok' });
@@ -108,10 +103,9 @@ export function DocumentsPage() {
 
       <Card soft>
         <p className="z-small z-muted">
-          O Zemlo guarda os metadados e a validade de cada documento, não o ficheiro em si. É o
-          armazenamento de objetos que serve os bytes — esta versão da API não os transmite.
-          Assim que o carregamento estiver ligado, este ecrã passa a mostrar um botão para abrir
-          o documento em vez da referência.
+          Abre um documento para ver os metadados, corrigir a validade e transferir o ficheiro.
+          Este ecrã regista documentos; o carregamento de ficheiros novos para o armazenamento
+          ainda não está ligado.
         </p>
       </Card>
 
@@ -161,17 +155,17 @@ export function DocumentsPage() {
               <TextField
                 label="Nome do ficheiro"
                 placeholder="apolice-2026.pdf"
+                hint="Só o nome — o ficheiro é associado pela importação."
                 value={form.values.fileName}
                 onChange={(event) => form.setValue('fileName', event.target.value)}
                 error={errors.fileName}
               />
-              <TextField
-                label="Referência no armazenamento"
-                placeholder="documents/2026/apolice-abc123.pdf"
-                hint="A chave opaca com que o Zemlo volta a encontrar o ficheiro."
-                value={form.values.storageKey}
-                onChange={(event) => form.setValue('storageKey', event.target.value)}
-                error={errors.storageKey}
+              <DateField
+                label="Validade"
+                hint="Com validade, o Zemlo avisa-te antes de expirar."
+                value={form.values.expiresAt}
+                onChange={(event) => form.setValue('expiresAt', event.target.value)}
+                error={errors.expiresAt}
               />
             </div>
             <TextAreaField label="Notas" value={form.values.notes} onChange={(event) => form.setValue('notes', event.target.value)} />
@@ -252,17 +246,14 @@ export function DocumentsPage() {
                       ) : (
                         <span className="z-xs z-muted">sem validade</span>
                       )}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          if (window.confirm('Eliminar este documento? Os metadados são removidos; o ficheiro no armazenamento não.')) {
-                            void remove.mutateAsync(document.id);
-                          }
-                        }}
-                      >
-                        Eliminar
-                      </Button>
+                      {/*
+                       * Sem botão "Eliminar" aqui: eliminar é irreversível e não pertence a
+                       * uma linha de lista, ao lado de um alvo de toque. Vive no detalhe,
+                       * depois do ficheiro e dos metadados.
+                       */}
+                      <Link to={`/documents/${document.id}`} className="z-btn z-btn--ghost z-btn--sm">
+                        Abrir →
+                      </Link>
                     </span>
                   </div>
                 );
