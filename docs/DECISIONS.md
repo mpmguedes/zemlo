@@ -1018,3 +1018,103 @@ novo; falha de SMTP não impede o signup; e — o caso que só uma condição de
 transação marca `usedAt` com `where: { id, usedAt: null }` e é o `count` daí que decide a corrida.
 O teste de recuperação de password foi ajustado para filtrar por `purpose`, já que o email de
 confirmação passa a ser o primeiro a chegar à caixa nos testes.
+
+## A30. O envelope SMTP leva um caminho, não um endereço — e a mesma regra valida a configuração no arranque
+
+`MAIL FROM` leva um **caminho**, não um endereço de correio completo (RFC 5321 §4.1.1.2). O
+`SMTP_FROM` do Zemlo traz nome de apresentação — a omissão da variável também traz, `Zemlo
+<ola@appzemlo.com>` —, e interpolar o valor inteiro dentro dos parênteses angulares produzia
+`MAIL FROM:<Zemlo <ola@appzemlo.com>>`. O Gmail fecha o caminho no primeiro `>` e lê lixo a seguir:
+`555 5.5.2 Syntax error, cannot decode response`. O nome de apresentação é legítimo no cabeçalho
+`From:`, e é lá que continua a ser enviado; o envelope passa a levar apenas o endereço.
+
+### 1. O defeito era invisível por três razões independentes
+
+Nenhuma delas seria suficiente sozinha, e é a soma que explica o tempo que ele viveu em produção.
+
+A primeira é a mesma de A29 §6: uma falha de entrega **não é um erro HTTP**. O `sendEmail` absorve
+a falha de SMTP e devolve `delivered: false`; a rota responde `200`. Do lado de fora, o pedido
+parece ter corrido bem.
+
+A segunda é a asserção do teste. `expect(de).toContain('ola@appzemlo.com')` passa na linha
+malformada, porque o endereço esperado está **dentro** do lixo estrutural. Uma asserção por
+substring sobre uma gramática não testa a gramática.
+
+A terceira é o servidor SMTP falso dos testes: despacha pela primeira palavra da linha e responde
+`250` a qualquer `MAIL`, sem nunca validar o endereço — ao contrário de um servidor real. Uma
+asserção permissiva contra um servidor permissivo são dois pontos cegos alinhados.
+
+### 2. Recusar em vez de adivinhar
+
+A extração devolve o interior do **último** `<…>` — o último, e não o primeiro, porque é o
+endereço que fecha a cadeia — ou o próprio valor aparado quando não há parênteses. Mas um valor de
+que não saia um endereço plausível **lança**, em vez de devolver o valor inteiro.
+
+A distinção importa. Devolver o valor inteiro seria repetir em silêncio o mesmo envelope
+malformado que a função existe para eliminar, e o modo de falha do defeito original era
+precisamente esse: nada a assinalar. `Zemlo <>`, `<>`, texto a seguir ao `>` e um endereço com
+espaços lá dentro são recusados. Uma primeira versão sem guarda foi medida contra treze entradas e
+acertou dez — passando as outras três em silêncio, que é a forma de falhar que se quer evitar.
+
+Junto com o endereço, recusa-se CR e LF. Um valor com uma mudança de linha injeta um cabeçalho
+novo no `From:` e parte a linha do comando a meio; nos dois casos, o que chega ao servidor deixa de
+ser o que o código escreveu.
+
+### 3. A regra vive num só sítio
+
+Passou para `core/email-address.ts`, importado pelos **dois** consumidores: `services/smtp.ts`, no
+momento do envio, e `core/config.ts`, no arranque. Duas cópias da mesma regra divergem à primeira
+alteração, e `core/config.ts` não pode importar `services/smtp.ts` sem inverter as camadas. O
+módulo não importa nada, o que também evita um ciclo com o `config.ts` — que carrega o `dotenv` e é
+avaliado cedo.
+
+Cada função recebe o **nome da variável** de onde o valor veio, em vez de o fixar. A mensagem de
+erro tem de dizer ao operador qual das variáveis corrigir, e só quem lê o ambiente sabe qual é.
+
+### 4. Validado no arranque, mesmo com a entrega desligada
+
+`export const config = build()` corre no import, por isso um `throw` no `build()` mata o processo
+antes de a API escutar. O `server.ts` importa `core/config.js` antes de qualquer `createServer`, e é
+essa ordem que torna a validação fatal em vez de decorativa.
+
+São validados os três valores que o cliente SMTP interpola em linhas do protocolo: `SMTP_FROM`
+(endereço extraível para o envelope), `HOSTNAME` (sem CR/LF — vai cru na linha do `EHLO`) e
+`SMTP_USER` (endereço nu, sem nome de apresentação — vai em base64 no `AUTH`, logo não é injetável,
+mas um nome de apresentação ali é configuração errada, não uma forma alternativa de escrever a
+mesma coisa).
+
+**O `SMTP_FROM` é validado mesmo com `SMTP_HOST` vazio.** Foi uma escolha, com um custo conhecido:
+uma instalação sem entrega de email passa a poder ser travada por uma variável que não usa. A
+alternativa — validar só quando a entrega está ligada — foi considerada e rejeitada por coerência
+com o resto do ficheiro, que falha no arranque e não em produção: o valor é do operador, e um valor
+que ele escreveu e que não serve é um erro de configuração, não um detalhe.
+
+A prova não ficou pelo módulo. Correndo o servidor a sério sobre o build compilado, com
+`SMTP_FROM=Zemlo <>` o processo sai com código 1 sem chegar a escutar; com a forma que a produção
+usa, arranca e serve. Um teste que importa `config.ts` e observa a rejeição prova que o **módulo**
+lança — não que o **processo** se recusa a arrancar, que é a afirmação que interessa.
+
+### 5. A asserção de teste passou a ser sobre a linha inteira
+
+`toContain` deu lugar a `toBe` sobre a linha completa, nos dois lados — o envelope e o cabeçalho.
+São direções diferentes e passaram a ter guardas independentes: mutar o `MAIL FROM` mata só o teste
+do envelope, mutar o `From:` mata só o teste do cabeçalho, e o teste do cabeçalho **não** cai com a
+mutação do envelope.
+
+Uma das mutações — amarrar a validação ao `SMTP_HOST` — revelou uma lacuna real: todos os testes de
+recusa corriam com o `SMTP_HOST` vazio, portanto **nenhum exercia o caminho com a entrega ligada**,
+que é o cenário que interessa em produção. Foi acrescentado um caso de recusa e um de aceitação com
+a entrega ligada; a partir daí o teste do caminho ligado sobrevive à mutação condicional e morre à
+mutação que remove a validação por completo. Uma mutação que mata vários testes não é
+necessariamente má; o que não pode acontecer é haver uma mutação sobrevivente.
+
+### 6. Onde estão os casos escritos
+
+`test/email-address.test.ts` cobre as regras puras — extração, o último `<>`, e cada forma de
+recusa. `test/config.test.ts` cobre a propriedade de operação: importa o módulo real com o ambiente
+preparado e observa a rejeição, incluindo o caminho com a entrega ligada e a forma exata que a
+produção usa. `test/smtp.test.ts` guarda a linha que sai no fio.
+
+O harness de cenários de configuração, `apps/api/scripts/verify-config.ts`, continua a não cobrir
+SMTP. A propriedade ficou provada na suíte, que corre sempre, em vez de num script que é preciso
+lembrar de correr à mão.
