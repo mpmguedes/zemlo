@@ -222,8 +222,60 @@ describe('diálogo SMTP', () => {
     const de = s.recebido.find((l) => l.toUpperCase().startsWith('MAIL FROM'));
     const para = s.recebido.find((l) => l.toUpperCase().startsWith('RCPT TO'));
 
-    expect(de).toContain('ola@appzemlo.com');
-    expect(para).toContain('pessoa@zemlo.test');
+    /*
+     * A asserção é sobre a **linha inteira**, não uma substring. `envio` usa um remetente com
+     * nome de apresentação (`Zemlo <ola@appzemlo.com>`), e a versão anterior deste teste
+     * afirmava `toContain('ola@appzemlo.com')` — que passa tanto na linha correta como na
+     * malformada `MAIL FROM:<Zemlo <ola@appzemlo.com>>`. Foi por essa porta que o Gmail veio a
+     * recusar a produção com `555 5.5.2` sem nenhum teste dar sinal.
+     */
+    expect(de).toBe('MAIL FROM:<ola@appzemlo.com>');
+    expect(para).toBe('RCPT TO:<pessoa@zemlo.test>');
+  });
+
+  it('mantém o nome de apresentação no cabeçalho From', async () => {
+    const s = await servidor();
+    await sendSmtpMessage(envio(s));
+
+    /*
+     * O par que interessa: o envelope leva **só** o endereço, e o cabeçalho conserva o valor
+     * configurado por inteiro. Um `envelopeAddress` que "corrigisse" o valor para todo o lado
+     * — ou que o aplicasse também ao cabeçalho — passaria no teste do envelope e falharia aqui.
+     */
+    expect(s.recebido.find((l) => l.startsWith('From:'))).toBe('From: Zemlo <ola@appzemlo.com>');
+  });
+
+  it('aceita um remetente sem nome de apresentação', async () => {
+    const s = await servidor();
+    await sendSmtpMessage(envio(s, { from: 'ola@appzemlo.com' }));
+
+    /*
+     * É o outro lado do `envelopeAddress`: sem esta cobertura, um helper que devolvesse sempre
+     * a string vazia — ou que partisse o endereço a meio — continuaria verde no caso anterior,
+     * onde há `<…>` de onde extrair.
+     */
+    expect(s.recebido.find((l) => l.toUpperCase().startsWith('MAIL FROM'))).toBe(
+      'MAIL FROM:<ola@appzemlo.com>',
+    );
+    expect(s.recebido.find((l) => l.startsWith('From:'))).toBe('From: ola@appzemlo.com');
+  });
+
+  it('recusa um remetente de que não saia um endereço utilizável', async () => {
+    const s = await servidor();
+
+    /*
+     * `Zemlo <>` não tem endereço nenhum. O fallback devolveria o valor inteiro e produziria
+     * `MAIL FROM:<Zemlo <>>` — o mesmo envelope malformado que a correção existe para
+     * eliminar. Falhar alto é o ponto: uma configuração inválida tem de aparecer, não de se
+     * disfarçar de envio que "saiu".
+     */
+    const resultado = await sendSmtpMessage(envio(s, { from: 'Zemlo <>' }));
+
+    expect(resultado.ok).toBe(false);
+    expect(resultado.ok ? '' : resultado.reason).toContain('SMTP_FROM');
+
+    // O diálogo de correio nem chegou a começar.
+    expect(s.recebido.some((l) => l.toUpperCase().startsWith('MAIL FROM'))).toBe(false);
   });
 
   it('lê uma resposta de várias linhas até à última', async () => {
