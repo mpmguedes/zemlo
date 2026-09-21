@@ -11,6 +11,7 @@ import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config as loadDotEnv } from 'dotenv';
+import { assertBareAddress, assertSingleLine, envelopeAddress } from './email-address.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const apiRoot = resolve(here, '..', '..');
@@ -147,6 +148,34 @@ function readEncryptionKey(): Buffer | null {
   return buffer;
 }
 
+/**
+ * Valida, no arranque, os valores que o cliente SMTP interpola em linhas do protocolo.
+ *
+ * A regra de endereçamento vem de `core/email-address.js` — o **mesmo** módulo que o cliente
+ * usa ao enviar, não uma cópia — e é aplicada aqui para que uma gralha falhe antes de a API
+ * escutar. Sem esta verificação, um `SMTP_FROM` mal formado só se manifestava na primeira
+ * entrega: o servidor respondia `555 5.5.2 Syntax error` e o pedido HTTP devolvia `200` na
+ * mesma, porque a falha de entrega não propaga para a resposta (§30).
+ */
+function validateMailConfig(smtpFrom: string, smtpUser: string | null): void {
+  try {
+    // O valor configurado fica intacto: o nome de apresentação é legítimo no cabeçalho
+    // `From:`, e é isso que o destinatário vê. O que se exige é que dele saia um endereço.
+    envelopeAddress(smtpFrom, 'SMTP_FROM');
+
+    // Vai cru para o `EHLO`. Uma mudança de linha partiria a linha do comando a meio, e a
+    // segunda metade seria lida como um comando novo.
+    assertSingleLine(readString('HOSTNAME', 'localhost'), 'HOSTNAME');
+
+    // Sem cabeçalho onde um nome de apresentação caiba: ou é um endereço, ou está errado.
+    if (smtpUser !== null) assertBareAddress(smtpUser, 'SMTP_USER');
+  } catch (error) {
+    // A mensagem da regra já diz qual é a variável e o que está mal; só muda o tipo, para que
+    // uma falha de configuração continue a ser um `ConfigError` como todas as outras.
+    throw new ConfigError(error instanceof Error ? error.message : String(error));
+  }
+}
+
 const databaseProvider: 'sqlite' | 'postgresql' = readString('DATABASE_PROVIDER', 'sqlite') as
   | 'sqlite'
   | 'postgresql';
@@ -235,7 +264,11 @@ function build(): AppConfig {
   const googleClientId = readOptionalString('GOOGLE_CLIENT_ID');
   const googleClientSecret = readOptionalString('GOOGLE_CLIENT_SECRET');
   const smtpHost = readOptionalString('SMTP_HOST');
+  const smtpUser = readOptionalString('SMTP_USER');
+  const smtpFrom = readString('SMTP_FROM', 'Zemlo <ola@appzemlo.com>');
   const mqttUrl = readOptionalString('HA_MQTT_URL');
+
+  validateMailConfig(smtpFrom, smtpUser);
 
   return {
     nodeEnv,
@@ -280,9 +313,9 @@ function build(): AppConfig {
       enabled: smtpHost !== null,
       host: smtpHost,
       port: readInt('SMTP_PORT', 587, 1, 65_535),
-      user: readOptionalString('SMTP_USER'),
+      user: smtpUser,
       password: readOptionalString('SMTP_PASSWORD'),
-      from: readString('SMTP_FROM', 'Zemlo <ola@appzemlo.com>'),
+      from: smtpFrom,
     },
     homeAssistant: {
       enabled: mqttUrl !== null,

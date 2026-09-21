@@ -33,6 +33,7 @@
 
 import { connect as netConnect, type Socket } from 'node:net';
 import { connect as tlsConnect, type TLSSocket } from 'node:tls';
+import { envelopeAddress } from '../core/email-address.js';
 
 /** Resposta do servidor: código numérico e linha de texto associada. */
 interface SmtpReply {
@@ -327,8 +328,17 @@ export async function sendSmtpMessage(options: SmtpSendOptions): Promise<SmtpRes
      * dentro de `< >` dá `<Zemlo <ola@appzemlo.com>>` — parênteses angulares aninhados, que o
      * Gmail recusa com `555 5.5.2 Syntax error`. O nome de apresentação vai no cabeçalho
      * `From:`, abaixo, onde é legítimo.
+     *
+     * A regra vem de `core/email-address.js`, que é também quem a aplica no arranque: a
+     * configuração é validada antes de a API escutar, com o mesmo código que a usa aqui.
      */
-    await command(reader, socket, `MAIL FROM:<${envelopeAddress(options.from)}>`, [250], 'MAIL FROM');
+    await command(
+      reader,
+      socket,
+      `MAIL FROM:<${envelopeAddress(options.from, 'SMTP_FROM')}>`,
+      [250],
+      'MAIL FROM',
+    );
     await command(reader, socket, `RCPT TO:<${options.to}>`, [250, 251], 'RCPT TO');
 
     await command(reader, socket, 'DATA', [354], 'DATA');
@@ -377,34 +387,4 @@ function hostname(): string {
 function messageId(): string {
   const random = Math.random().toString(36).slice(2, 12);
   return `${Date.now().toString(36)}.${random}@zemlo`;
-}
-
-/**
- * Endereço para o envelope, a partir de um remetente que pode trazer nome de apresentação.
- *
- * `MAIL FROM` leva um **caminho**, não um endereço de correio completo (RFC 5321 §4.1.1.2).
- * `Zemlo <ola@appzemlo.com>` é válido no cabeçalho `From:` e inválido no envelope: interpolar
- * o valor inteiro dentro de `< >` produz `<Zemlo <ola@appzemlo.com>>`, que o Gmail recusa com
- * `555 5.5.2 Syntax error`.
- *
- * Devolve o interior do **último** `<…>` — o último, e não o primeiro, porque é o endereço que
- * fecha a cadeia — e o próprio valor aparado quando não há parênteses nenhuns. O `[^<>]+`
- * impede que um `<` solto no nome de apresentação seja aceite como se fosse o endereço.
- *
- * Não é um parser de RFC 5322, por isso **recusa em vez de adivinhar**: um valor de que não saia
- * um endereço plausível (`Zemlo <>`, `<>`, ou texto a seguir ao `>`) lança. Devolver o valor
- * inteiro seria repetir em silêncio o mesmo envelope malformado que esta função existe para
- * eliminar — e o modo de falha do defeito original era precisamente esse.
- */
-function envelopeAddress(from: string): string {
-  const match = from.match(/<([^<>]+)>\s*$/);
-  const address = (match?.[1] ?? from).trim();
-
-  if (address === '' || /[<>\s]/.test(address)) {
-    throw new SmtpError(
-      `SMTP_FROM não tem um endereço utilizável para o envelope: ${JSON.stringify(from)}`,
-    );
-  }
-
-  return address;
 }
