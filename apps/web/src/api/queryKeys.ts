@@ -242,6 +242,32 @@ export interface ChangePasswordResponse {
 }
 
 /**
+ * Resposta de `POST /auth/verify-email`.
+ *
+ * Só traz o endereço confirmado. Não traz o `userId` nem o token — nada que sirva para
+ * outra coisa além de o ecrã poder dizer *qual* endereço ficou confirmado, que é a única
+ * pergunta que quem acabou de clicar no link tem.
+ */
+export interface EmailVerificationConfirmResponse {
+  message: string;
+  email: string;
+}
+
+/**
+ * Resposta de `POST /me/email-verification` (reenvio).
+ *
+ * Os dois booleanos respondem a perguntas diferentes e ambos são precisos:
+ * `alreadyVerified` distingue "não era preciso" de "foi enviado", e `delivered` distingue
+ * "foi enviado" de "tentámos e o transporte falhou". Colapsá-los num só obrigaria o ecrã a
+ * escolher entre mentir a quem não recebeu o email ou alarmar quem já estava confirmado.
+ */
+export interface EmailVerificationResendResponse {
+  message: string;
+  alreadyVerified: boolean;
+  delivered: boolean;
+}
+
+/**
  * Reexporta os tipos de resposta do domínio partilhado que os ecrãs consomem.
  *
  * Os ecrãs importam sempre de `@/api`, e não diretamente de `@zemlo/shared`, por uma

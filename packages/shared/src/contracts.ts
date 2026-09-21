@@ -196,6 +196,22 @@ export const zPasswordResetConfirmRequest = z.object({
   newPassword: zPassword,
 });
 
+/**
+ * Conclusão da verificação de email.
+ *
+ * O token viaja no link enviado por email e é validado como **opaco**: a API compara o
+ * hash e nunca interpreta o conteúdo, pela mesma razão que no reset de password — não há
+ * formato a impor além de um comprimento plausível. Recusar cedo valores absurdos evita
+ * trabalho de hash desnecessário e não revela nada sobre tokens existentes.
+ *
+ * O corpo não traz o email: o token é o único identificador, e aceitar um email ao lado
+ * dele abriria a porta a verificar o endereço errado. Quem tem o token tem o email que o
+ * recebeu.
+ */
+export const zEmailVerificationConfirmRequest = z.object({
+  token: z.string().min(16).max(512),
+});
+
 export const zTwoFactorSetupRequest = z.object({
   password: z.string().min(1).max(200),
 });
@@ -701,6 +717,7 @@ export type LoginRequest = z.infer<typeof zLoginRequest>;
 export type ChangePasswordRequest = z.infer<typeof zChangePasswordRequest>;
 export type PasswordResetRequestRequest = z.infer<typeof zPasswordResetRequestRequest>;
 export type PasswordResetConfirmRequest = z.infer<typeof zPasswordResetConfirmRequest>;
+export type EmailVerificationConfirmRequest = z.infer<typeof zEmailVerificationConfirmRequest>;
 export type TwoFactorSetupRequest = z.infer<typeof zTwoFactorSetupRequest>;
 export type TwoFactorConfirmRequest = z.infer<typeof zTwoFactorConfirmRequest>;
 export type TwoFactorDisableRequest = z.infer<typeof zTwoFactorDisableRequest>;

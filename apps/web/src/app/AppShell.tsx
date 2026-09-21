@@ -5,6 +5,7 @@ import { QUICK_ACTIONS, formatNumber } from '@zemlo/shared';
 import { useUnreadCount } from '../api/hooks';
 import { useSession } from './SessionContext';
 import { Logo } from '../components/Logo';
+import { EmailVerificationBanner } from '../components/EmailVerificationBanner';
 import { VehicleSwitcher } from '../components/VehicleSwitcher';
 import { Button } from '../ui/primitives';
 import { useQuickLog, QuickLogProvider } from '../components/QuickLogContext';
@@ -142,6 +143,12 @@ function AppShellLayout({ unreadCount }: { unreadCount: number }) {
       </header>
 
       <main className="z-main" id="conteudo">
+        {/*
+          O aviso de email por confirmar vive aqui, e não em cada ecrã: é uma condição da
+          conta, não de uma página. Dentro do `main` fica acima de tudo o que o ecrã
+          mostrar, sem competir com a barra superior — e sem se repetir em nenhum sítio.
+        */}
+        <EmailVerificationBanner />
         <Outlet />
       </main>
 

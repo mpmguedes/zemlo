@@ -7,6 +7,7 @@ import { EmptyState, LoadingBlock } from './ui/primitives';import { LoginPage } 
 import { SignUpPage } from './pages/auth/SignUpPage';
 import { ForgotPasswordPage } from './pages/auth/ForgotPasswordPage';
 import { ResetPasswordPage } from './pages/auth/ResetPasswordPage';
+import { VerifyEmailPage } from './pages/auth/VerifyEmailPage';
 import { OnboardingPage } from './pages/auth/OnboardingPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { VehiclesPage } from './pages/vehicles/VehiclesPage';
@@ -61,6 +62,19 @@ export function App() {
         path="/repor-password"
         element={<RedirectIfAuthenticated><ResetPasswordPage /></RedirectIfAuthenticated>}
       />
+      {/* Confirmação de email. Ao contrário das duas anteriores, **não** tem
+          `RedirectIfAuthenticated`: quem abre este link pode perfeitamente ter sessão
+          iniciada — criou a conta no computador e abriu o email no telemóvel. Reencaminhar
+          essa pessoa para o painel gastaria o link sem confirmar nada, e o aviso de "email
+          por confirmar" continuaria a aparecer sem explicação. */}
+      <Route path="/verificar-email" element={<VerifyEmailPage />} />
+      {/* Alias `/auth/verify-email`, pedido literalmente no briefing. A convenção das páginas
+          de autenticação deste projeto é a raiz com nome português (`/recuperar-password`,
+          `/repor-password`), e é essa que o link do email usa — `/verificar-email` continua a
+          ser o caminho canónico. O alias existe para que a forma do briefing também funcione:
+          dois caminhos para a mesma página é mais barato do que um link que não abre, e não
+          colide com nenhuma rota existente. */}
+      <Route path="/auth/verify-email" element={<VerifyEmailPage />} />
 
       {/* Onboarding: exige sessão, mas não a estrutura completa (ainda não há veículos). */}
       <Route

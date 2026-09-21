@@ -58,6 +58,8 @@ Cabeçalhos úteis: `X-Request-Id` (correlação), `X-Zemlo-Api-Version`, `Retry
 | POST | `/auth/logout-all` | terminar todas as sessões |
 | POST | `/auth/password-reset` | pedir link de recuperação. Resposta **idêntica** exista ou não a conta (202) |
 | POST | `/auth/password-reset/confirm` | concluir a recuperação com o token do email. Revoga **todas** as sessões |
+| POST | `/auth/verify-email` | confirmar o email com o token do link. Resposta **idêntica** para token inválido, usado ou expirado (401) |
+| POST | `/me/email-verification` | reenviar o email de confirmação. Autenticado. Devolve `alreadyVerified` e `delivered` |
 | GET | `/me` | perfil + contadores + passos de onboarding em falta |
 | PATCH | `/me` | nome, fuso horário, locale, unidades |
 | DELETE | `/me` | eliminar conta. Requer `confirm: "ELIMINAR"` e password (e TOTP, se ativo) |

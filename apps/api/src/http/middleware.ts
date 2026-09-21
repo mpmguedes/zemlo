@@ -180,6 +180,41 @@ export function authRateLimit() {
   });
 }
 
+/**
+ * Limitação do reenvio de verificação de email.
+ *
+ * O limite é por **utilizador** e não por IP, ao contrário dos outros dois: a rota exige
+ * sessão, portanto já se sabe quem pede, e o risco aqui não é um ataque contra uma conta —
+ * é a mesma pessoa (ou um cliente com um ciclo) a encher uma caixa de correio alheia com
+ * mensagens que ela não pediu. Um limite por IP deixaria esse caso passar exatamente no
+ * cenário em que ele é mais provável: alguém autenticado, sempre no mesmo sítio.
+ *
+ * É mais apertado do que o `authRateLimit` porque o custo de cada pedido não é nosso, é do
+ * servidor SMTP — e cada mensagem enviada tem de sair para um destinatário real.
+ */
+export function emailVerificationRateLimit() {
+  return rateLimit({
+    windowMs: config.rateLimit.windowMinutes * 60_000,
+    limit: config.rateLimit.emailVerificationMaxRequests,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    skip: () => config.isTest,
+    keyGenerator: (request) => request.user?.id ?? request.meta?.ipAddress ?? 'desconhecido',
+    handler: (_request, response) => {
+      response
+        .status(429)
+        .setHeader('Retry-After', String(config.rateLimit.windowMinutes * 60))
+        .json({
+          error: {
+            code: 'rate_limited',
+            message:
+              'Já pediste vários emails de confirmação há pouco. Espera alguns minutos antes de pedir outro.',
+          },
+        } satisfies ApiErrorBody);
+    },
+  });
+}
+
 /* -------------------------------------------------------------------------- */
 /* Corpo do pedido                                                             */
 /* -------------------------------------------------------------------------- */

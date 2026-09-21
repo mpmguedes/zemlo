@@ -64,6 +64,26 @@ let appPrisma: PrismaClient;
 /** Mensagens entregues ao sender de teste, por ordem. Ver `caughtEmails`. */
 let caughtEmails: { to: string; subject: string; text: string }[] = [];
 
+/**
+ * Só as mensagens de recuperação, na ordem em que foram enviadas.
+ *
+ * ## Porque é que isto existe
+ *
+ * A caixa deixou de conter apenas emails de recuperação: o **registo** passou a enviar um
+ * email de confirmação de endereço. As asserções desta suite são sobre o reset — o link
+ * que chega, o destinatário, a invalidação do anterior — e indexar a caixa por posição
+ * (`caughtEmails[0]`) fazia com que o resultado passasse a depender de *quantos* emails o
+ * produto decidisse enviar antes. Uma asserção sobre a recuperação de password não deve
+ * poder ser derrubada por uma funcionalidade que não é dela.
+ *
+ * Filtrar pelo **conteúdo** e não pelo assunto: o que se procura é o link, e é isso que
+ * torna a mensagem uma mensagem de recuperação. O assunto é texto de apresentação e pode
+ * mudar sem que o fluxo mude.
+ */
+function resetEmails(): { to: string; subject: string; text: string }[] {
+  return caughtEmails.filter((email) => email.text.includes('/repor-password?token='));
+}
+
 /** Password usada no `signup` e nos logins de controlo. */
 const INITIAL_PASSWORD = 'Password123!';
 /** Password de substituição, para provar que a troca teve efeito. */
@@ -258,7 +278,7 @@ describe('anti-enumeração', () => {
 
     expect(response.status).toBe(202);
     expect(
-      await appPrisma.oneTimeToken.count(),
+      await appPrisma.oneTimeToken.count({ where: { purpose: 'password-reset' } }),
       'Um email sem conta não pode deixar um token na base de dados — seria um link para lugar nenhum.',
     ).toBe(0);
     expect(caughtEmails).toHaveLength(0);
@@ -275,7 +295,7 @@ describe('anti-enumeração', () => {
 
     expect(response.status).toBe(202);
     expect(
-      await appPrisma.oneTimeToken.count(),
+      await appPrisma.oneTimeToken.count({ where: { purpose: 'password-reset' } }),
       'Uma conta eliminada não deve receber um link que a ressuscitaria.',
     ).toBe(0);
   });
@@ -301,8 +321,8 @@ describe('emissão do pedido', () => {
     const response = await requestReset('destino@zemlo.test');
     expect(response.status).toBe(202);
 
-    expect(caughtEmails).toHaveLength(1);
-    const email = caughtEmails[0];
+    expect(resetEmails()).toHaveLength(1);
+    const email = resetEmails()[0];
 
     // O destinatário é o dono da conta, e não um endereço de configuração: um erro aqui
     // enviaria o link de recuperação de uma pessoa para outra.
@@ -327,11 +347,17 @@ describe('emissão do pedido', () => {
     await signup('hash@zemlo.test');
     await requestReset('hash@zemlo.test');
 
-    const token = tokenFromEmail(caughtEmails[0]);
+    const token = tokenFromEmail(resetEmails()[0]);
     const { hashToken } = await import('../src/core/crypto.js');
 
     const registo = await appPrisma.oneTimeToken.findFirst({
-      where: { userId: (await appPrisma.user.findUniqueOrThrow({ where: { email: 'hash@zemlo.test' } })).id },
+      where: {
+        userId: (await appPrisma.user.findUniqueOrThrow({ where: { email: 'hash@zemlo.test' } })).id,
+        // Sem o propósito, o `findFirst` devolveria o token de verificação de email — que
+        // o registo emite antes de qualquer pedido de recuperação — e o teste compararia o
+        // hash errado, passando ou falhando por acidente conforme a ordem das linhas.
+        purpose: 'password-reset',
+      },
       select: { tokenHash: true },
     });
 
@@ -344,10 +370,10 @@ describe('emissão do pedido', () => {
     await signup('dois-pedidos@zemlo.test');
 
     await requestReset('dois-pedidos@zemlo.test');
-    const primeiro = tokenFromEmail(caughtEmails[0]);
+    const primeiro = tokenFromEmail(resetEmails()[0]);
 
     await requestReset('dois-pedidos@zemlo.test');
-    const segundo = tokenFromEmail(caughtEmails[1]);
+    const segundo = tokenFromEmail(resetEmails()[1]);
 
     expect(segundo).not.toBe(primeiro);
 
@@ -424,7 +450,7 @@ describe('recusa de tokens', () => {
   it('aceita o token uma só vez, mesmo em pedidos simultâneos', async () => {
     await signup('corrida@zemlo.test');
     await requestReset('corrida@zemlo.test');
-    const token = tokenFromEmail(caughtEmails[0]);
+    const token = tokenFromEmail(resetEmails()[0]);
 
     /*
      * É esta a corrida que torna um token de uso único reutilizável: entre ler `usedAt` e
@@ -453,7 +479,7 @@ describe('efeitos da troca de password', () => {
 
     expect((await login('troca@zemlo.test', INITIAL_PASSWORD)).status).toBe(200);
 
-    const confirm = await confirmReset(tokenFromEmail(caughtEmails[0]));
+    const confirm = await confirmReset(tokenFromEmail(resetEmails()[0]));
     expect(confirm.status).toBe(200);
 
     expect((await login('troca@zemlo.test', NEW_PASSWORD)).status).toBe(200);
@@ -471,7 +497,7 @@ describe('efeitos da troca de password', () => {
     expect(await appPrisma.session.count({ where: { userId: user.id, revokedAt: null } })).toBe(2);
 
     await requestReset('sessoes@zemlo.test');
-    const confirm = await confirmReset(tokenFromEmail(caughtEmails[0]));
+    const confirm = await confirmReset(tokenFromEmail(resetEmails()[0]));
 
     expect(confirm.status).toBe(200);
     expect(confirm.body.revokedSessions).toBe(2);
@@ -488,7 +514,7 @@ describe('efeitos da troca de password', () => {
   it('recusa uma password que não cumpre as regras, sem gastar o token', async () => {
     await signup('regras@zemlo.test');
     await requestReset('regras@zemlo.test');
-    const token = tokenFromEmail(caughtEmails[0]);
+    const token = tokenFromEmail(resetEmails()[0]);
 
     const curta = await confirmReset(token, 'curta');
     expect(curta.status).toBe(422);
@@ -504,7 +530,7 @@ describe('efeitos da troca de password', () => {
   it('rejeita a password igual à anterior apenas se a API o exigir, e não muda nada por engano', async () => {
     await signup('repetida@zemlo.test');
     await requestReset('repetida@zemlo.test');
-    const token = tokenFromEmail(caughtEmails[0]);
+    const token = tokenFromEmail(resetEmails()[0]);
 
     // Reutilizar a mesma password é aceite pela API (não há regra de histórico no MVP).
     // O que se verifica é que, aceitando, faz o que diz: a sessão é revogada na mesma.
@@ -522,7 +548,7 @@ describe('auditoria', () => {
   it('regista o pedido e a conclusão, sem o token', async () => {
     const { user } = await signup('auditoria@zemlo.test');
     await requestReset('auditoria@zemlo.test');
-    const token = tokenFromEmail(caughtEmails[0]);
+    const token = tokenFromEmail(resetEmails()[0]);
     await confirmReset(token);
 
     const acoes = await appPrisma.auditLog.findMany({

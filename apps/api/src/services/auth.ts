@@ -23,6 +23,7 @@
 import type { AuthSessionResponse, CivilDate, TwoFactorSetupResponse, UserProfile } from '@zemlo/shared';
 import {
   DEFAULT_TIME_ZONE,
+  EMAIL_VERIFICATION_TTL_MINUTES as EMAIL_VERIFICATION_TTL_MINUTES_SHARED,
   PASSWORD_RESET_TTL_MINUTES as PASSWORD_RESET_TTL_MINUTES_SHARED,
   isValidTimeZone,
   todayIn,
@@ -55,7 +56,7 @@ import {
 } from '../core/errors.js';
 import { jsonOrNull, readJsonArray, writeJson } from '../core/json.js';
 import { logger } from '../core/logger.js';
-import { audit } from './audit.js';
+import { audit, type AuditAction } from './audit.js';
 import { sendEmail } from './email.js';
 import { mapUserProfile } from '../domain/payload.js';
 import { signAccessToken, verifyAccessToken } from './tokens.js';
@@ -139,6 +140,19 @@ export async function signUp(
       ipAddress: meta.ipAddress ?? null,
       userAgent: meta.userAgent ?? null,
     });
+
+    /*
+     * O pedido de verificação de email acontece **depois** de a conta existir, e nunca
+     * pode desfazer o registo.
+     *
+     * O `sendEmail` já absorve uma falha de SMTP (devolve `false` em vez de lançar), mas a
+     * emissão do token escreve na base de dados, e um erro aí propagar-se-ia para o
+     * `catch` abaixo — o utilizador veria "não foi possível criar conta" com a conta
+     * criada e a sessão por emitir. Isso é pior do que ficar sem email de verificação: a
+     * conta existe, o link perde-se, e o reenvio resolve-o. A verificação não bloqueia o
+     * login nesta fase, precisamente para que uma falha aqui não tenha consequências.
+     */
+    await tryIssueEmailVerification(user, meta, 'user.email_verification_requested');
 
     const session = await createSession(user.id, meta, 'Primeiro dispositivo');
     return buildSessionResponse(user, session);
@@ -661,6 +675,313 @@ export async function resetPassword(
   });
 
   return { revokedSessions: revoked };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Verificação de email                                                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Propósito gravado em `OneTimeToken.purpose` para os tokens de verificação.
+ *
+ * É deliberadamente um valor **distinto** do de reposição. A tabela é a mesma — e deve
+ * ser: a semântica é idêntica (token de uso único, com hash, com validade) e criar uma
+ * segunda tabela para os mesmos campos duplicaria as regras sem acrescentar nada. O que
+ * separa os dois fluxos é o propósito, e é por isso que ele é verificado nos dois
+ * sentidos: um token de reset não verifica um email, e um token de verificação não troca
+ * uma password.
+ */
+const EMAIL_VERIFICATION_PURPOSE = 'email-verification';
+
+/**
+ * Duração do link de verificação, em minutos.
+ *
+ * O valor vive em `@zemlo/shared` pelo mesmo motivo que o do reset: o email afirma-o ao
+ * utilizador e o ecrã de erro tem de poder repeti-lo sem uma segunda cópia divergir.
+ */
+const EMAIL_VERIFICATION_TTL_MINUTES = EMAIL_VERIFICATION_TTL_MINUTES_SHARED;
+
+/**
+ * Emite um token de verificação, invalida os anteriores e envia o email.
+ *
+ * ## Porque é que isto é um helper, e não duas cópias
+ *
+ * O registo e o reenvio fazem exatamente a mesma coisa a partir do momento em que se sabe
+ * qual é a conta: invalidar os pedidos anteriores, emitir um token, enviar o email. A
+ * única diferença está no evento de auditoria, que é um parâmetro. Duplicar o corpo seria
+ * a forma mais rápida de os dois fluxos divergirem — e a divergência apareceria como um
+ * token que o reenvio não invalidou, ou como um email que só um dos caminhos envia.
+ *
+ * A validação é que **não** é partilhada com o reset, e de propósito: as pré-condições
+ * são diferentes (aqui não há password a trocar, há uma conta a marcar) e juntá-las numa
+ * função com um `purpose` como argumento produziria um `if` por propósito dentro dela.
+ *
+ * ## Devolve o resultado da entrega, e não o token
+ *
+ * O token em claro existe apenas dentro desta função, o tempo suficiente para compor o
+ * url. Nenhum chamador o vê, e por isso nenhum chamador o pode registar ou devolver numa
+ * resposta HTTP por descuido.
+ */
+async function issueEmailVerification(
+  user: { id: string; email: string },
+  meta: RequestMetadata,
+  action: AuditAction,
+): Promise<{ delivered: boolean }> {
+  const token = generateToken(32);
+
+  await prisma.$transaction([
+    // Um pedido novo invalida os anteriores: só o link mais recente funciona. Sem isto,
+    // cada reenvio deixaria mais um link vivo a circular na caixa de correio.
+    prisma.oneTimeToken.updateMany({
+      where: { userId: user.id, purpose: EMAIL_VERIFICATION_PURPOSE, usedAt: null },
+      data: { usedAt: new Date() },
+    }),
+    prisma.oneTimeToken.create({
+      data: {
+        userId: user.id,
+        purpose: EMAIL_VERIFICATION_PURPOSE,
+        // Só o hash fica na base de dados. Uma cópia da tabela não permite verificar nada.
+        tokenHash: hashToken(token),
+        expiresAt: new Date(Date.now() + EMAIL_VERIFICATION_TTL_MINUTES * 60_000),
+      },
+    }),
+  ]);
+
+  const verifyUrl = `${config.publicBaseUrl}/verificar-email?token=${encodeURIComponent(token)}`;
+
+  /*
+   * O email é escrito para ser compreensível a quem o recebe sem saber o que é o Zemlo —
+   * e para o caso mais provável de todos: a pessoa **não** pediu nada.
+   *
+   * A ordem das informações segue a pergunta que quem abre a caixa de correio faz:
+   * *o que é isto* (a assinatura do produto), *o que tenho de fazer* (o link, com a
+   * validade ao lado), e *e se eu não fiz nada disto* (a última linha, que é a que
+   * interessa a quem recebeu a mensagem por engano).
+   *
+   * O que não entra: nenhuma password (nunca são enviadas, nem parcialmente), nenhum dado
+   * da conta além do endereço que já é o destinatário, e nada que sugira que a conta está
+   * inacessível — não está. Um email de verificação que listasse veículos ou registos
+   * transformaria uma caixa de correio comprometida numa fuga de dados (§31).
+   *
+   * A validade é apresentada em horas, e não em minutos: "1440 minutos" é o valor do
+   * servidor, não uma frase. A conversão vive em `humanVerificationValidity()`, abaixo, e
+   * deriva da mesma constante que expira o token — escrever "24 horas" à mão no texto é o
+   * que faria a frase sobreviver a uma mudança do prazo.
+   */
+  const delivered = await sendEmail({
+    to: user.email,
+    subject: 'Zemlo — confirma o teu endereço de email',
+    text: [
+      'Zemlo — confirmação de email',
+      '',
+      'A tua conta Zemlo foi criada com este endereço de email. Falta um passo: confirmar',
+      'que ele é teu.',
+      '',
+      `Abre este endereço para confirmar. O link é válido durante ${humanVerificationValidity()}:`,
+      verifyUrl,
+      '',
+      'Enquanto não confirmares, a conta funciona normalmente — só te vamos lembrando de',
+      'vez em quando, no Zemlo, de que falta este passo.',
+      '',
+      'Se não foste tu que criaste esta conta, ignora este email. Nada acontece se não',
+      'abrires o link.',
+      '',
+      'Por segurança, a Zemlo nunca te pede a password por email.',
+    ].join('\n'),
+  });
+
+  await audit(action, {
+    userId: user.id,
+    entityType: 'user',
+    entityId: user.id,
+    /*
+     * O estado da entrega é registado porque é a única informação que distingue "o email
+     * foi enviado" de "o SMTP recusou". O token, esse, não entra aqui nem em claro nem
+     * como hash: a auditoria é lida por humanos e um hash de token não lhes diz nada.
+     */
+    metadata: { entregue: delivered },
+    ipAddress: meta.ipAddress ?? null,
+    userAgent: meta.userAgent ?? null,
+  });
+
+  return { delivered };
+}
+
+/**
+ * A validade escrita como o email a afirma.
+ *
+ * A constante é em minutos porque é isso que o servidor usa para expirar. O email fala em
+ * horas porque é isso que uma pessoa lê — "1440 minutos" é tecnicamente correto e não diz
+ * nada a ninguém. As duas unidades derivam do mesmo valor: converter aqui, e não escrever
+ * "24 horas" à mão no texto, é o que impede a frase de sobreviver a uma mudança da
+ * constante.
+ */
+function humanVerificationValidity(): string {
+  const minutes = EMAIL_VERIFICATION_TTL_MINUTES;
+  if (minutes % 1440 === 0) {
+    const days = minutes / 1440;
+    return days === 1 ? '24 horas' : `${days} dias`;
+  }
+  if (minutes % 60 === 0) {
+    const hours = minutes / 60;
+    return hours === 1 ? '1 hora' : `${hours} horas`;
+  }
+  return `${minutes} minutos`;
+}
+
+/**
+ * Emite a verificação sem deixar uma falha derrubar quem chamou.
+ *
+ * Usado pelo registo, onde a conta tem de ser criada mesmo que o email não saia. O erro
+ * fica no log do servidor com o `userId`, para que um problema de SMTP ou de base de dados
+ * seja diagnosticável — engolir o erro em silêncio é que não.
+ */
+async function tryIssueEmailVerification(
+  user: { id: string; email: string },
+  meta: RequestMetadata,
+  action: AuditAction,
+): Promise<void> {
+  try {
+    await issueEmailVerification(user, meta, action);
+  } catch (error) {
+    logger.error('Não foi possível emitir o pedido de verificação de email', {
+      userId: user.id,
+      error,
+    });
+  }
+}
+
+/**
+ * Conclui a verificação de email a partir do token recebido por email.
+ *
+ * ## Recusa tudo com a mesma mensagem, e porquê
+ *
+ * Token inexistente, de outro propósito, já usado, expirado, ou de uma conta eliminada
+ * produzem a **mesma** resposta. É o mesmo cuidado que o `resetPassword` tem, e serve dois
+ * fins: não diz a quem tem um link antigo se ele chegou a ser válido, e não diz a quem
+ * sonda se um token existe. A ação que resolve todos os casos é a mesma — pedir um link
+ * novo — e é essa que a mensagem oferece.
+ *
+ * ## A conclusão é atómica, e a condição está no `usedAt`
+ *
+ * A leitura de `usedAt` acima já aconteceu, mas entre a leitura e a escrita cabe outro
+ * pedido. Duas aberturas do mesmo link em simultâneo — o utilizador a clicar enquanto o
+ * cliente de correio pré-carrega o endereço — passariam ambas pela verificação. A escrita
+ * é por isso condicionada (`usedAt: null`) dentro de uma transação: a segunda tentativa
+ * encontra zero linhas afetadas e é recusada, em vez de marcar a conta duas vezes.
+ *
+ * ## Porque é que o link só é consumido por `POST`, e não pelo `GET` da página
+ *
+ * O endereço do email abre uma página da aplicação web; é essa página que chama esta
+ * função. Se o `GET` consumisse o token, os pré-carregamentos automáticos de links que
+ * vários clientes de correio e antivírus fazem queimariam o token antes de a pessoa o
+ * abrir — e o utilizador veria "link inválido" num link que nunca usou. Separar a página
+ * do consumo é o que torna o fluxo robusto a isso.
+ */
+export async function verifyEmail(
+  input: { token: string },
+  meta: RequestMetadata,
+): Promise<{ email: string }> {
+  const tokenHash = hashToken(input.token);
+
+  const record = await prisma.oneTimeToken.findUnique({
+    where: { tokenHash },
+    select: { id: true, userId: true, purpose: true, expiresAt: true, usedAt: true },
+  });
+
+  const invalid = () =>
+    unauthorized('Este link de confirmação já não é válido. Pede um novo.');
+
+  if (!record || record.purpose !== EMAIL_VERIFICATION_PURPOSE) throw invalid();
+  if (record.usedAt !== null) throw invalid();
+  if (record.expiresAt.getTime() <= Date.now()) throw invalid();
+
+  const user = await prisma.user.findUnique({
+    where: { id: record.userId },
+    select: { id: true, email: true, deletedAt: true },
+  });
+  if (!user || user.deletedAt !== null) throw invalid();
+
+  const claimed = await prisma.$transaction(async (tx) => {
+    const marked = await tx.oneTimeToken.updateMany({
+      where: { id: record.id, usedAt: null },
+      data: { usedAt: new Date() },
+    });
+    // Outro pedido chegou primeiro. Nada foi alterado, e a resposta é a de recusa.
+    if (marked.count === 0) return false;
+
+    /*
+     * Os restantes links de verificação da mesma conta deixam de servir.
+     *
+     * Não é redundante com a invalidação do reenvio: um link pode ter sido emitido antes
+     * e continuar dentro da validade de 24 horas. Deixá-lo vivo depois de o endereço estar
+     * confirmado manteria abertas portas que já não levam a lado nenhum.
+     */
+    await tx.oneTimeToken.updateMany({
+      where: { userId: user.id, purpose: EMAIL_VERIFICATION_PURPOSE, usedAt: null },
+      data: { usedAt: new Date() },
+    });
+
+    await tx.user.update({
+      where: { id: user.id },
+      data: { emailVerified: true, emailVerifiedAt: new Date() },
+    });
+
+    return true;
+  });
+
+  if (!claimed) throw invalid();
+
+  await audit('user.email_verified', {
+    userId: user.id,
+    entityType: 'user',
+    entityId: user.id,
+    ipAddress: meta.ipAddress ?? null,
+    userAgent: meta.userAgent ?? null,
+  });
+
+  logger.info('Endereço de email confirmado', { userId: user.id });
+
+  return { email: user.email };
+}
+
+/**
+ * Reenvia o pedido de verificação para uma conta autenticada.
+ *
+ * ## Porque é que exige sessão, quando o pedido inicial não exige
+ *
+ * O pedido inicial nasce de um registo, que é público por definição. O reenvio parte de
+ * alguém que já está dentro da aplicação — e exigir sessão é o que impede que este
+ * endpoint se torne um gerador de emails dirigido: com um email como entrada e sem
+ * autenticação, qualquer pessoa poderia fazer o Zemlo enviar mensagens para endereços
+ * alheios, e o domínio passaria a ser um veículo de spam.
+ *
+ * O limite de pedidos da rota fecha o resto: um utilizador autenticado que insista não
+ * transforma a caixa de correio dele numa torneira aberta.
+ *
+ * ## Conta já verificada não gera token
+ *
+ * Não é um erro, e por isso não é uma exceção: é um estado final legítimo. Devolver 200
+ * com `alreadyVerified` permite ao cliente mostrar a verdade — "já está confirmado" — em
+ * vez de um erro que faria o utilizador pensar que algo falhou. O que não acontece é a
+ * emissão: não há razão para criar um token nem para enviar um email a quem já confirmou.
+ */
+export async function resendEmailVerification(
+  userId: string,
+  meta: RequestMetadata,
+): Promise<{ alreadyVerified: boolean; delivered: boolean }> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, email: true, emailVerified: true, deletedAt: true },
+  });
+  if (!user || user.deletedAt !== null) throw notFound('Conta não encontrada.');
+
+  if (user.emailVerified) {
+    return { alreadyVerified: true, delivered: false };
+  }
+
+  const { delivered } = await issueEmailVerification(user, meta, 'user.email_verification_resent');
+  return { alreadyVerified: false, delivered };
 }
 
 /* -------------------------------------------------------------------------- */

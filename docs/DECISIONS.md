@@ -913,3 +913,108 @@ e 297 no relatório — sem forma de saber qual está certa.
 precedência sobre a deduplicação, reimportação, `nothing-to-do`, avisos de `counts`) e
 `test/import-report.test.ts` (relatório, CSV, a frase de abertura que não pode contradizer os
 números).
+
+---
+
+## A29. A confirmação de email reutiliza `OneTimeToken`, não bloqueia o login, e confirma-se por POST
+
+A verificação de email foi implementada sobre a tabela `OneTimeToken` que já servia a recuperação
+de password — sem tabela nova, sem migração. O `purpose` distingue os dois fluxos e é a única coisa
+que os separa: `'password-reset'` e `'email-verification'`. Essa reutilização é o que torna o
+`purpose` uma guarda de segurança e não apenas uma etiqueta, e é por isso que a troca de tokens
+entre fluxos tem teste próprio (um token de recuperação recusado como confirmação, e vice-versa).
+
+### 1. A conta fica utilizável antes de o email estar confirmado
+
+É a decisão que mais condiciona tudo o resto. `emailVerified` nasce `false` e **não** impede
+signup, login, sessão, nem o uso normal da aplicação. A alternativa — bloquear o login até
+confirmação — transforma uma falha de SMTP numa perda de acesso: se o email não sai, a conta
+existe mas é inútil, e o utilizador não tem forma de se desbloquear sozinho. Com o login aberto, a
+falha de SMTP degrada para um aviso persistente com botão de reenvio, que é o que o utilizador
+consegue resolver.
+
+A consequência é que `emailVerified` é **informação**, não uma porta. O `AuthSessionResponse` e o
+perfil expõem-no para que o cliente saiba o que mostrar; nada no servidor o consulta para decidir
+se autoriza. Se um dia houver funcionalidades que exijam email confirmado, a guarda acrescenta-se
+onde fizer sentido — não retroativamente no login.
+
+**As contas que já existiam não são tocadas.** Como `emailVerified` tem `@default(false)`, depois
+do deploy todas as contas anteriores passam a ver o aviso. Foi uma escolha, não um esquecimento:
+um backfill que as marcasse como confirmadas faria a coluna deixar de significar o que diz —
+passaria a haver linhas `emailVerified = true` para endereços que nunca foram confirmados, e
+qualquer guarda futura construída sobre a coluna aceitá-los-ia em silêncio, precisamente nos casos
+em que a confirmação importa. O aviso é um pedido de um clique, não uma acusação; em troca, a
+coluna continua a poder ser lida literalmente. Se um dia se concluir que o ruído é inaceitável, a
+correção é mudar o texto do aviso para quem se registou antes da funcionalidade existir — não
+mentir na coluna.
+
+### 2. O `tryIssueEmailVerification` no signup, e porque o SMTP que falha não derruba a conta
+
+Emitir o token **escreve na base de dados** (invalidar o anterior, criar o novo), e só depois envia
+o email. São duas operações com modos de falha diferentes, e ambas correm dentro do caminho do
+signup. Envolvê-las num `try/catch` que apenas registra o erro garante que nem uma exceção de BD
+nem uma exceção de SMTP impedem a conta e a sessão de serem criadas.
+
+O `sendEmail` já engolia as falhas de SMTP por desenho; o `tryIssueEmailVerification` estende essa
+tolerância à parte que escreve na BD. As duas defesas são independentes, e foi por isso que a
+mutação que remove só o *rethrow* do `sendEmail` **sobreviveu**: com o `try/catch` de fora no
+sítio, a falha de SMTP continua a não chegar ao signup. Isso é defesa em profundidade a
+funcionar — não um teste fraco — e ficou registado como tal em vez de se remover uma das duas
+camadas para fazer o teste "morder".
+
+### 3. Validade de 24 horas, contra 1 hora na recuperação de password
+
+`EMAIL_VERIFICATION_TTL_MINUTES = 60 * 24`, ao lado de `PASSWORD_RESET_TTL_MINUTES = 60`. Não é
+incoerência: as duas janelas protegem coisas diferentes. Um link de recuperação dá acesso à conta
+inteira — a janela curta limita o dano de um email comprometido. Um link de confirmação apenas
+prova que o endereço é alcançável; o pior caso de o interceptar é o atacante confirmar um email que
+não é dele, o que não lhe dá nada. Em troca, uma janela curta gera exatamente o ruído que se quer
+evitar: pessoas que só abrem o email à noite, ou no dia seguinte, a pedir reenvios. A janela é
+generosa porque a assimetria de risco o permite, não por descuido.
+
+As duas constantes vivem em `packages/shared/src/brand.ts` para que a expiração no servidor, o
+texto do email e o ecrã de erro não possam discordar sobre quanto tempo o link dura.
+
+### 4. Confirma-se por `POST`, e a resposta é a mesma para todos os maus tokens
+
+O link do email aponta para uma página (`/verificar-email?token=…`) que chama
+`POST /auth/verify-email` com o token no corpo. A confirmação **não** é um `GET` que consome o
+token: clientes de email, scanners antivírus e pré-visualizadores seguem links automaticamente, e
+um `GET` que consome tokens queima-os antes de a pessoa clicar. Separa-se a navegação (GET, sem
+efeito) do efeito (POST, uma vez).
+
+A resposta é idêntica — o mesmo 401 com a mesma mensagem — para token inexistente, já usado,
+expirado ou de outro `purpose`. Distinguir os casos num ecrã público diria a um atacante que o
+token existe mas caducou, informação que não lhe serve de nada e só ajuda a enumerar. O utilizador
+recebe sempre a mesma instrução: pedir um novo link.
+
+### 5. O reenvio exige sessão, e a confirmação usa o limite por IP
+
+`POST /me/email-verification` está atrás de `requireAuth`. Um endpoint de reenvio público, com o
+email no corpo, é um gerador de spam contra terceiros: qualquer pessoa o pode chamar com o email
+de outra. Autenticado, o alvo é sempre a própria conta de quem pede, e o limite passa a ser por
+utilizador (`RATE_LIMIT_EMAIL_VERIFICATION_MAX_REQUESTS`, por omissão 5) em vez de por IP — o que
+faz sentido, porque o recurso protegido é a caixa de correio de um utilizador concreto e não um
+recurso anónimo.
+
+A confirmação (`/auth/verify-email`) é pública e sem sessão, por isso não tem a quem ser atribuída
+e mantém o `authRateLimit()` por IP. São ameaças diferentes e levam limites diferentes.
+
+### 6. `delivered` porque o `sendEmail` não lança
+
+O `sendEmail` não lança quando o SMTP falha — registra e segue. Sem mais nada, um reenvio que
+falhou responderia "enviámos" e a pessoa esperaria por um email que não vem. A resposta do reenvio
+inclui `delivered`, que diz o que aconteceu de facto em vez do que se tentou fazer. É a mesma
+disciplina de A28: a resposta descreve o que foi escrito, não o que se pretendia escrever.
+
+### 7. Onde estão os casos escritos
+
+`test/email-verification.test.ts` cobre os dois lados de cada fronteira: signup cria conta não
+confirmada e emite token; o token nunca aparece em claro na BD nem nos registos de auditoria; token
+válido confirma; usado e expirado são recusados; token de recuperação é recusado como confirmação;
+conta eliminada é recusada; um reenvio invalida o link anterior; conta já confirmada não gera token
+novo; falha de SMTP não impede o signup; e — o caso que só uma condição dentro da escrita resolve —
+**dois pedidos simultâneos com o mesmo token produzem exatamente um sucesso e um 401**, porque a
+transação marca `usedAt` com `where: { id, usedAt: null }` e é o `count` daí que decide a corrida.
+O teste de recuperação de password foi ajustado para filtrar por `purpose`, já que o email de
+confirmação passa a ser o primeiro a chegar à caixa nos testes.

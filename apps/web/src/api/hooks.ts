@@ -19,10 +19,11 @@ import type {
   VehicleCreateRequest,
   VehicleUpdateRequest,
 } from '@zemlo/shared';
-import { ApiError, api } from './client';
+import { ApiError, api, auth } from './client';
 import { queryKeys } from './queryKeys';
 import type {
   DocumentsExpiringResponse,
+  EmailVerificationResendResponse,
   MetricsResponse,
   NotificationListResponse,
   OdometerResult,
@@ -121,6 +122,34 @@ export function useDisableTwoFactor() {
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: queryKeys.me });
       void client.invalidateQueries({ queryKey: ['dashboard'] });
+    },
+  });
+}
+
+/**
+ * Reenvia o email de confirmação de endereço.
+ *
+ * ## Porque é que invalida o perfil só quando a resposta diz "já estava confirmado"
+ *
+ * O aviso de "email por confirmar" lê `profile.emailVerified`. No caminho normal — o email
+ * foi enviado — esse campo não mudou, e invalidar o perfil só produziria um pedido inútil.
+ * No outro caminho, porém, a resposta está a dizer que a nossa cópia do perfil está
+ * desatualizada: a conta já foi confirmada noutro dispositivo, ou o aviso ficou em ecrã
+ * depois de o link ter sido aberto. Recarregar o perfil é o que faz o aviso desaparecer
+ * sem o utilizador ter de recarregar a página.
+ */
+export function useResendEmailVerification(): UseMutationResult<
+  EmailVerificationResendResponse,
+  Error,
+  void
+> {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () => auth.resendEmailVerification(),
+    onSuccess: (result) => {
+      if (result.alreadyVerified) {
+        void client.invalidateQueries({ queryKey: queryKeys.me });
+      }
     },
   });
 }

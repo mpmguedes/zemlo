@@ -15,6 +15,7 @@ import { Router } from 'express';
 import {
   zChangePasswordRequest,
   zDeleteAccountRequest,
+  zEmailVerificationConfirmRequest,
   zLoginRequest,
   zPasswordResetConfirmRequest,
   zPasswordResetRequestRequest,
@@ -26,7 +27,7 @@ import {
   type SignUpRequest,
 } from '@zemlo/shared';
 import { asyncHandler, noContent, parseBody, requireUser } from '../../http/handlers.js';
-import { authRateLimit, requireAuth } from '../../http/middleware.js';
+import { authRateLimit, emailVerificationRateLimit, requireAuth } from '../../http/middleware.js';
 import { unauthorized } from '../../core/errors.js';
 import {
   changePassword,
@@ -40,6 +41,7 @@ import {
   logout,
   refreshSession,
   requestPasswordReset,
+  resendEmailVerification,
   resetPassword,
   revokeAllSessions,
   revokeSession,
@@ -47,6 +49,7 @@ import {
   startTwoFactorSetup,
   updatePreferences,
   updateProfile,
+  verifyEmail,
 } from '../../services/auth.js';
 
 export const authRouter = Router();
@@ -104,6 +107,78 @@ authRouter.post(
     const user = requireUser(request);
     await logout(user.sessionId, user.id);
     noContent(response);
+  }),
+);
+
+/* -------------------------------------------------------------------------- */
+/* Verificação de email                                                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Confirma um endereço de email a partir do token recebido por email.
+ *
+ * É **pública**, e tem de ser: quem abre o link pode não ter sessão nenhuma — criou a
+ * conta noutro dispositivo, ou o link foi aberto no telemóvel depois do registo no
+ * computador. Exigir sessão aqui recusaria precisamente o caso mais comum.
+ *
+ * O token viaja no **corpo** e não na query string. O url da página já o traz (é assim que
+ * o link funciona), mas repeti-lo aqui deixaria o token nos logs de acesso do servidor
+ * web, que é o sítio de onde ele é mais fácil de colher. O corpo não é registado.
+ *
+ * 200 com o email confirmado, e não 204: o cliente mostra o endereço que ficou
+ * confirmado, e é essa a única informação que esta resposta transporta — não o `userId`,
+ * não o token, nada que sirva para outra coisa.
+ */
+authRouter.post(
+  '/auth/verify-email',
+  authRateLimit(),
+  asyncHandler(async (request, response) => {
+    const body = parseBody(zEmailVerificationConfirmRequest, request);
+    const result = await verifyEmail(body, {
+      ipAddress: request.meta.ipAddress,
+      userAgent: request.meta.userAgent,
+    });
+    response.json({
+      message: 'Endereço de email confirmado.',
+      email: result.email,
+    });
+  }),
+);
+
+/**
+ * Reenvia o pedido de verificação para a conta com sessão.
+ *
+ * Devolve 200 nos dois casos — email enviado, ou conta já confirmada. A conta já
+ * confirmada não é um erro: é um estado final, e responder 409 obrigaria o cliente a
+ * tratar um caso que não é uma falha. O campo `alreadyVerified` diz qual dos dois
+ * aconteceu, e é o cliente que escolhe o texto.
+ *
+ * O campo `delivered` existe porque a rota **não** pode fingir que enviou: o `sendEmail`
+ * absorve falhas de SMTP de propósito (para não reabrir a enumeração de contas no reset),
+ * e sem este campo o ecrã diria "enviámos" a quem não recebeu nada. Dizer a verdade sobre
+ * uma entrega falhada é o que permite à pessoa tentar outra vez em vez de esperar por um
+ * email que não vem.
+ */
+authRouter.post(
+  '/me/email-verification',
+  requireAuth(),
+  emailVerificationRateLimit(),
+  asyncHandler(async (request, response) => {
+    const user = requireUser(request);
+    const result = await resendEmailVerification(user.id, {
+      ipAddress: request.meta.ipAddress,
+      userAgent: request.meta.userAgent,
+    });
+
+    response.json({
+      message: result.alreadyVerified
+        ? 'O teu endereço de email já está confirmado.'
+        : result.delivered
+          ? 'Enviámos um novo link de confirmação para o teu email.'
+          : 'Não conseguimos enviar o email de confirmação agora. Tenta novamente dentro de momentos.',
+      alreadyVerified: result.alreadyVerified,
+      delivered: result.delivered,
+    });
   }),
 );
 

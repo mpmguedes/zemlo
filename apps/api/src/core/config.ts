@@ -187,6 +187,16 @@ export interface AppConfig {
     readonly windowMinutes: number;
     readonly maxRequests: number;
     readonly authMaxRequests: number;
+    /**
+     * Pedidos de reenvio de verificação de email, por utilizador, na mesma janela.
+     *
+     * O valor por omissão é baixo de propósito. O pedido inicial de verificação não passa
+     * por aqui — nasce do registo —, portanto este limite só governa o reenvio, que é uma
+     * ação manual de quem já está dentro da aplicação. Cinco tentativas em quinze minutos
+     * cobrem o uso legítimo com folga (o email demora, a pessoa distrai-se e volta a
+     * pedir) e tornam irrelevante o cenário de um cliente em ciclo.
+     */
+    readonly emailVerificationMaxRequests: number;
   };
   /**
    * Login federado (§29).
@@ -258,6 +268,7 @@ function build(): AppConfig {
       windowMinutes: readInt('RATE_LIMIT_WINDOW_MINUTES', 15, 1, 1440),
       maxRequests: readInt('RATE_LIMIT_MAX_REQUESTS', 600, 10, 1_000_000),
       authMaxRequests: readInt('RATE_LIMIT_AUTH_MAX_REQUESTS', 20, 1, 10_000),
+      emailVerificationMaxRequests: readInt('RATE_LIMIT_EMAIL_VERIFICATION_MAX_REQUESTS', 5, 1, 10_000),
     },
     federatedLogin: {
       google:

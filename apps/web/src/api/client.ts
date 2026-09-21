@@ -15,6 +15,7 @@
  */
 
 import type { ApiErrorBody, ApiErrorCode, AuthSessionResponse, AuthTokens, UserProfile } from '@zemlo/shared';
+import type { EmailVerificationConfirmResponse, EmailVerificationResendResponse } from './queryKeys';
 
 /* -------------------------------------------------------------------------- */
 /* Configuração                                                                */
@@ -505,6 +506,31 @@ export const auth = {
   /** Conclui a recuperação com o token recebido por email. */
   async confirmPasswordReset(token: string, newPassword: string): Promise<{ revokedSessions: number }> {
     return api.post('/auth/password-reset/confirm', { token, newPassword });
+  },
+
+  /**
+   * Confirma o endereço de email a partir do token do link.
+   *
+   * O token vai no **corpo**, nunca na query string. O url da página já o traz — é assim
+   * que o link funciona —, mas repeti-lo aqui deixaria o token nos registos de acesso do
+   * servidor, que é de onde ele é mais fácil de colher. E é `POST`, não `GET`, para que um
+   * pré-carregamento automático do endereço (vários clientes de correio e antivírus fazem-
+   * no) não gaste o token antes de a pessoa o abrir.
+   */
+  async verifyEmail(token: string): Promise<EmailVerificationConfirmResponse> {
+    return api.post<EmailVerificationConfirmResponse>('/auth/verify-email', { token });
+  },
+
+  /**
+   * Reenvia o pedido de verificação para a conta com sessão.
+   *
+   * Exige autenticação: sem ela, um email como entrada transformaria o Zemlo num gerador
+   * de mensagens dirigido a endereços alheios. A resposta distingue "já estava
+   * confirmado" de "foi enviado" de "tentámos e falhou" — o ecrã precisa dos três para não
+   * mentir a quem não recebeu nada.
+   */
+  async resendEmailVerification(): Promise<EmailVerificationResendResponse> {
+    return api.post<EmailVerificationResendResponse>('/me/email-verification', {});
   },
 };
 

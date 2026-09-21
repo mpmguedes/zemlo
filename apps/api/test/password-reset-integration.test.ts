@@ -146,6 +146,23 @@ let appPrisma: PrismaClient;
 let smtp: Server;
 let caixa: CorreioRecebido[];
 
+/**
+ * Só as mensagens de recuperação, na ordem em que o servidor SMTP as recebeu.
+ *
+ * A caixa deixou de conter apenas emails de recuperação: o **registo** passou a enviar um
+ * email de confirmação de endereço, e como cada caso desta suite cria a conta dentro do
+ * próprio teste, essa mensagem chega primeiro. Indexar a caixa por posição faria com que o
+ * resultado destes testes passasse a depender de *quantos* emails o produto decide enviar
+ * antes — e uma asserção sobre a recuperação de password não deve poder ser derrubada por
+ * uma funcionalidade que não é dela.
+ *
+ * O filtro é pelo **link**, e não pelo assunto: o que faz de uma mensagem uma mensagem de
+ * recuperação é o endereço que ela transporta. O assunto é apresentação.
+ */
+function mensagensDeRecuperacao(): CorreioRecebido[] {
+  return caixa.filter((mensagem) => mensagem.dados.includes('/repor-password?token='));
+}
+
 const INITIAL_PASSWORD = 'Password123!';
 const NEW_PASSWORD = 'OutraPassword789!';
 const EMAIL = 'fluxo-completo@zemlo.test';
@@ -247,9 +264,17 @@ describe('fluxo real de recuperação de password', () => {
      * já tem a mensagem quando o `await` do pedido resolve — não é preciso esperar por um
      * evento nem sondar. Se isto deixasse de ser verdade, a asserção falharia com um erro
      * explícito em vez de um teste intermitente.
+     *
+     * A asserção é sobre as mensagens de **recuperação**, e não sobre a caixa inteira: o
+     * registo feito no passo 1 já enviou um email de confirmação de endereço, que chegou
+     * aqui antes deste. Contar a caixa toda faria esta verificação depender de quantos
+     * emails o produto decide enviar no registo — e não é disso que este teste trata.
      */
-    expect(caixa, 'O servidor SMTP de teste não recebeu nenhuma mensagem.').toHaveLength(1);
-    const mensagem = caixa[0];
+    expect(
+      mensagensDeRecuperacao(),
+      'O servidor SMTP de teste não recebeu nenhuma mensagem de recuperação.',
+    ).toHaveLength(1);
+    const mensagem = mensagensDeRecuperacao()[0]!;
 
     expect(mensagem.to).toEqual([EMAIL]);
     expect(mensagem.from).toContain('ola@appzemlo.com');
@@ -321,7 +346,7 @@ describe('fluxo real de recuperação de password', () => {
       .send({ email: EMAIL });
 
     const token = decodeURIComponent(
-      caixa[0].dados.match(/\/repor-password\?token=([^\s&"'>]+)/)![1],
+      mensagensDeRecuperacao()[0]!.dados.match(/\/repor-password\?token=([^\s&"'>]+)/)![1],
     );
 
     const primeira = await request(app)
@@ -347,6 +372,10 @@ describe('fluxo real de recuperação de password', () => {
       .send({ email: 'nao-existe-integracao@zemlo.test' });
 
     // Nada atravessou o socket: a resposta uniforme não é acompanhada de um envio real.
+    //
+    // A asserção é sobre a caixa **inteira**, e não só sobre as mensagens de recuperação:
+    // este caso não cria conta nenhuma, portanto não há sequer um email de confirmação de
+    // endereço a excluir. É a versão mais forte da afirmação, e é a que se quer aqui.
     expect(caixa).toHaveLength(0);
   });
 });

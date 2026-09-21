@@ -4,6 +4,7 @@ import { normalizePlate } from '@zemlo/shared';
 import { useSession } from '../../app/SessionContext';
 import { useCreateVehicle, useProfile, useRecordOdometer, useVehicles } from '../../api/hooks';
 import { Logo } from '../../components/Logo';
+import { EmailVerificationBanner } from '../../components/EmailVerificationBanner';
 import { Banner, Button, Metric } from '../../ui/primitives';
 import { ApiError } from '../../api/client';
 import { useForm } from '../../hooks/useForm';
@@ -79,8 +80,22 @@ function AccountStep() {
         </p>
       </div>
       <Banner tone="ok" title="Passo 1 de 3 concluído">
-        Não pedimos cartão, telefone nem confirmação por email. A conta existe e é tua.
+        Não pedimos cartão nem telefone. A conta existe e é tua.
       </Banner>
+
+      {/*
+        O aviso de email por confirmar. O texto que aqui estava — "não pedimos confirmação
+        por email" — deixou de ser verdade quando a verificação passou a existir: a conta
+        cria-se na mesma, mas o email é enviado e fica por confirmar. Manter a frase seria
+        mentir à pessoa no ecrã seguinte ao registo, que é onde ela decide se confia no
+        produto.
+
+        O aviso aparece aqui além do `AppShell` porque o onboarding vive fora dessa
+        estrutura — e é justamente o primeiro ecrã depois do registo, o momento em que o
+        email acabou de sair e a pessoa está a olhar para o telemóvel à espera dele.
+      */}
+      <EmailVerificationBanner />
+
       <Button variant="primary" block onClick={() => navigate('/onboarding/veiculo')}>
         Continuar
       </Button>

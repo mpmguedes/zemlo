@@ -100,6 +100,26 @@ export const BRAND = {
  */
 export const PASSWORD_RESET_TTL_MINUTES = 60;
 
+/**
+ * Validade do link de verificação de email, em minutos.
+ *
+ * Vive aqui pela mesma razão que a do reset — é afirmada em três sítios que têm de
+ * concordar: a expiração do token no servidor, o texto do email que o utilizador recebe e
+ * o ecrã que explica o que fazer quando o link já não serve.
+ *
+ * O valor é **muito maior** do que o do reset, e a diferença é intencional. O reset
+ * protege uma conta cujo acesso se perdeu: um link que vive uma hora é uma janela curta
+ * para um ataque, e quem o pediu está à espera dele nesse momento. A verificação é o
+ * contrário — é um email que chega sem ninguém o pedir de imediato, muitas vezes para uma
+ * caixa que só é aberta horas depois, no telemóvel. Um prazo curto aqui não aumentaria a
+ * segurança de nada: não há nada a proteger do lado do servidor que o token de reset não
+ * proteja, e o único efeito de o encurtar seria obrigar a pessoa a pedir um link novo.
+ *
+ * 24 horas cobre "vi o email no dia seguinte" sem deixar um link vivo indefinidamente.
+ * Converter para dias/horas no texto é responsabilidade de quem apresenta.
+ */
+export const EMAIL_VERIFICATION_TTL_MINUTES = 60 * 24;
+
 export type BrandState = keyof typeof STATE;
 
 /** Gera o bloco `:root { --z-... }` consumido por `apps/web`. */

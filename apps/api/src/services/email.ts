@@ -97,6 +97,13 @@ class ConsoleEmailSender implements EmailSender {
  *
  * Um url com o token substituído continua a mostrar *que* o email foi composto e para
  * *que* página aponta; o que deixa de ser possível é usá-lo a partir do log.
+ *
+ * ## O nome fala de reposição, o filtro não
+ *
+ * O que se procura é o parâmetro `token` de um url, seja ele de que link for — e há dois:
+ * a reposição de password e a verificação de email. O nome ficou do primeiro porque foi
+ * ele que o motivou, mas um filtro que só soubesse de um dos dois deixaria o outro em
+ * claro. É o parâmetro que é sensível, não a página que o transporta.
  */
 export function redactResetLinks(text: string): string {
   return text.replace(/([?&]token=)[^&\s]+/gi, '$1[redigido]');

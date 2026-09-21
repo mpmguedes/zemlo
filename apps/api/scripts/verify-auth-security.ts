@@ -13,6 +13,10 @@
  *  2. **Recuperação de password.** O fluxo inteiro, incluindo os dois casos que um teste
  *     superficial deixa passar: token expirado e token reutilizado.
  *
+ *  3. **Confirmação de email.** O token de uso único ponta a ponta, o isolamento entre os
+ *     dois `purpose` da tabela `OneTimeToken` (um token de recuperação não confirma email, e
+ *     um token de confirmação não troca a password) e o reenvio autenticado.
+ *
  * Este script precisa de um servidor a correr e corre contra a base de dados de
  * desenvolvimento. Cria as suas próprias contas descartáveis e apaga-as no fim, para não
  * tocar nos dados de demonstração.
@@ -341,23 +345,161 @@ async function verifyPasswordReset(victim) {
   );
 }
 
-/** Cria um token de recuperação conhecido, para o poder usar no teste. */
-async function issueKnownToken(userId) {
+/**
+ * Cria um token conhecido para o utilizador, para o poder usar no teste.
+ *
+ * O `purpose` é recebido em vez de fixado: é exatamente o que separa a recuperação de
+ * password da confirmação de email, e o cenário 4 precisa de emitir deliberadamente um
+ * token do propósito errado para provar que a separação é aplicada.
+ */
+async function issueKnownToken(userId, purpose = 'password-reset') {
   const raw = `teste-${randomBytes(24).toString('base64url')}`;
 
   await prisma.oneTimeToken.updateMany({
-    where: { userId, purpose: 'password-reset', usedAt: null },
+    where: { userId, purpose, usedAt: null },
     data: { usedAt: new Date() },
   });
   await prisma.oneTimeToken.create({
     data: {
       userId,
-      purpose: 'password-reset',
+      purpose,
       tokenHash: createHash('sha256').update(raw).digest('hex'),
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
     },
   });
   return raw;
+}
+
+/**
+ * Confirmação de email: token de uso único, isolamento entre propósitos, e reenvio.
+ *
+ * O que este cenário prova e um teste unitário não prova: que o fluxo funciona ponta a ponta
+ * contra o servidor real e a base de dados real, e que os dois `purpose` da tabela
+ * `OneTimeToken` não se confundem — um token de recuperação não confirma email, e um token de
+ * confirmação não troca a password. A separação só é real se for aplicada nos dois sentidos.
+ *
+ * Corre antes da recuperação de password, porque esta última troca a password e a confirmação
+ * precisa de iniciar sessão com a password original.
+ */
+async function verifyEmailVerification(victim, sessionToken) {
+  section('4. Confirmação de email — token de uso único, sem troca de propósitos');
+
+  // 4.1 O signup deixou a conta por confirmar (o login não depende disto).
+  const account = await prisma.user.findUnique({ where: { id: victim.id } });
+  check(
+    'A conta criada pelo signup continua por confirmar',
+    account.emailVerified === false,
+    `emailVerified=${account.emailVerified}`,
+  );
+
+  // 4.2 O signup emitiu um token de confirmação, guardado apenas como hash.
+  const issued = await prisma.oneTimeToken.findFirst({
+    where: { userId: victim.id, purpose: 'email-verification', usedAt: null },
+    orderBy: { createdAt: 'desc' },
+  });
+  check('O signup emitiu um token de confirmação', issued !== null);
+  if (issued) {
+    check(
+      'O token de confirmação tem hash SHA-256 (64 hex), não o valor em claro',
+      /^[0-9a-f]{64}$/.test(issued.tokenHash),
+      issued.tokenHash.slice(0, 12) + '…',
+    );
+    check(
+      'O token de confirmação expira no futuro',
+      issued.expiresAt.getTime() > Date.now(),
+      issued.expiresAt.toISOString(),
+    );
+  }
+
+  // 4.3 Token inexistente → 401.
+  const garbage = await call('POST', '/auth/verify-email', {
+    body: { token: 'x'.repeat(64) },
+  });
+  check('Token inexistente → 401', garbage.status === 401, `estado ${garbage.status}`);
+
+  // 4.4 Um token de OUTRO propósito não confirma email — e não é consumido pela tentativa.
+  const resetToken = await issueKnownToken(victim.id, 'password-reset');
+  const wrongPurpose = await call('POST', '/auth/verify-email', {
+    body: { token: resetToken },
+  });
+  check(
+    'Token de recuperação recusado como confirmação → 401',
+    wrongPurpose.status === 401,
+    `estado ${wrongPurpose.status}`,
+  );
+  const resetStillValid = await prisma.oneTimeToken.findFirst({
+    where: { userId: victim.id, purpose: 'password-reset', usedAt: null },
+  });
+  check('O token de recuperação não foi consumido pela tentativa falhada', resetStillValid !== null);
+
+  // 4.5 Token expirado → 401.
+  const expiredToken = await issueKnownToken(victim.id, 'email-verification');
+  await prisma.oneTimeToken.updateMany({
+    where: { userId: victim.id, purpose: 'email-verification', usedAt: null },
+    data: { expiresAt: new Date(Date.now() - 60_000) },
+  });
+  const expired = await call('POST', '/auth/verify-email', {
+    body: { token: expiredToken },
+  });
+  check('Token expirado → 401', expired.status === 401, `estado ${expired.status}`);
+
+  // 4.6 A resposta não distingue inexistente de expirado (não ajuda a enumerar).
+  //     Compara-se `code` + `message`, não o corpo inteiro: o `requestId` é único por
+  //     pedido, por desenho, e incluí-lo faria a comparação falhar sempre — sem que isso
+  //     dissesse nada sobre o comportamento do servidor. (A comparação de corpo inteiro de
+  //     3.1 funciona porque a resposta 202 de recuperação não traz `requestId`.)
+  check(
+    'Token inexistente e token expirado devolvem a mesma resposta',
+    garbage.status === expired.status &&
+      garbage.body?.error?.code === expired.body?.error?.code &&
+      garbage.body?.error?.message === expired.body?.error?.message,
+    `inexistente=${garbage.status}/${garbage.body?.error?.code}, expirado=${expired.status}/${expired.body?.error?.code}`,
+  );
+
+  // 4.7 Sucesso.
+  const fresh = await issueKnownToken(victim.id, 'email-verification');
+  const success = await call('POST', '/auth/verify-email', { body: { token: fresh } });
+  check('Token válido → 200', success.status === 200, `estado ${success.status}`);
+
+  const confirmed = await prisma.user.findUnique({ where: { id: victim.id } });
+  check('A conta ficou confirmada', confirmed.emailVerified === true);
+
+  // 4.8 O token de confirmação não serve para trocar a password (sentido inverso).
+  const misuse = await call('POST', '/auth/password-reset/confirm', {
+    body: { token: fresh, newPassword: 'NaoDeveResultar2026!z' },
+  });
+  check(
+    'O token de confirmação não troca a password → 401',
+    misuse.status === 401,
+    `estado ${misuse.status}`,
+  );
+
+  // 4.9 Reutilização → 401 (o token foi consumido pelo sucesso de 4.7).
+  const reused = await call('POST', '/auth/verify-email', { body: { token: fresh } });
+  check('Token reutilizado → 401', reused.status === 401, `estado ${reused.status}`);
+
+  // 4.10 O reenvio exige sessão — não pode ser um gerador de spam anónimo.
+  const anonymous = await call('POST', '/me/email-verification');
+  check('Reenvio sem sessão → 401', anonymous.status === 401, `estado ${anonymous.status}`);
+
+  // 4.11 Numa conta já confirmada, o reenvio responde mas não gera token novo.
+  const before = await prisma.oneTimeToken.count({
+    where: { userId: victim.id, purpose: 'email-verification' },
+  });
+  const resend = await call('POST', '/me/email-verification', { token: sessionToken });
+  check(
+    'Reenvio numa conta confirmada responde com `alreadyVerified`',
+    resend.status === 200 && resend.body?.alreadyVerified === true,
+    `estado ${resend.status}, alreadyVerified=${resend.body?.alreadyVerified}`,
+  );
+  const after = await prisma.oneTimeToken.count({
+    where: { userId: victim.id, purpose: 'email-verification' },
+  });
+  check(
+    'Reenvio numa conta confirmada não emite token novo',
+    before === after,
+    `antes=${before}, depois=${after}`,
+  );
 }
 
 /* -------------------------------------------------------------------------- */
@@ -446,15 +588,20 @@ async function main() {
     // Deixa uma sessão ativa para o cenário seguinte revogar.
     await verifySidVariants(secret, victim, victimToken);
 
-    // Repõe uma sessão válida para o teste de recuperação de password.
+    // Repõe uma sessão válida, usada tanto pela confirmação de email (o reenvio exige
+    // sessão) como pela recuperação de password.
     const relogin2 = await call('POST', '/auth/login', {
       body: { email: victim.email, password: VICTIM_PASSWORD },
     });
     check(
-      'Sessão reposta para o teste de recuperação',
+      'Sessão reposta para os testes seguintes',
       relogin2.status === 200,
       `estado ${relogin2.status}`,
     );
+
+    // A confirmação de email corre ANTES da recuperação: esta última troca a password, e a
+    // confirmação precisa de iniciar sessão com a password original.
+    await verifyEmailVerification(victim, relogin2.body?.tokens?.accessToken);
 
     await verifyPasswordReset(victim);
   } finally {
