@@ -340,6 +340,88 @@ trabalho por fora. O núcleo (`runNotificationSync`) não conhece temporizadores
 invocado por um entrypoint externo sem alterações; o que **não** existe ainda é esse
 entrypoint.
 
+### 3.5.2. Publicação no Home Assistant por MQTT (`INT-001`)
+
+O Zemlo expõe as entidades de um veículo no Home Assistant por **descoberta MQTT**. Sem
+broker configurado, a integração existe e é explicada ao utilizador, mas **não publica** —
+o comportamento anterior a `INT-001` mantém-se, e é o caso por omissão.
+
+| Variável | Por omissão | Efeito |
+| --- | --- | --- |
+| `HA_MQTT_URL` | *(vazio)* | Endereço do broker (`mqtt://…` ou `mqtts://…`). **Sem ele, não há publicação nenhuma** |
+| `HA_MQTT_USERNAME` | *(vazio)* | Utilizador, se o broker o exigir |
+| `HA_MQTT_PASSWORD` | *(vazio)* | Palavra-passe, se o broker a exigir |
+| `HA_DISCOVERY_PREFIX` | `homeassistant` | Prefixo dos tópicos de **descoberta**. Um espaço em branco é ignorado |
+
+#### O que é publicado
+
+Por cada veículo, e por cada entidade **disponível**:
+
+```
+<HA_DISCOVERY_PREFIX>/<componente>/zemlo/<entidade>/config     retido — descoberta
+zemlo/<vehicleId>/<entidade>/state                             retido — estado
+zemlo/<vehicleId>/availability                                 retido — "online"/"offline"
+zemlo/<vehicleId>/publisher                                    retido — diagnóstico da passagem
+```
+
+O `objectId` é o `entityId` da especificação sem o `<componente>.` — é o **mesmo** nome que a
+interface do Zemlo mostra, e é isso que impede o objeto do Home Assistant de aparecer com
+outro identificador.
+
+O tópico de diagnóstico (`…/publisher`) existe para responder a «o Zemlo chegou a publicar?»
+sem acesso ao processo: o resultado da última passagem fica no broker
+(`{"published":n,"skipped":n,"failures":n,"at":"…"}`).
+
+#### A regra que não se pode perder
+
+**Uma entidade indisponível não publica nada** — nem descoberta, nem estado. Não publica
+`unknown`, não publica `0`, não publica vazio. Um `sensor.zemlo_car_battery` a `0` lê-se como
+«a bateria está descarregada», não como «o Zemlo não sabe»; um consumo a `0` lê-se como «o
+carro não gasta combustível». Para um produto cuja promessa é não inventar dados
+(`ARCHITECTURE.md` §8, `ROADMAP` §48/§49), publicar um valor quando não há valor é a única
+falha intolerável aqui, porque é invisível: ninguém recebe um erro, recebe um número errado.
+
+Um valor real que seja **zero**, esse, publica-se: `0 km` de quilometragem é um carro novo.
+
+#### O que **não** se observa
+
+- **Nenhuma entidade indisponível aparece no Home Assistant.** Não é uma omissão: é a decisão
+  acima. As indisponíveis estão listadas em `GET /integrations/home-assistant/spec` com a
+  `requires` que explica o que falta a cada uma.
+- **Nenhuma publicação sem broker.** Sem `HA_MQTT_URL` não há cliente nem tarefa agendada. O
+  log de arranque diz `publicação MQTT inativa: sem HA_MQTT_URL configurado`.
+
+#### Uma falha do broker não derruba a API
+
+A publicação é uma comodidade: nenhuma funcionalidade da API depende dela. Por isso o cliente
+**devolve** os erros em vez de os lançar (`services/mqtt-client.ts`), e uma falha de ligação
+aparece como um relatório com o motivo — nunca como uma resposta `500` nem como um arranque
+falhado. A ligação é **preguiçosa**: abre-se na primeira publicação, não no arranque, para que
+um broker em baixo (ou um `HA_MQTT_URL` errado) não atrase a disponibilidade do serviço.
+
+Sem a dependência `mqtt` instalada, a razão é explícita:
+
+```
+a dependência `mqtt` não está instalada. Instala-a com `npm install mqtt --workspace @zemlo/api` para ativar a publicação.
+```
+
+A dependência é **opcional** e carregada dinamicamente — um `import` estático faria a API não
+arrancar sem ela, o que seria trocar «o Home Assistant não publica» por «o Zemlo não serve».
+
+#### Com mais do que uma instância
+
+A publicação corre no **mesmo** agendador da §3.5.1, e vale a mesma ressalva: a guarda de
+reentrância é por processo. Duas instâncias publicam as duas — o estado é retido no tópico, pelo
+que o resultado é o mesmo, mas é trabalho a dobrar. Nesse cenário, ponha
+`NOTIFICATIONS_SYNC_INTERVAL_MINUTES=0` onde não quer o trabalho a correr.
+
+#### Estado da verificação
+
+A construção dos tópicos, a serialização dos payloads, a decisão de disponibilidade e o
+tratamento de erro **estão fixados por testes** (`apps/api/test/integrations-mqtt-publication.test.ts`).
+O percurso `publicar → broker → subscritor` **não está validado**: não existe um broker MQTT
+neste ambiente (`ARCHITECTURE.md` §8). Ver §9.
+
 ### 3.6. Cloudflare Tunnel
 
 ```yaml
@@ -517,12 +599,20 @@ Para que ninguém procure em vão:
 - **Canal push e email.** O modelo tem os campos e as preferências existem, mas só o canal
   interno está implementado. Push exige uma app mobile publicada; email exige um servidor
   SMTP. O código não finge que os envia (§A16).
-- **Publicação MQTT para o Home Assistant.** O registo de integrações, o cofre de
-  credenciais e a especificação das entidades estão implementados; a publicação efetiva não.
+- **Publicação MQTT para o Home Assistant — integração implementada, percurso E2E não provado.**
+  O registo de integrações, o cofre de credenciais e a especificação das entidades estão
+  implementados, e a publicação passou a existir com `INT-001` (§3.5.2): tópicos, payloads de
+  descoberta, decisão de disponibilidade e tratamento de erro estão fixados por testes. O que
+  **não** está provado é o percurso `publicar → broker → subscritor` num broker **real**: não
+  existe nenhum neste ambiente (`ARCHITECTURE.md` §8 — «exige infraestrutura (broker) que não
+  existe em desenvolvimento»). Um resultado E2E não foi declarado. Quem montar um broker (ex.:
+  `mosquitto`) fecha esta lacuna correndo um subscritor nos tópicos de §3.5.2 e conferindo a
+  descoberta no próprio Home Assistant.
 - **Ligação a APIs de fabricantes, OBD e wallboxes.** O modelo e a normalização de origem
   (§50) estão prontos; nenhuma integração concreta existe.
-- **Trabalho agendado.** Existe **um** — a sincronização de notificações — e está
-  documentado em §3.5.1. O que **não** existe é um entrypoint externo (`dist/jobs/…`) para
+- **Trabalho agendado.** Existem **dois** — a sincronização de notificações (§3.5.1) e a
+  publicação MQTT quando há broker (§3.5.2) — e ambos estão documentados. O que **não** existe
+  é um entrypoint externo (`dist/jobs/…`) para
   o correr fora da API: o núcleo não conhece temporizadores e está preparado para isso, mas
   o ficheiro que o invocaria não foi escrito, porque não há nenhuma instalação com mais do
   que uma instância da API que o justifique. Ver §3.5.1 para o que fazer nesse caso

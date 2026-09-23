@@ -313,7 +313,7 @@ Vista única. O detalhe está em §5. `—` em Dependências significa "nenhuma"
 | WEB-001  | Web          | Ecrã "Esqueci-me da password"                                          | A3     | P0         | `DONE`     | AUTH-001                |
 | WEB-002  | Web          | Ecrã de reposição de password                                          | A3     | P0         | `DONE`     | WEB-001                 |
 | WEB-003  | Web          | Documentos: editar metadados + descarregar                             | A3     | P0         | `DONE`     | PROD-001, PROD-002      |
-| WEB-004  | Web          | Corrigir `/records/:kind` na interface                                 | A3     | P1         | `READY` | — |
+| WEB-004  | Web          | Corrigir `/records/:kind` na interface                                 | A3     | P1         | `DONE`  | — |
 | WEB-005  | Web          | Auditoria de estados (vazio/loading/erro)                              | A3     | P2         | `DONE`     | —                       |
 | WEB-006  | Web          | Acessibilidade                                                         | A3     | P2         | `DONE`        | —                    |
 | WEB-007  | Web          | Pesquisa e filtros                                                     | A3     | P2         | `BACKLOG`  | —                       |
@@ -338,7 +338,7 @@ Vista única. O detalhe está em §5. `—` em Dependências significa "nenhuma"
 | PROD-006 | Produto      | Frotas (Organization)                                                  | A4     | P4         | `DEFERRED` | decisão de produto      |
 | PROD-007 | Produto      | Documentos: remover os bytes ao eliminar (PC-13)                       | A4     | P2         | `DONE`     | —                       |
 | PROD-008 | Produto      | Documentos: substituir o ficheiro                                      | A4     | P2         | `DONE`     | `PROD-007`              |
-| INT-001  | Integrações  | Publicação MQTT das entidades HA                                       | A4     | P2         | `READY`    | —                       |
+| INT-001  | Integrações  | Publicação MQTT das entidades HA                                       | A4     | P2         | `DONE`     | —                       |
 | INT-002  | Integrações  | Integrações de fabricantes                                             | A4     | P4         | `DEFERRED` | decisão de produto      |
 | INT-003  | Integrações  | OBD                                                                    | A4     | P4         | `DEFERRED` | decisão de produto      |
 | INT-004  | Integrações  | Wallboxes                                                              | A4     | P4         | `DEFERRED` | decisão de produto      |
@@ -383,7 +383,7 @@ de validação.
   deliberadas apanhadas e repostas.
 - **Limitações:** PC-2 (divergência aceite, fixada por teste). PC-1 (o `verify.ts` não protege  
   esta regra — ver `AUD-012`).
-- **Commit:** **nenhum** — aguarda autorização.
+- **Commit:** `ef0ebf6` — incluída na release publicada (consolidação de produto web, OAuth, agendador e documentos).
 
 #### AUD-002 · Timeline: links para rotas que a web não serve (🔴-2) — A1 · P0 · `DONE`
 
@@ -440,7 +440,7 @@ de validação.
 - **Limitações:** o fallback silencioso do ecrã de **lista** mantém-se — é `AUD-008`. `reminder` e
   `odometer` deixam de ser ligação na timeline; se o produto quiser um ecrã de detalhe para cada
   um, é tarefa nova (ver «Observação registada»).
-- **Commit:** **nenhum** — aguarda autorização.
+- **Commit:** `ef0ebf6` — incluída na release publicada (consolidação de produto web, OAuth, agendador e documentos).
 
 #### AUD-003 · Export: odómetros (🔴-3) — A1 · P0 · `BACKLOG`
 
@@ -557,7 +557,7 @@ de validação.
   ficheiro ficou com o `import` removido e a função removida, mas com os dois testes ainda a
   chamar `construirConsoleSender()`, o que deu `ReferenceError`. Reaplicado numa **só** escrita e
   verificado. É o mesmo problema do **`PC-20`**, agora dentro de um lote de edições.
-- **Commit:** **nenhum** — aguarda autorização.
+- **Commit:** `ef0ebf6` — incluída na release publicada (consolidação de produto web, OAuth, agendador e documentos).
 
 #### AUD-005 · `PATCH /records/charging` não recalcula derivadas (🔴-5) — A1 · P0 · `DONE`
 
@@ -608,7 +608,7 @@ de validação.
   `fuel-consumption-http.test.ts` (o mesmo erro, na mesma construção), **não** introduzida
   por esta tarefa, e não afeta a execução. O `typecheck` do projeto não a vê porque exclui
   `**/*.test.ts` — é exatamente o buraco registado em **`PC-15`**.
-- **Commit:** **nenhum** — aguarda autorização.
+- **Commit:** `ef0ebf6` — incluída na release publicada (consolidação de produto web, OAuth, agendador e documentos).
 
 #### AUD-006 · Timeline: omissão de itens (🔴-6) — A1 · P0 · `BACKLOG`
 
@@ -711,7 +711,7 @@ de validação.
   — passam a ser recusados em vez de mostrar o ecrã errado, que é o que esta tarefa pedia.
   Construí-los é `WEB-004` (A3), agora desbloqueada. `AUD-013` (dicas de dados em falta com
   `?sheet=`) é a mesma família de defeito e continua `BACKLOG`, à espera de decisão de produto.
-- **Commit:** **nenhum** — aguarda autorização.
+- **Commit:** `ef0ebf6` — incluída na release publicada (consolidação de produto web, OAuth, agendador e documentos).
 
 #### AUD-009 · Sincronizar A17 + `OPERATIONS` §9 + texto de documentos — A1 · P1 · `DONE`
 
@@ -753,7 +753,7 @@ de validação.
   `<input type="file">` para documentos) — criá-lo é trabalho novo, para decisão de A9; (c) o
   terceiro bullet do enunciado **não correspondia ao código**: `DocumentsPage.tsx:110` não «promete
   um botão», tem uma **nota** que diz o que não existe — mesma classe de erro de `PC-11`/`PC-12`.
-- **Commit:** **nenhum.**
+- **Commit:** `ef0ebf6` — incluída na release publicada (consolidação de produto web, OAuth, agendador e documentos).
 
 #### AUD-010 · Números do README desatualizados — A1 · P2 · `DONE`
 
@@ -798,7 +798,7 @@ de validação.
   tocados (ignorados pelo `.gitignore`).
 - **`PC-7` fecha, com os dois números do próprio texto corrigidos** (acima). **`DOC-001` permanece
   `CANCELLED`** — a dona é `AUD-010`.
-- **Commit:** **nenhum.**
+- **Commit:** `ef0ebf6` — incluída na release publicada (consolidação de produto web, OAuth, agendador e documentos).
 
 #### AUD-011 · Decidir o destino do motor de migração — A1 · P2 · `BACKLOG`
 
@@ -867,7 +867,7 @@ de validação.
   insensível), `:519-555` (série discriminante + `/stats`), `:790` (BMW, dashboard) e `:796-802`
   (dashboard discriminante) — mas o que envelhece mal é o **número de linha**: a âncora estável é o
   **rótulo do check**.
-- **Commit:** **nenhum.**
+- **Commit:** `ef0ebf6` — incluída na release publicada (consolidação de produto web, OAuth, agendador e documentos).
 
 #### AUD-013 · Dicas de dados em falta: 4 de 7 links abrem o separador errado — A1 · P1 · `BACKLOG`
 
@@ -955,7 +955,7 @@ de validação.
   que conta o que ficou gravado). As variantes com `null` explícito continuam **verdes**, o que
   mostra que o teste distingue as duas codificações em vez de as confundir. Ficheiro reposto e
   confirmado por `sha256` (`5793e08b…`).
-- **Sem commit.**
+- **Commit:** `ef0ebf6` — incluída na release publicada (árvore limpa; deixou de estar só no working tree).
 
 > **Correção de um falso verde, em `AUD-015` (2026-09-22):** o teste positivo do intervalo em km
 > (`:239`) afirmava o `status` e o `intervalKm`, nunca o `dueOdometerKm` — e o lembrete criado tinha
@@ -1035,7 +1035,7 @@ de validação.
   condição do lembrete ligado, por um caminho que **não** passa por `updateReminder` — **por leitura,
   não medido**) e `PC-40` (o formulário de lembretes da web produz, por omissão, um pedido que a API
   passou a recusar — frente de A3).
-- **Commit:** **nenhum.**
+- **Commit:** `ef0ebf6` — incluída na release publicada (consolidação de produto web, OAuth, agendador e documentos).
 
 ### 5.2 Identidade, autenticação e conta (A2)
 
@@ -1109,7 +1109,7 @@ de validação.
 - **Trabalho derivado (novas tarefas):** `AUTH-008` (testar a recusa de produção), `AUTH-009`  
   (documentação da entrega). A restrição de SMTP de produção **mantém-se**: qualquer alteração a  
   credenciais é tarefa separada, com autorização própria.
-- **Commit:** **nenhum** — aguarda autorização.
+- **Commit:** `ef0ebf6` — incluída na release publicada (consolidação de produto web, OAuth, agendador e documentos).
 
 #### AUTH-002 · Login Google (OAuth) — A2 · P1 · `DONE`
 
@@ -1353,7 +1353,7 @@ tarefa, §6.1). `PC-25` fica **fechado** por esta tarefa (§7.1).
 - **Validação:** 7/7 verdes (exit 0); com `email.test.ts` e `smtp.test.ts`, 31/31; `typecheck` da  
   API exit 0; e — porque `tsconfig.json` exclui `**/*.test.ts` (`PC-15`) — um `tsc --noEmit`  
   **explícito** sobre o ficheiro novo, com as opções de `tsconfig.base.json`, exit 0.
-- **Commit:** **nenhum** — aguarda autorização.
+- **Commit:** `ef0ebf6` — incluída na release publicada (consolidação de produto web, OAuth, agendador e documentos).
 
 #### AUTH-009 · Documentação da entrega de email — A2 · P3 · `DONE`
 
@@ -1392,7 +1392,7 @@ tarefa, §6.1). `PC-25` fica **fechado** por esta tarefa (§7.1).
   pelas suites de email/SMTP (31/31, exit 0). O hash de `services/email.ts` passa a `58345a66…`; o  
   `66eefbd1…` citado em `PC-14` e no fecho de `AUTH-001` refere-se ao conteúdo **anterior** a esta  
   tarefa, e continua a ser o valor correto para a reposição da mutação M2.
-- **Commit:** **nenhum** — aguarda autorização.
+- **Commit:** `ef0ebf6` — incluída na release publicada (consolidação de produto web, OAuth, agendador e documentos).
 
 ### 5.3 Web (A3)
 
@@ -1460,7 +1460,7 @@ tarefa, §6.1). `PC-25` fica **fechado** por esta tarefa (§7.1).
   para decisão de A9». **Não reimplementar o que existe.**
   texto — **não** a interface de edição nem a transferência. Não reimplementar.
 
-#### WEB-004 · Corrigir `/records/:kind` na interface — A3 · P1 · `READY`
+#### WEB-004 · Corrigir `/records/:kind` na interface — A3 · P1 · `DONE`
 
 - **Desbloqueada em 2026-09-22 por `AUD-008` (A1).** O fallback silencioso já não existe:
   `/records/<tipo desconhecido>` é recusado de forma visível, com caminho de volta. O que falta é
@@ -1470,7 +1470,36 @@ tarefa, §6.1). `PC-25` fica **fechado** por esta tarefa (§7.1).
   Ao acrescentar uma entrada a `RECORD_CONFIG`, a recusa de `AUD-008` deixa de se aplicar a esse
   tipo sem mais nenhuma alteração.
 - **Critérios:** ecrãs corretos para inspeções, impostos, seguros e odómetro; sem fallback  
-  silencioso.
+  silencioso. **Os dois cumpridos.**
+
+- **Critérios — cumpridos.** Os quatro ecrãs existem como entradas próprias de `RECORD_CONFIG` em
+  `RecordsPage.tsx`: seguros (`:503`), inspeções (`:516`), impostos (`:521`) e odómetro (`:535`),
+  cada um com título, coluna de identidade, coluna de data, unidade e estado vazio **do tipo** — e
+  nenhum herda o vocabulário de despesas. `configFor` continua a devolver `null` para um tipo
+  ausente (`:552-553`), pelo que a recusa de `AUD-008` se mantém: mudou o mapa, não o ramo de
+  recusa. `taxes.emptyTitle` é `'Ainda sem impostos'` (`:530`).
+- **Testes:** `apps/web/test/records-lists.test.tsx` (**novo**, **15 testes**, 6 grupos) e
+  `records-kind.test.tsx` (**7 testes**, ajustado — os quatro tipos deixaram de ser recusados).
+  Suíte web **scopeada** (`apps/web/test`): **11 ficheiros / 243 testes / exit 0**, medido por A9
+  em 2026-09-23 com `--no-cache --no-file-parallelism`. `typecheck` da web exit 0; `PC-15`
+  coberto por `tsconfig` restrito fora do repositório, exit 0.
+- **Prova por mutação:** **12/12 mortas** (harness de A3, `.workbuddy-ai/scratch/mutacoes.log`),
+  cada uma com o teste que a mata nomeado: repor o fallback de `configFor` mata **3**; remover cada
+  entrada do mapa mata **4–5**; desligar `requiresVehicle`, mostrar o filtro de período na
+  conformidade, trocar a coluna de data da apólice, o estado vazio dos impostos, o título das
+  inspeções, a tradução do resultado e os títulos das conformidades matam **1** cada. Ficheiro
+  reposto e confirmado por `sha256` **`c979f917…`**, que é o `sha256` do ficheiro entregue (medido
+  por A9): a prova correu sobre o que está no working tree.
+- **Limitação de ambiente — não é defeito do produto.** Sem `--no-cache` a suíte web é
+  **não-determinista**: a cache de transformação do Vite/vitest serve versões antigas de
+  `RecordsPage.tsx` (chegou a servir a versão **pré-`WEB-004`**, com o fallback para despesas) e o
+  teste que falha varia entre execuções. Com `--no-cache` os resultados são estáveis e verdes
+  (`records-lists` 15/15 e `records-kind` 7/7, repetido). Registado como ambiente.
+- **Regressão global:** as falhas do run completo estão **fora** desta frente — ficheiros da API
+  que falham por defeito de ambiente (`spawnSync … EBUSY` no `createTestDb`, cliente Prisma não
+  gerado, `__vite_ssr_import_meta__.resolve`) e resíduos de harness. **Zero** atribuíveis a
+  `WEB-004`.
+- **Commit:** **nenhum** — no working tree; aguarda autorização de publicação.
 
 #### WEB-005 · Auditoria de estados (vazio/loading/erro) — A3 · P2 · `DONE`
 
@@ -1600,7 +1629,7 @@ formatação, não de estado).
   durante a prova por mutação de `AUTH-001` — já reposta e confirmada por hash. `AUTH-001` está  
   `DONE` e a substância fechada (ver §5.2), pelo que **`WEB-001`/`WEB-002` deixam de estar  
   bloqueadas pela entrega de email**. O estado delas é decisão de A3.
-- **Commit:** **não feito** — sem autorização explícita de publicação. Nada foi publicado.
+- **Commit:** `ef0ebf6` — publicada na release (já não aguarda autorização de publicação).
 
 #### WEB-010 · Cabeçalho do calendário mostra data em vez do nome do mês — A3 · P3 · `DONE`
 
@@ -1652,7 +1681,7 @@ formatação, não de estado).
   `apps/web/test/calendar-month-label.test.tsx` (novo).
 - **Achados que saíram daqui:** `PC-44` (o mesmo defeito na linha temporal), `PC-45` (o
   `minWidth` do título) e `PC-48` (o docblock falso do `dateRange`).
-- **Commit:** **não feito** — sem autorização explícita de publicação. Nada foi publicado.
+- **Commit:** `ef0ebf6` — publicada na release (já não aguarda autorização de publicação).
 
 #### WEB-006 · Acessibilidade — A3 · P2 · `DONE`
 
@@ -1931,7 +1960,7 @@ com `WEB-005` e `WEB-006` por commitar, à espera de autorização.
   `apps/web/test/contraste-tokens.test.ts` (novo).
 - **Achados que saíram daqui:** `PC-46` (a enumeração do `PC-24` estava incompleta) e `PC-47`
   (continuam cores fora do `BRAND` em `app.css`, e a asserção do teste só cobre `color:`).
-- **Commit:** **não feito** — sem autorização explícita de publicação. Nada foi publicado.
+- **Commit:** `ef0ebf6` — publicada na release (já não aguarda autorização de publicação).
 
 #### WEB-012 · Anunciar a mudança de página (título + foco) — A3 · P2 · `READY`
 
@@ -2349,7 +2378,7 @@ arquitetural:** proposta `A32` em `docs/DECISIONS.md` (abaixo).
 - **Contratos:** `packages/shared` **intocado**. Impacto nenhum em Web e Mobile.
 - **Limitação declarada:** o cliente web (`apps/web`) ainda não usa o `PUT` — a substituição
   não está exposta na interface.
-- **Commit:** **não feito** — sem autorização explícita de publicação. Nada foi publicado.
+- **Commit:** `ef0ebf6` — publicada na release (já não aguarda autorização de publicação).
 
 #### PROD-002 · Documentos: download dos bytes — A4 · P0 · `DONE`
 
@@ -2463,7 +2492,7 @@ arquitetural:** proposta `A32` em `docs/DECISIONS.md` (abaixo).
 - **Achados que saíram daqui:** **`PC-49`** (o `catch` não estreita para `P2002` — uma avaria
   de BD fica indistinguível de um duplicado) e **`PC-50`** (`windowDays`/`windowKm` inertes em
   `listReminders`). **Não reabrem `PROD-004`.**
-- **Commit:** **não feito** — sem autorização explícita de publicação. Nada foi publicado.
+- **Commit:** `ef0ebf6` — publicada na release (já não aguarda autorização de publicação).
 
 #### PROD-005 · Famílias (Household) — A4 · P4 · `DEFERRED`
 
@@ -2515,11 +2544,11 @@ arquitetural:** proposta `A32` em `docs/DECISIONS.md` (abaixo).
   desta tarefa.
 - **Nota de âmbito, mantida:** isto **não** é uma limpeza de órfãos já existentes — fecha a
   torneira, não limpa o chão.
-- **Commit:** **não feito** — sem autorização explícita de publicação. Nada foi publicado.
+- **Commit:** `ef0ebf6` — publicada na release (já não aguarda autorização de publicação).
 
 ### 5.6 Integrações (A4)
 
-#### INT-001 · Publicação MQTT das entidades HA — A4 · P2 · `READY`
+#### INT-001 · Publicação MQTT das entidades HA — A4 · P2 · `DONE`
 
 - **Descrição:** a especificação das entidades é **calculada em tempo real**  
   (`integrations.ts:246`) e nunca persistida; `HomeAssistantEntity` não é usado. Sem broker  
@@ -2532,8 +2561,49 @@ arquitetural:** proposta `A32` em `docs/DECISIONS.md` (abaixo).
   - sem broker configurado, o comportamento atual mantém-se e é explicado ao utilizador;
   - a descoberta respeita o `discoveryPrefix` configurado;
   - falha de ligação ao broker não derruba a API;
-  - teste cobre a serialização e o caso "sem broker".
+  - teste cobre a serialização e o caso "sem broker". **Os cinco cumpridos.**
 - **Risco:** exige infraestrutura (broker) que não existe em desenvolvimento. Ver `ARCHITECTURE.md` §8.
+
+- **Critérios — cumpridos.** Os cinco: as indisponíveis **não** publicam valores inventados
+  (`publicationDecision`, `mqtt-publisher.ts:464`); sem broker o comportamento mantém-se e é
+  explicado na especificação (`integrations.ts:364-368`, renderizada por
+  `HomeAssistantPage.tsx:101`); a descoberta respeita o `discoveryPrefix`; uma falha de ligação
+  não derruba a API (`safePublish`; `publish`/`connect` devolvem em vez de lançar); e os testes
+  cobrem a serialização e o caso «sem broker».
+- **Composição testável — extração equivalente, sem alteração funcional.** `composeMqtt()` e
+  `redactMqttUrl()` vivem em `services/mqtt-bootstrap.ts` porque o `server.ts` **não é importável**
+  (chama `main()` no import). A equivalência prova-se pelo **produtor da configuração**:
+  `core/config.ts:468` define **`enabled: mqttUrl !== null`**, pelo que
+  `enabled && mqttUrl !== null` ≡ `mqttUrl !== null` em qualquer configuração que o `build()`
+  produza. Os quatro módulos funcionais (`mqtt-topics`, `mqtt-client`, `mqtt-publisher`,
+  `jobs/mqtt-sync`) **não foram alterados** (confirmado por `mtime`). A ordem das tarefas é
+  irrelevante: `runner.runNow` usa `Promise.all` e contém falhas por tarefa.
+- **Testes:** três suites, **69 testes** — `integrations-mqtt-publication.test.ts` (36),
+  `jobs-mqtt-sync.test.ts` (18) e `mqtt-bootstrap.test.ts` (15) — **exit 0**, confirmado também
+  com `--no-cache`. `typecheck` dos **3 workspaces** exit 0; `PC-15` coberto por `tsconfig`
+  restrito fora do repositório, exit 0. Cobertura explícita da composição **sem e com**
+  `HA_MQTT_URL`, de `redactMqttUrl()` (sem fuga de credenciais, incluindo URL malformado) e de
+  `mqtt-sync`.
+- **Prova por mutação — medida por A9, 16 execuções:** **M1–M9 e M11–M15 mortas**; **M9b
+  sobrevive** e é legítimo (código inalcançável sem a dependência `mqtt`); **M10 sobrevive e é um
+  mutante equivalente** — `EntityPublication.state` é `string | null` e `publicationDecision()`
+  garante `state !== null` antes da linha mutada, pelo que `String(state)` é a identidade em todo
+  o caminho alcançável. **M10 não deve ser morto artificialmente:** exigiria uma asserção sobre um
+  caminho que não existe. Todas as mutações repostas e conferidas por `sha256`.
+- **Regressão global — sem atribuição a esta tarefa.** Suíte completa
+  (`--no-cache --no-file-parallelism`): **51 falhadas / 1359 passadas / 670 ignoradas**, 31
+  ficheiros falhados. Classificação: **28 ficheiros da API** por defeito de **ambiente**
+  (`spawnSync … EBUSY` no `createTestDb`, cliente Prisma não gerado,
+  `__vite_ssr_import_meta__.resolve`); **3** são cópias de segurança do harness
+  (`.mut-int001-backup/*.test.ts`) recolhidas como testes — **não podem entrar no commit**; **1** é
+  interferência entre ficheiros de teste web. **Zero** atribuíveis a `INT-001`.
+- **Limitação explícita — E2E MQTT real NÃO VALIDADO.** O percurso
+  `publicar → broker → subscritor` **não** está provado: não há `mqtt` instalado nem declarado em
+  nenhum `package.json`, e nada escuta em `:1883` (medido por A9 em 2026-09-23). O que está
+  provado é a decisão, a serialização e o tratamento de erro — **não** a entrega.
+  `OPERATIONS.md` §3.5.2 («Estado da verificação») e §9 dizem-no. Esta limitação **não** deve ser
+  convertida em prova de E2E: fechá-la exige um broker real e um subscritor.
+- **Commit:** **nenhum** — no working tree; aguarda autorização de publicação.
 
 #### INT-002 · Integrações de fabricantes — A4 · P4 · `DEFERRED`
 
@@ -3048,7 +3118,7 @@ penduram), `PC-33` (`GET /api` anuncia `/api/v1/health`, que devolve 404) e `PC-
   nisso): mensagens de validação em inglês (**`PC-35`**) e envelopes de lista fora do contrato
   (**`PC-36`**). Ambos exigem **tarefa própria e decisão de produto/contrato** — nenhum foi resolvido
   dentro de `TEST-002`.
-- **Commit:** **nenhum.**
+- **Commit:** `ef0ebf6` — incluída na release publicada (consolidação de produto web, OAuth, agendador e documentos).
 
 ### 5.9 Documentação (A1)
 
@@ -3293,6 +3363,7 @@ revisão adversarial de A1 — não se começa por arrastamento de uma tarefa an
 | —     | `WEB-006` — Acessibilidade                | P2         | **`DONE`** (2026-09-22) — 4 correções, 28 testes, 3 rondas de mutação |
 | —     | `MOB-001` — Arquitetura Flutter           | P1         | **`DONE`** (2026-09-22) — `apps/mobile` criado, contrato gerado, 3 mutações |
 | —     | `WEB-011` — Contraste WCAG (medido)       | P2         | **`DONE`** (2026-09-22) — 0 falhas nos 2 temas, 58 testes, 15 mutações |
+| —     | `WEB-004` — Ecrãs de registos por tipo    | P1         | **`DONE`** (2026-09-23) — 4 ecrãs (inspeções, impostos, seguros, odómetro), 22 testes, 12 mutações |
 | 3     | `WEB-012` — Anunciar mudança de página    | P2         | `READY` — **bloqueada por decisão de política** (3 escolhas em aberto) |
 | 4     | `WEB-009` — «Validade» duplicado          | P2         | `READY` — cuidado com `PROD-001` (A4) |
 | —     | `WEB-013` — Ciclo de sessão da web         | P1        | **`DONE`** (2026-09-22, consolidado por A9 em 2026-09-23) — `setTokens` com uma só fonte, rotação preservada, renovação única, 17 testes, 4 mutações |
@@ -3300,8 +3371,8 @@ revisão adversarial de A1 — não se começa por arrastamento de uma tarefa an
 | —     | `WEB-001` — Ecrã "Esqueci-me da password" | P0         | **`DONE`** (2026-09-22) — desbloqueada por `AUTH-001`; sem teste automático do ecrã |
 | —     | `WEB-003` — Documentos na interface       | P0         | **`DONE`** (2026-09-22) — `PROD-001`/`PROD-002` fechadas; falta o envio na web (decisão de produto) |
 
-A3 tem **nove tarefas `DONE`** (`WEB-001`, `WEB-002`, `WEB-003`, `WEB-005`, `WEB-006`, `WEB-010`,
-`WEB-011`, `WEB-013`, `MOB-001`), duas `READY` sem dependências (uma delas à espera de decisão de
+A3 tem **dez tarefas `DONE`** (`WEB-001`, `WEB-002`, `WEB-003`, `WEB-004`, `WEB-005`, `WEB-006`,
+`WEB-010`, `WEB-011`, `WEB-013`, `MOB-001`), duas `READY` sem dependências (uma delas à espera de decisão de
 política) e as restantes bloqueadas por `MOB-002`. **`WEB-013` fechou a 2026-09-22** (consolidado
 por A9 a 2026-09-23, ver §5.3): o cliente web descartava o token de renovação e a sessão durava 1
 hora em vez dos 90 dias configurados — corrigido com **17 testes** e **4 mutações** mortas.
@@ -3322,7 +3393,7 @@ pré-correção) e **6 mutações** mortas. *(Correção de A9, 2026-09-23: a co
 | —     | `PROD-007` — Documentos: remover bytes ao eliminar | P2     | **`DONE`** (2026-09-23) — 11 testes, 4 mutações |
 | —     | `PROD-008` — Documentos: substituir o ficheiro | P2         | **`DONE`** (2026-09-23) — `PUT`, 17 testes, 8 mutações |
 | —     | `PROD-004` — Agendador de notificações         | P2         | **`DONE`** (2026-09-23) — núcleo partilhado + runner in-process, 15 testes, 9 mutações |
-| 4     | `INT-001` — Publicação MQTT                    | P2         | —                                     |
+| —     | `INT-001` — Publicação MQTT                    | P2         | **`DONE`** (2026-09-23) — 69 testes, 16 mutações (14 mortas) |
 
 **`PROD-003` vem primeiro de propósito:** antes de construir, verificar. O inventário de §3 foi  
 levantado por documentação e amostragem; A4 deve substituí-lo por estado verificado domínio a  

@@ -13,6 +13,7 @@ import { logger } from './core/logger.js';
 import { createApp, logStartup } from './app.js';
 import { notificationSyncJob } from './jobs/notification-sync.js';
 import { createJobRunner } from './jobs/runner.js';
+import { composeMqtt, redactMqttUrl } from './services/mqtt-bootstrap.js';
 
 async function main(): Promise<void> {
   logStartup();
@@ -72,9 +73,51 @@ async function main(): Promise<void> {
    * API que demora a aceitar pedidos. A primeira passagem é disparada pelo `runOnStart`
    * do runner, sem bloquear nada.
    */
+
+  /* ------------------------------------------------------------------------ */
+  /* Publicação MQTT (`INT-001`)                                              */
+  /* ------------------------------------------------------------------------ */
+
+  /*
+   * O publicador só existe se houver broker configurado — e a ausência é o caso normal em
+   * desenvolvimento, não um erro.
+   *
+   * Duas decisões aqui, e as duas são sobre não piorar o serviço por causa de um extra:
+   *
+   *  - **sem `HA_MQTT_URL` não há cliente nem tarefa.** Não é uma tarefa que corre e não faz
+   *    nada: é uma tarefa que não existe. Um agendador com uma tarefa inerte a intervalos
+   *    regulares encheria os registos com a mesma linha, e o operador deixaria de as ler —
+   *    precisamente as que interessam no dia em que o broker for configurado.
+   *  - **a ligação não é aberta no arranque.** O cliente é preguiçoso (`services/mqtt-client.ts`):
+   *    liga-se na primeira publicação. Um broker em baixo não atrasa o arranque nem deixa uma
+   *    promessa pendente, e um `HA_MQTT_URL` errado não impede a API de servir.
+   *
+   * A `discoveryPrefix` é normalizada uma vez, aqui, e é o valor que o log de arranque mostra:
+   * é a diferença entre o operador ver o prefixo que o Zemlo está a usar e adivinhá-lo.
+   */
+  /*
+   * A composição vive em `services/mqtt-bootstrap.ts` — é uma função **pura** sobre a
+   * configuração, e é o que a torna testável sem broker (o `server.ts` chama `main()` no import,
+   * pelo que não pode ser importado por um teste). Aqui fica só a decisão de **o que fazer com
+   * ela**: registar, ligar ao agendador, e fechar no encerramento. Ver o cabeçalho daquele
+   * ficheiro para o porquê de «sem `HA_MQTT_URL` não haver tarefa».
+   */
+  const mqtt = composeMqtt(config.homeAssistant);
+
+  if (mqtt.client === null) {
+    logger.info('publicação MQTT inativa: sem HA_MQTT_URL configurado');
+  } else {
+    logger.info('publicação MQTT ativa', {
+      discoveryPrefix: mqtt.discoveryPrefix,
+      // O URL é registado sem credenciais: o `username`/`password` viajam no mesmo URL em muitos
+      // brokers, e um log de arranque não é sítio para um segredo (§31).
+      broker: redactMqttUrl(String(config.homeAssistant.mqttUrl)),
+    });
+  }
+
   const jobs = createJobRunner({
     intervalMinutes: config.jobs.notificationSyncIntervalMinutes,
-    jobs: [notificationSyncJob],
+    jobs: [notificationSyncJob, ...mqtt.jobs],
   });
   jobs.start();
 
@@ -105,6 +148,18 @@ async function main(): Promise<void> {
     await new Promise<void>((resolve) => {
       server.close(() => resolve());
     });
+
+    /*
+     * A ligação ao broker é fechada depois do servidor e antes da base de dados.
+     *
+     * Depois do servidor porque não há nada de novo a publicar quando já não se aceitam
+     * pedidos; antes da base de dados porque uma publicação em curso pode querer ler dados, e
+     * fechar a base de dados primeiro só produziria erros de ligação nos registos. O `close()`
+     * do cliente nunca lança — ver `services/mqtt-client.ts` —, pelo que uma falha a despedir-se
+     * de um broker indisponível não pode impedir o encerramento limpo.
+     */
+    if (mqtt.client !== null) await mqtt.client.close();
+
     await disconnectDatabase();
     logger.info('Encerrado.');
     process.exit(0);
@@ -128,3 +183,4 @@ main().catch((error) => {
   logger.error('Falha fatal no arranque', { error });
   process.exit(1);
 });
+

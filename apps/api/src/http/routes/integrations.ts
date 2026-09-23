@@ -31,6 +31,7 @@ import { logger } from '../../core/logger.js';
 import { mapIntegration } from '../../domain/payload.js';
 import { audit } from '../../services/audit.js';
 import { buildStats, loadVehicleAnalytics, type VehicleAnalytics } from '../../services/analytics.js';
+import { buildEntityCatalog } from '../../services/mqtt-publisher.js';
 import { today } from '../../http/middleware.js';
 
 /**
@@ -320,126 +321,29 @@ interface HomeAssistantSpecInput {
 }
 
 function buildHomeAssistantSpec(input: HomeAssistantSpecInput): HomeAssistantSpec {
-  const slug = 'car';
   const prefix = config.homeAssistant.discoveryPrefix;
-  const stateTopic = `zemlo/${slug}/state`;
+  const stateTopic = `zemlo/car/state`;
 
-  const entities: HomeAssistantSpec['entities'] = [
-    {
-      entityId: `sensor.zemlo_${slug}_odometer`,
-      name: 'Quilometragem',
-      component: 'sensor',
-      deviceClass: 'distance',
-      unitOfMeasurement: 'km',
-      stateClass: 'total_increasing',
-      requires: 'Quilometragem registada no Zemlo.',
-      available: input.hasOdometer,
-    },
-    {
-      entityId: `sensor.zemlo_${slug}_consumption`,
-      name: 'Consumo',
-      component: 'sensor',
-      deviceClass: null,
-      unitOfMeasurement: 'L/100 km',
-      stateClass: 'measurement',
-      requires: 'Dois abastecimentos com depósito cheio e quilometragem.',
-      available: input.hasFuelConsumption,
-    },
-    {
-      entityId: `sensor.zemlo_${slug}_energy_consumption`,
-      name: 'Consumo elétrico',
-      component: 'sensor',
-      deviceClass: null,
-      unitOfMeasurement: 'kWh/100 km',
-      stateClass: 'measurement',
-      requires: 'Dois carregamentos com quilometragem.',
-      available: input.hasEnergyConsumption,
-    },
-    {
-      entityId: `sensor.zemlo_${slug}_cost_per_km`,
-      name: 'Custo por km',
-      component: 'sensor',
-      deviceClass: 'monetary',
-      unitOfMeasurement: 'EUR',
-      stateClass: 'measurement',
-      requires: 'Despesas registadas e quilometragem suficiente para calcular a distância.',
-      available: input.hasCostPerKm,
-    },
-    {
-      entityId: `sensor.zemlo_${slug}_next_service`,
-      name: 'Próxima manutenção',
-      component: 'sensor',
-      deviceClass: null,
-      unitOfMeasurement: 'km',
-      stateClass: null,
-      requires: 'Um lembrete de manutenção ativo.',
-      available: input.hasNextService,
-    },
-    {
-      entityId: `sensor.zemlo_${slug}_inspection`,
-      name: 'Próxima inspeção',
-      component: 'sensor',
-      deviceClass: 'date',
-      unitOfMeasurement: null,
-      stateClass: null,
-      requires: 'Inspeção registada com próxima data.',
-      available: input.hasInspection,
-    },
-    {
-      entityId: `sensor.zemlo_${slug}_insurance`,
-      name: 'Fim do seguro',
-      component: 'sensor',
-      deviceClass: 'date',
-      unitOfMeasurement: null,
-      stateClass: null,
-      requires: 'Apólice de seguro registada.',
-      available: input.hasInsurance,
-    },
-    {
-      entityId: `sensor.zemlo_${slug}_battery`,
-      name: 'Estado de carga',
-      component: 'sensor',
-      deviceClass: 'battery',
-      unitOfMeasurement: '%',
-      stateClass: 'measurement',
-      requires:
-        'Estado de carga final registado num carregamento. Não é uma leitura em tempo real: tem a data do último carregamento, porque o Zemlo não fala com o carro.',
-      available: input.socPercent !== null,
-    },
-    {
-      entityId: `sensor.zemlo_${slug}_range`,
-      name: 'Autonomia estimada',
-      component: 'sensor',
-      deviceClass: 'distance',
-      unitOfMeasurement: 'km',
-      stateClass: 'measurement',
-      requires:
-        'Estado de carga registado e autonomia homologada na ficha do veículo. É uma estimativa proporcional, não uma medição.',
-      available: input.rangeEstimatedFromSoc !== null,
-    },
-    {
-      entityId: `binary_sensor.zemlo_${slug}_charging`,
-      name: 'A carregar',
-      component: 'binary_sensor',
-      deviceClass: 'battery_charging',
-      unitOfMeasurement: null,
-      stateClass: null,
-      requires:
-        'Exige telemetria em tempo real do veículo ou da wallbox. Com registos manuais o Zemlo não sabe se o carro está a carregar neste momento — e não o vai adivinhar.',
-      available: false,
-    },
-    {
-      entityId: `device_tracker.zemlo_${slug}`,
-      name: 'Localização do veículo',
-      component: 'device_tracker',
-      deviceClass: null,
-      unitOfMeasurement: null,
-      stateClass: null,
-      requires:
-        'Exige localização em tempo real, que o Zemlo não recolhe. Registar a posição de um posto de abastecimento não é o mesmo que seguir o veículo, e tratá-lo como tal seria uma invasão de privacidade disfarçada de funcionalidade.',
-      available: false,
-    },
-  ];
+  /*
+   * O catálogo vem de `services/mqtt-publisher.ts`, e **não** de uma lista local.
+   *
+   * Antes de `INT-001` existia aqui a única lista de entidades do projeto. A publicação MQTT
+   * precisa da mesma lista — quais existem e quais estão disponíveis —, e a alternativa a
+   * partilhá-la seria copiá-la para o publicador. Duas listas divergem ao primeiro sensor
+   * acrescentado, e a divergência seria invisível: a interface mostraria uma entidade e o
+   * Home Assistant outra. A função única elimina a possibilidade em vez de a vigiar.
+   */
+  const entities = buildEntityCatalog({
+    hasOdometer: input.hasOdometer,
+    hasFuelConsumption: input.hasFuelConsumption,
+    hasEnergyConsumption: input.hasEnergyConsumption,
+    hasCostPerKm: input.hasCostPerKm,
+    hasNextService: input.hasNextService,
+    hasInspection: input.hasInspection,
+    hasInsurance: input.hasInsurance,
+    socPercent: input.socPercent,
+    rangeEstimatedFromSoc: input.rangeEstimatedFromSoc,
+  });
 
   const instructions: string[] = [
     'No Zemlo: Definições → Integrações → Home Assistant, e copia o token de acesso.',
