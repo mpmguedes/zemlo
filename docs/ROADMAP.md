@@ -318,7 +318,7 @@ Vista única. O detalhe está em §5. `—` em Dependências significa "nenhuma"
 | WEB-006  | Web          | Acessibilidade                                                         | A3     | P2         | `DONE`        | —                    |
 | WEB-007  | Web          | Pesquisa e filtros                                                     | A3     | P2         | `BACKLOG`  | —                       |
 | WEB-008  | Web          | Consistência visual e design system                                    | A3     | P3         | `BACKLOG`  | —                       |
-| WEB-009  | Web          | `DocumentsPage`: campo «Validade» duplicado                            | A3     | P2         | `READY`    | —                       |
+| WEB-009  | Web          | `DocumentsPage`: campo «Validade» duplicado                            | A3     | P2         | `DONE`     | —                       |
 | WEB-010  | Web          | Cabeçalho do calendário mostra data em vez do mês                      | A3     | P3         | `DONE`     | —                       |
 | WEB-011  | Web          | Contraste abaixo de WCAG AA (medido)                                   | A3     | P2         | `DONE`     | `WEB-008`               |
 | WEB-012  | Web          | Anunciar a mudança de página (título + foco)                           | A3     | P2         | `READY`    | decisão de política |
@@ -1874,7 +1874,7 @@ com `WEB-005` e `WEB-006` por commitar, à espera de autorização.
 
 #### WEB-008 · Consistência visual e design system — A3 · P3 · `BACKLOG`
 
-#### WEB-009 · `DocumentsPage`: campo «Validade» duplicado no formulário — A3 · P2 · `READY`
+#### WEB-009 · `DocumentsPage`: campo «Validade» duplicado no formulário — A3 · P2 · `DONE`
 
 - **Descrição:** o formulário «Novo documento» renderiza **dois** `DateField` com o rótulo
   «Validade», ambos ligados a `form.values.expiresAt` e ambos com o mesmo `error={errors.expiresAt}`
@@ -1892,6 +1892,31 @@ com `WEB-005` e `WEB-006` por commitar, à espera de autorização.
   corrigir primeiro e avisar A4.
 - **Origem:** descoberto na auditoria de estados de `WEB-005`. **Não** é um defeito de estado —
   por isso é tarefa própria e não foi corrigido dentro de `WEB-005` (§1.2).
+
+- **Fecho (A9, 2026-09-23) — `DONE`.** O formulário «Novo documento» passa a ter **um só** campo
+  «Validade»: removido o `DateField` duplicado, que ficou para trás quando a validade passou
+  para o par com a data. **`onSubmit` e o payload não foram tocados** — a alteração é só de JSX.
+- **Decisão de implementação, declarada:** a grelha `z-grid--2` que envolvia o par saiu com o
+  duplicado. Sozinho, «Nome do ficheiro» ficaria numa grelha de duas colunas **com uma célula
+  vazia** — um campo a meia largura ao lado de nada. Passa a ocupar a linha inteira, como «Nome»
+  e «Notas».
+- **Testes:** `apps/web/test/documents-form.test.ts` (**novo**, **3 testes**) — conta as
+  ocorrências do rótulo «Validade», verifica que os restantes campos se mantêm e inclui um teste
+  **anti-vacuidade**, no padrão da guarda de `role="group"` de `accessibility.test.tsx`.
+- **Prova por mutação:** **2/2 mortas** — repor o duplicado dá `expected [...] to have a length
+  of 1 but got 2`; renomear o único «Validade» dá **2** vermelhos, incluindo a anti-vacuidade.
+  Ficheiro reposto e confirmado por `sha256` (`9872189c…`, idêntico antes e depois).
+- **Verificação:** `typecheck` da web exit 0; `PC-15` coberto por `tsconfig` restrito fora do
+  repositório, exit 0; suíte web **12 ficheiros / 246 testes / exit 0** com `--no-cache` e
+  `--no-file-parallelism` (medido por A9 em 2026-09-23). `git diff --numstat` do ficheiro:
+  **16/17**.
+- **Limitação explícita — a validação é ESTÁTICA, e está rotulada como tal.** O critério desta
+  tarefa diz «inspeção do formulário **renderizado**» e isso **não** foi feito: o formulário abre
+  por interação (`useState`) e o projeto decidiu não usar `jsdom`, pelo que um teste de
+  renderização veria a lista e não o formulário. O que está provado é que o rótulo é **declarado
+  uma só vez** no código-fonte — **não** que o ecrã o mostra uma só vez. **A interação continua
+  por validar.**
+- **Commit:** **nenhum** — no working tree; aguarda autorização de publicação.
 
 #### WEB-011 · Contraste abaixo de WCAG AA (medido) — A3 · P2 · `DONE`
 
@@ -3365,14 +3390,14 @@ revisão adversarial de A1 — não se começa por arrastamento de uma tarefa an
 | —     | `WEB-011` — Contraste WCAG (medido)       | P2         | **`DONE`** (2026-09-22) — 0 falhas nos 2 temas, 58 testes, 15 mutações |
 | —     | `WEB-004` — Ecrãs de registos por tipo    | P1         | **`DONE`** (2026-09-23) — 4 ecrãs (inspeções, impostos, seguros, odómetro), 22 testes, 12 mutações |
 | 3     | `WEB-012` — Anunciar mudança de página    | P2         | `READY` — **bloqueada por decisão de política** (3 escolhas em aberto) |
-| 4     | `WEB-009` — «Validade» duplicado          | P2         | `READY` — cuidado com `PROD-001` (A4) |
+| —     | `WEB-009` — «Validade» duplicado          | P2         | **`DONE`** (2026-09-23) — 1 campo duplicado removido, 3 testes, 2 mutações |
 | —     | `WEB-013` — Ciclo de sessão da web         | P1        | **`DONE`** (2026-09-22, consolidado por A9 em 2026-09-23) — `setTokens` com uma só fonte, rotação preservada, renovação única, 17 testes, 4 mutações |
 | —     | `WEB-010` — Mês no cabeçalho do calendário | P3        | **`DONE`** (2026-09-23) — 2 linhas, 19 testes, 6 mutações |
 | —     | `WEB-001` — Ecrã "Esqueci-me da password" | P0         | **`DONE`** (2026-09-22) — desbloqueada por `AUTH-001`; sem teste automático do ecrã |
 | —     | `WEB-003` — Documentos na interface       | P0         | **`DONE`** (2026-09-22) — `PROD-001`/`PROD-002` fechadas; falta o envio na web (decisão de produto) |
 
-A3 tem **dez tarefas `DONE`** (`WEB-001`, `WEB-002`, `WEB-003`, `WEB-004`, `WEB-005`, `WEB-006`,
-`WEB-010`, `WEB-011`, `WEB-013`, `MOB-001`), duas `READY` sem dependências (uma delas à espera de decisão de
+A3 tem **onze tarefas `DONE`** (`WEB-001`, `WEB-002`, `WEB-003`, `WEB-004`, `WEB-005`, `WEB-006`,
+`WEB-009`, `WEB-010`, `WEB-011`, `WEB-013`, `MOB-001`), duas `READY` sem dependências (uma delas à espera de decisão de
 política) e as restantes bloqueadas por `MOB-002`. **`WEB-013` fechou a 2026-09-22** (consolidado
 por A9 a 2026-09-23, ver §5.3): o cliente web descartava o token de renovação e a sessão durava 1
 hora em vez dos 90 dias configurados — corrigido com **17 testes** e **4 mutações** mortas.

@@ -152,23 +152,22 @@ export function DocumentsPage() {
                 error={errors.expiresAt}
               />
             </div>
-            <div className="z-grid z-grid--2">
-              <TextField
-                label="Nome do ficheiro"
-                placeholder="apolice-2026.pdf"
-                hint="Só o nome — o ficheiro é associado pela importação."
-                value={form.values.fileName}
-                onChange={(event) => form.setValue('fileName', event.target.value)}
-                error={errors.fileName}
-              />
-              <DateField
-                label="Validade"
-                hint="Com validade, o Zemlo avisa-te antes de expirar."
-                value={form.values.expiresAt}
-                onChange={(event) => form.setValue('expiresAt', event.target.value)}
-                error={errors.expiresAt}
-              />
-            </div>
+            {/*
+              «Nome do ficheiro» ocupa a linha inteira.
+
+              Estava num par `z-grid--2` com um **segundo** campo «Validade» — o duplicado de
+              `WEB-009`, que ficou para trás quando a validade passou para o par com a data
+              (logo acima). Removido o duplicado, o par ficava com um filho só: um campo a meia
+              largura ao lado de nada. A grelha sai com ele.
+            */}
+            <TextField
+              label="Nome do ficheiro"
+              placeholder="apolice-2026.pdf"
+              hint="Só o nome — o ficheiro é associado pela importação."
+              value={form.values.fileName}
+              onChange={(event) => form.setValue('fileName', event.target.value)}
+              error={errors.fileName}
+            />
             <TextAreaField label="Notas" value={form.values.notes} onChange={(event) => form.setValue('notes', event.target.value)} />
             {create.error ? <InlineError message={errorMessage(create.error)} requestId={errorRequestId(create.error)} /> : null}
             <div className="z-row z-row--end" style={{ gap: 'var(--z-space-3)' }}>
