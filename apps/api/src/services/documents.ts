@@ -19,10 +19,13 @@
  *     storage valida o prefixo `<userId>/` da chave. Não há links partilháveis, não há
  *     validade a gerir, e revogar o acesso é apagar o documento.
  *
- * O que **ainda** não existe é o upload: os bytes só entram no armazenamento pelo
- * importador de bundle (`services/import/apply.ts`) ou por escrita directa. Esta nota
- * delimitava o produto por omissão de capacidade; passou a delimitá-lo por omissão de
- * entrada, que é uma afirmação mais fraca e por isso mais fácil de manter verdadeira.
+ * O que **já** existe é o upload: `uploadDocumentContent` recebe os bytes, gera a chave no
+ * servidor e escreve-os pelo armazenamento; `replaceDocumentContent` troca-os, pelo `PUT`.
+ * Continua a haver uma segunda via de entrada — o importador de bundle
+ * (`services/import/apply.ts`) — mas as três passam pela mesma abstração, e nenhuma delas
+ * aceita uma localização vinda do cliente. O ciclo fecha-se em `deleteDocument`, que devolve
+ * ao armazenamento os bytes que o registo já não referencia (`PROD-007`), e a substituição
+ * (`PROD-008`) reutiliza essa mesma remoção em vez de a repetir.
  */
 
 import type {
@@ -34,8 +37,9 @@ import type {
 } from '@zemlo/shared';
 import { todayIn, type CivilDate } from '@zemlo/shared';
 import { prisma } from '../core/db.js';
-import { forbidden, notFound, translatePrismaError } from '../core/errors.js';
+import { badRequest, conflict, forbidden, notFound, translatePrismaError } from '../core/errors.js';
 import { writeJson } from '../core/json.js';
+import { logger } from '../core/logger.js';
 import { mapDocument } from '../domain/payload.js';
 import { recordEvent, removeEventsFor } from './events.js';
 import { buildPage, civilToDateOrNull, cursorWhere, requireRecord } from './shared.js';
@@ -191,8 +195,43 @@ export async function updateDocument(
   return getDocument(userId, documentId);
 }
 
+/**
+ * Elimina um documento, o que dele deriva e os bytes que lhe pertencem (§17).
+ *
+ * ## A ordem é a garantia, e é o contrário do que parece natural
+ *
+ * A tentação é apagar o ficheiro primeiro e o registo depois — "se o registo falhar, ao
+ * menos o ficheiro já foi". Produz o pior dos dois estados: uma linha que anuncia um
+ * ficheiro que já não existe, e um download a responder 404 para um documento que a lista
+ * continua a mostrar. As duas invariantes desta tarefa **não são simétricas**:
+ *
+ *  - **o registo nunca pode apontar para um ficheiro inexistente** — por isso o registo sai
+ *    primeiro. A partir do momento em que a linha desaparece, nada aponta para o ficheiro:
+ *    uma falha posterior deixa bytes sem dono (o estado anterior a esta tarefa), nunca um
+ *    registo quebrado;
+ *  - **um ficheiro ainda referenciado nunca pode ser apagado** — por isso os bytes saem
+ *    depois, e só depois de se confirmar que mais ninguém os referencia (ver
+ *    `discardDocumentBytes`).
+ *
+ * ## Porque é que uma falha do armazenamento não faz falhar a eliminação
+ *
+ * O utilizador pediu para apagar o registo, e o registo foi apagado. Transformar uma falha
+ * do armazenamento num erro HTTP obrigaria o cliente a repetir um pedido que já teve
+ * efeito — e a repetição responderia 404, que é o pior resultado possível para quem só
+ * queria apagar o que é seu. A remoção é, portanto, *best-effort* e registada.
+ */
 export async function deleteDocument(userId: string, documentId: string): Promise<void> {
-  await requireRecord('document', userId, documentId);
+  /*
+   * 1. Propriedade **e** a chave, lidas antes de a linha desaparecer: depois do `delete`
+   * já não há de onde a ler. A consulta continua a ser a mesma porta de entrada do download
+   * e do upload, pelo que um documento de outra conta responde 404 sem que nenhum byte
+   * seja tocado.
+   */
+  const record = await requireRecord('document', userId, documentId);
+  const storageKey =
+    typeof record.storageKey === 'string' && record.storageKey.length > 0 ? record.storageKey : null;
+
+  // 2. O registo, e tudo o que dele deriva. A partir daqui, o ficheiro não tem dono.
   await prisma.document.delete({ where: { id: documentId } });
   await removeEventsFor('document', documentId);
   const reminders = await prisma.reminder.findMany({
@@ -203,6 +242,89 @@ export async function deleteDocument(userId: string, documentId: string): Promis
     await prisma.reminder.deleteMany({ where: { id: { in: reminders.map((reminder) => reminder.id) } } });
     for (const reminder of reminders) await removeEventsFor('reminder', reminder.id);
   }
+
+  // 3. Os bytes. Um documento sem ficheiro salta este passo — e é o caso comum.
+  if (storageKey !== null) await discardDocumentBytes(userId, documentId, storageKey);
+}
+
+/**
+ * Apaga do armazenamento os bytes de um documento **já eliminado**.
+ *
+ * ## Porque é que isto é uma função e não três linhas dentro de `deleteDocument`
+ *
+ * São três linhas com três decisões dentro, e todas as três se perdem numa revisão rápida:
+ * a verificação de referências, o `try` que não pode propagar, e a forma do log. Isoladas,
+ * cada uma tem um teste que a fixa.
+ *
+ * ## A contagem de referências (e o que ela tem a ver com `PC-21`)
+ *
+ * `storageKey` **não é única** no modelo, e não é por descuido: `updateDocument` aceita uma
+ * `storageKey` vinda do cliente (`PC-21`, ainda aberto), pelo que dois registos da mesma
+ * conta podem apontar para o mesmo ficheiro. Sem esta verificação, apagar um deles apagaria
+ * o ficheiro do outro — precisamente o "apagar prematuramente um ficheiro ainda
+ * referenciado" que esta tarefa tem de impedir. O upload e o importador nunca produzem duas
+ * chaves iguais (16 bytes aleatórios), mas a via de `updateDocument` produz.
+ *
+ * A corrida entre duas eliminações concorrentes empurra na direcção segura: no pior caso as
+ * duas contagens lêem 1 e nenhuma remove, deixando um órfão — um ficheiro a mais, nunca um
+ * registo sem ficheiro.
+ *
+ * ## A higiene do log
+ *
+ * A mensagem do erro **não** é registada. Os erros do sistema de ficheiros trazem o caminho
+ * na própria mensagem — `EACCES: permission denied, unlink '…/documents-storage/<userId>/<chave>'`
+ * — e o caminho contém a chave, que é exactamente o que não pode entrar num log. Só o
+ * `documentId` e o código do erro (`EACCES`, `EPERM`, …) são escritos; ver
+ * `storageErrorCode`.
+ */
+async function discardDocumentBytes(
+  userId: string,
+  documentId: string,
+  storageKey: string,
+): Promise<void> {
+  const references = await prisma.document.count({ where: { storageKey } });
+  if (references > 0) {
+    logger.info('bytes do documento mantidos: ainda referenciados por outro registo', {
+      documentId,
+      references,
+    });
+    return;
+  }
+
+  const { documentStorage, StorageKeyError } = await import('./document-storage.js');
+
+  try {
+    await documentStorage().remove(userId, storageKey);
+  } catch (error) {
+    /*
+     * Chegar aqui não desfaz a eliminação: o registo já não existe, e o utilizador pediu
+     * exactamente isso. O que fica é o estado anterior a esta tarefa — bytes sem dono —, e
+     * é isso que o log regista para que o resíduo seja observável.
+     *
+     * Uma `StorageKeyError` é um caso à parte e merece um rótulo próprio: significa que o
+     * armazenamento **recusou** a chave (pertence a outra conta, ou aponta para fora da
+     * raiz). Nesse caso o ficheiro não foi tocado, e o que existe é um defeito de dados —
+     * não uma falha de infraestrutura.
+     */
+    logger.warn('não foi possível remover os bytes do documento', {
+      documentId,
+      reason:
+        error instanceof StorageKeyError ? 'chave recusada pelo armazenamento' : storageErrorCode(error),
+    });
+  }
+}
+
+/**
+ * O código de um erro do sistema de ficheiros — nunca a mensagem.
+ *
+ * A mensagem de um erro do `node:fs` inclui o caminho, e o caminho inclui a `storageKey`.
+ * O código (`EACCES`, `EPERM`, `EBUSY`, …) identifica a causa sem revelar onde o ficheiro
+ * vive. Um valor que não tenha a forma de um código do sistema é substituído por um rótulo
+ * genérico: o log não é um sítio para texto que veio de uma excepção.
+ */
+function storageErrorCode(error: unknown): string {
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+  return typeof code === 'string' && /^[A-Z][A-Z0-9_]*$/.test(code) ? code : 'falha do armazenamento';
 }
 
 /**
@@ -344,6 +466,177 @@ export async function downloadDocument(
     sizeBytes: stored.sizeBytes,
     vehicleId: typeof record.vehicleId === 'string' ? record.vehicleId : null,
   };
+}
+
+/**
+ * Guarda os bytes de um documento — a via de entrada (§17).
+ *
+ * É o espelho de `downloadDocument`, e a simetria é deliberada: um recebe bytes e escreve a
+ * chave, o outro lê a chave e devolve bytes. Ambos partem do **mesmo** primeiro passo —
+ * `requireRecord('document', userId, documentId)` — e é por isso que a autorização não pode
+ * divergir entre eles.
+ *
+ * ## A chave é gerada aqui, e não recebida
+ *
+ * Esta função **não aceita** uma `storageKey`, um caminho, um nome de ficheiro nem um
+ * directório. A chave nasce de `documentStorage().save(userId, bytes)`, que a constrói a
+ * partir do `userId` autenticado e de 16 bytes aleatórios. Não há, portanto, nada a validar
+ * quanto à localização: não existe um caminho de código em que o cliente a possa sugerir.
+ * Uma variante que aceitasse a chave "para o cliente poder escolher o sítio" seria a porta
+ * pela qual o isolamento se perde — e a razão pela qual o modelo guarda uma referência
+ * **opaca**.
+ *
+ * ## Porque é que um documento com ficheiro é recusado, e não substituído
+ *
+ * Um documento tem um ficheiro, e o `POST` cria-o. Para trocar o que já existe há o `PUT`
+ * (`replaceDocumentContent`), e a separação entre os dois é a decisão de `PROD-008`. Deixar a
+ * substituição no mesmo verbo torná-la-ia um efeito lateral de um pedido que o cliente pode
+ * repetir: um envio repetido por uma rede instável passaria a destruir o ficheiro anterior
+ * sem que ninguém o tivesse pedido. Um `409` é honesto — o pedido está bem formado, o estado
+ * é que não o aceita — e a resposta diz qual é o verbo certo.
+ */
+export async function uploadDocumentContent(
+  userId: string,
+  documentId: string,
+  bytes: Uint8Array,
+  mimeType: string,
+): Promise<DocumentRecord> {
+  // 1. Propriedade, pela consulta — a mesma porta de entrada do download. Um documento de
+  // outra conta responde 404 antes de qualquer byte ser escrito.
+  const record = await requireRecord('document', userId, documentId);
+
+  // 2. Um documento tem um ficheiro. Ver a nota acima: trocar o que existe é o `PUT`.
+  if (typeof record.storageKey === 'string' && record.storageKey.length > 0) {
+    throw conflict(
+      'Este documento já tem um ficheiro associado. Para o substituir, envia o novo com PUT para este mesmo endereço.',
+    );
+  }
+
+  await storeContentAndPointRecord(userId, documentId, bytes, mimeType);
+
+  return getDocument(userId, documentId);
+}
+
+/**
+ * Substitui os bytes de um documento — a segunda via de escrita (§17, `PROD-008`).
+ *
+ * ## Porque é que isto é um verbo próprio
+ *
+ * Ver a nota em `uploadDocumentContent`: a recusa do `POST` e a existência do `PUT` são a
+ * mesma decisão vista dos dois lados. O `PUT` é o verbo que a especificação HTTP reserva para
+ * "define o conteúdo deste endereço", e é por isso que a semântica aqui é a do verbo e não a
+ * do caso: **um documento sem ficheiro passa a tê-lo, e um que já tem passa a ter o novo**.
+ * Não há um `404` para "não havia nada para substituir" — o pedido define o conteúdo, exista
+ * ele ou não, e o resultado é o mesmo dos dois lados.
+ *
+ * ## A ordem: guardar, apontar, e só então limpar
+ *
+ *  1. os bytes **novos** são guardados primeiro. Se isto falhar, nada mudou: o registo
+ *     continua a apontar para o ficheiro antigo, que existe;
+ *  2. o registo passa a apontar para a chave **nova**. Se isto falhar, a chave nova é
+ *     removida (compensação, dentro de `storeContentAndPointRecord`) e o documento continua
+ *     a apontar para a antiga — o estado de partida, outra vez;
+ *  3. só agora, e já sem nada a apontar para ela, a chave **antiga** é removida — pela
+ *     **mesma** função que a eliminação usa (`discardDocumentBytes`), com a mesma contagem de
+ *     referências e a mesma higiene de log.
+ *
+ * Inverter 1 e 3 é o erro que se comete por reflexo — "liberta espaço antes de ocupar mais" —
+ * e produz o pior estado possível: um registo a apontar para um ficheiro que já não existe,
+ * que a lista mostra e o download recusa, e que o utilizador não consegue compor pela API. É
+ * por isso que a ordem é afirmada por um teste com a base de dados a falhar, e não apenas
+ * descrita aqui.
+ *
+ * ## O que fica intocado
+ *
+ * `name`, `category`, `date`, `expiresAt`, `vehicleId`, `notes` e `fileName`. Trocar a
+ * digitalização de um documento não é reescrever a ficha, e o nome do ficheiro não viaja num
+ * corpo cru — a mesma razão do `POST`.
+ */
+export async function replaceDocumentContent(
+  userId: string,
+  documentId: string,
+  bytes: Uint8Array,
+  mimeType: string,
+): Promise<DocumentRecord> {
+  /*
+   * 1. Propriedade **e** a chave antiga, lidas antes de tudo. A mesma porta de entrada do
+   * download e do upload: um documento de outra conta responde 404 sem nada ser escrito.
+   */
+  const record = await requireRecord('document', userId, documentId);
+  const previousKey =
+    typeof record.storageKey === 'string' && record.storageKey.length > 0 ? record.storageKey : null;
+
+  // 2. Os bytes novos, e o registo a apontar para eles.
+  await storeContentAndPointRecord(userId, documentId, bytes, mimeType);
+
+  /*
+   * 3. A chave antiga, agora que nada neste registo aponta para ela. Um documento que não
+   * tinha ficheiro chega aqui sem nada a limpar.
+   *
+   * A remoção é a **mesma** função da eliminação (`PROD-007`), e não uma segunda
+   * implementação: a contagem de referências (o `PC-21` permite que dois registos partilhem
+   * uma chave) e a higiene do log têm de ser as mesmas nos dois caminhos, senão divergem com
+   * o primeiro refactor que toque em apenas um deles.
+   */
+  if (previousKey !== null) await discardDocumentBytes(userId, documentId, previousKey);
+
+  return getDocument(userId, documentId);
+}
+
+/**
+ * Guarda os bytes e aponta o registo para eles — o passo que o `POST` e o `PUT` partilham.
+ *
+ * ## Porque é que isto é uma função
+ *
+ * Não é só para não repetir vinte linhas. É porque a **ordem** dentro destas vinte linhas é a
+ * garantia: guardar primeiro, escrever a chave depois. Se o `update` falhar, os bytes já
+ * estão no disco e nenhum registo lhes aponta — ficariam órfãos por um erro que não é do
+ * utilizador. A remoção compensatória é *best-effort* (`catch` que ignora): o erro que
+ * interessa reportar é o da base de dados, não uma falha de limpeza que o esconderia.
+ *
+ * Isto **não** é a remoção de `PROD-007` nem a de `PROD-008`. Aquelas devolvem ao
+ * armazenamento bytes que o utilizador decidiu deixar de usar; esta desfaz o que o próprio
+ * servidor acabou de escrever, dentro do mesmo pedido. Duas funções com nomes diferentes
+ * porque são duas coisas diferentes.
+ *
+ * ## Os três campos, e só três
+ *
+ * `storageKey`, `sizeBytes` e `mimeType` são os campos do ficheiro. `name`, `category`,
+ * `date`, `expiresAt`, `vehicleId` e `notes` são do utilizador e ficam como estavam: enviar
+ * bytes não é reescrever a ficha. O `fileName` **não** é tocado — o corpo cru não transporta
+ * um nome, e o download já sabe derivar um nome utilizável a partir do nome do documento e
+ * do tipo (ver `sanitizeDownloadName`).
+ */
+async function storeContentAndPointRecord(
+  userId: string,
+  documentId: string,
+  bytes: Uint8Array,
+  mimeType: string,
+): Promise<void> {
+  // Um ficheiro de zero bytes não é um ficheiro: é um envio que falhou a meio. Recusá-lo
+  // evita um registo que anuncia um ficheiro que não abre — e vale para os dois verbos.
+  if (bytes.byteLength === 0) {
+    throw badRequest('O ficheiro está vazio. Escolhe um ficheiro com conteúdo.');
+  }
+
+  const { documentStorage } = await import('./document-storage.js');
+
+  // A chave, gerada pelo servidor. O `userId` vem do pedido autenticado e é o prefixo.
+  const storageKey = await documentStorage().save(userId, bytes);
+
+  try {
+    await prisma.document.update({
+      where: { id: documentId },
+      data: {
+        storageKey,
+        sizeBytes: bytes.byteLength,
+        mimeType,
+      },
+    });
+  } catch (error) {
+    await documentStorage().remove(userId, storageKey).catch(() => undefined);
+    throw translatePrismaError(error, 'guardar o ficheiro do documento');
+  }
 }
 
 /**

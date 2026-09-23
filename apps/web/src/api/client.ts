@@ -144,10 +144,30 @@ export function getRefreshToken(): string | null {
   return readStorage(globalThis.localStorage, REFRESH_TOKEN_KEY);
 }
 
-export function setTokens(tokens: AuthTokens, refreshToken: string | null): void {
+/**
+ * Guarda a sessão. **O token de renovação vem dentro de `tokens`** — não há segundo
+ * argumento, e é deliberado.
+ *
+ * Durante muito tempo esta função teve um segundo parâmetro (`refreshToken: string | null`)
+ * e o `localStorage` nunca recebia nada, porque quem a chamava lia `session.refreshToken` —
+ * um campo que a API não envia. A API devolve o token em `tokens.refreshToken`
+ * (`AuthTokens.refreshToken`, obrigatório, decisão A23). Com uma única fonte, esse erro deixa
+ * de ser possível: não há um segundo sítio de onde o token possa vir errado.
+ *
+ * `tokens.refreshToken` é obrigatório no tipo, mas o tipo não corre em produção. Se uma
+ * resposta fora do contrato o omitir, mantém-se o token que já estava: a renovação acabou de
+ * devolver um token de acesso válido, e apagar o de renovação destruiria uma sessão viva.
+ * Escrevê-lo à letra seria pior — `setItem(key, undefined)` guarda a cadeia `"undefined"`,
+ * que em armazenamento parece um token a sério e só falha na renovação seguinte.
+ */
+export function setTokens(tokens: AuthTokens): void {
   accessTokenMemory = tokens.accessToken;
   writeStorage(globalThis.sessionStorage, ACCESS_TOKEN_KEY, tokens.accessToken);
-  if (refreshToken) writeStorage(globalThis.localStorage, REFRESH_TOKEN_KEY, refreshToken);
+
+  const refreshToken: unknown = tokens.refreshToken;
+  if (typeof refreshToken === 'string' && refreshToken !== '') {
+    writeStorage(globalThis.localStorage, REFRESH_TOKEN_KEY, refreshToken);
+  }
 }
 
 export function clearTokens(): void {
@@ -213,9 +233,13 @@ export function buildQueryString(query: QueryParams | undefined): string {
 let refreshInFlight: Promise<boolean> | null = null;
 
 async function refreshAccessToken(): Promise<boolean> {
+  // Juntar-se a uma renovação já em curso **antes** de olhar para o armazenamento: a
+  // resposta está a ser calculada neste momento, e um token lido agora pode estar prestes a
+  // ser substituído. Quem chega depois junta-se em vez de decidir sozinho.
+  if (refreshInFlight) return refreshInFlight;
+
   const refreshToken = getRefreshToken();
   if (!refreshToken) return false;
-  if (refreshInFlight) return refreshInFlight;
 
   refreshInFlight = (async () => {
     try {
@@ -225,8 +249,14 @@ async function refreshAccessToken(): Promise<boolean> {
         body: JSON.stringify({ refreshToken }),
       });
       if (!response.ok) return false;
-      const session = (await response.json()) as AuthSessionResponse & { refreshToken?: string };
-      setTokens(session.tokens, session.refreshToken ?? refreshToken);
+      /*
+       * O token rodado vem em `tokens.refreshToken` — a API invalida o anterior em cada
+       * renovação (A23). Ler o token de outro sítio, ou repor o que foi enviado, deixaria
+       * o cliente com um token que já não serve: a renovação seguinte falharia e a sessão
+       * cairia uma hora depois de ter sido renovada com sucesso.
+       */
+      const session = (await response.json()) as AuthSessionResponse;
+      setTokens(session.tokens);
       return true;
     } catch {
       return false;
@@ -438,19 +468,20 @@ export const api: Client = {
 /* Autenticação                                                                */
 /* -------------------------------------------------------------------------- */
 
-/**
- * Resposta de sessão com o `refreshToken` incluído.
+/*
+ * Aqui existia uma interface local `AuthResponse extends AuthSessionResponse` com um
+ * `refreshToken?: string` **no topo**. Era o defeito escrito por extenso: o tipo partilhado
+ * descreve `{ user, tokens }` e é isso que a API devolve, mas a interface local afirmava
+ * que havia um token fora de `tokens` — e o docblock que a acompanhava dizia que a API
+ * "podia não devolver" o token de renovação. Não podia deixar de o devolver: o campo é
+ * obrigatório em `AuthTokens` (A23), e o servidor põe-no lá precisamente para que a
+ * renovação silenciosa seja possível.
  *
- * A API devolve o token de renovação no corpo (`apps/api/src/http/routes/auth.ts`), mas o
- * tipo partilhado `AuthSessionResponse` descreve apenas `{ user, tokens }` — o token
- * opcional é tratado aqui. A ausência de `refreshToken` é tolerada de propósito: a
- * renovação silenciosa passa a não ser possível, a sessão dura o tempo do token de acesso
- * (uma hora) e a aplicação continua a funcionar. Falhar o início de sessão por causa de um
- * campo que o servidor decidiu não devolver seria desproporcionado.
+ * A crença errada era anterior ao código e sobreviveu-lhe: o `setTokens` recebia
+ * `session.refreshToken ?? null`, que é sempre `null`, e o `localStorage` ficava vazio. A
+ * interface foi apagada em vez de corrigida — sem ela, o compilador aponta para
+ * `tokens.refreshToken` e não há um segundo campo onde o token possa ser procurado.
  */
-export interface AuthResponse extends AuthSessionResponse {
-  refreshToken?: string;
-}
 
 export interface SignUpPayload {
   email: string;
@@ -461,20 +492,30 @@ export interface SignUpPayload {
 }
 
 export const auth = {
-  async login(email: string, password: string, totp?: string): Promise<AuthResponse> {
-    const session = await api.post<AuthResponse>('/auth/login', {
+  /**
+   * Inicia sessão e devolve o **perfil**, não a sessão.
+   *
+   * A sessão inclui o token de renovação, que vale 90 dias e é o segredo mais valioso que
+   * este cliente guarda. Nenhum ecrã precisa dele: o cliente já o persistiu em
+   * `setTokens`, e devolvê-lo punha-o ao alcance de qualquer componente, de qualquer
+   * `console.log` e de qualquer serialização de estado. O que o ecrã precisa — o perfil
+   * para decidir se mostra a aplicação ou o login — é o que sai daqui.
+   */
+  async login(email: string, password: string, totp?: string): Promise<UserProfile> {
+    const session = await api.post<AuthSessionResponse>('/auth/login', {
       email,
       password,
       ...(totp ? { totp } : {}),
     });
-    setTokens(session.tokens, session.refreshToken ?? null);
-    return session;
+    setTokens(session.tokens);
+    return session.user;
   },
 
-  async signup(payload: SignUpPayload): Promise<AuthResponse> {
-    const session = await api.post<AuthResponse>('/auth/signup', payload);
-    setTokens(session.tokens, session.refreshToken ?? null);
-    return session;
+  /** Registo. Mesma regra do início de sessão: sai o perfil, fica a sessão no cliente. */
+  async signup(payload: SignUpPayload): Promise<UserProfile> {
+    const session = await api.post<AuthSessionResponse>('/auth/signup', payload);
+    setTokens(session.tokens);
+    return session.user;
   },
 
   async logout(): Promise<void> {

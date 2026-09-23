@@ -19,10 +19,11 @@ import { useToast } from '../ui/Toaster';
  * agir sobre um documento — e "Descarregar" e "Eliminar" não devem ficar a um clique de
  * distância uma da outra.
  *
- * O que continua a **não** existir é o carregamento de ficheiros: este ecrã cria o
+ * O que continua a **não** existir **neste ecrã** é o envio de ficheiros: a lista cria o
  * registo e os metadados, e a transferência serve ficheiros que já estejam no
- * armazenamento (por exemplo, vindos de uma importação). Não há um `<input type="file">` a
- * fingir que faz mais do que isso (§49, §59).
+ * armazenamento (por exemplo, vindos de uma importação). A API já **aceita** o envio de
+ * bytes (`POST /documents/:id/content`, §A31), mas este ecrã não tem `<input type="file">`
+ * — e não se finge que tem, que é a razão de o aviso abaixo ser explícito (§49, §59).
  */
 export function DocumentsPage() {
   const vehicles = useVehicles();
@@ -104,8 +105,8 @@ export function DocumentsPage() {
       <Card soft>
         <p className="z-small z-muted">
           Abre um documento para ver os metadados, corrigir a validade e transferir o ficheiro.
-          Este ecrã regista documentos; o carregamento de ficheiros novos para o armazenamento
-          ainda não está ligado.
+          Este ecrã regista documentos. O envio de ficheiros novos ainda não está disponível
+          aqui: a API já o aceita, mas este ecrã ainda não tem um controlo para o fazer.
         </p>
       </Card>
 

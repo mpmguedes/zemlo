@@ -174,6 +174,167 @@ describe('averageFuelConsumption', () => {
   });
 });
 
+/**
+ * A8: o consumo é calculado "depósito a depósito". Só existe um intervalo quando há
+ * **dois** abastecimentos completos com odómetro, e os litros dos abastecimentos
+ * parciais pelo meio **acumulam** para esse intervalo em vez de serem descartados.
+ *
+ * O médio tem de concordar com o consumo por sessão que `deriveFuelConsumption` mostra
+ * na lista de abastecimentos. Quando os dois divergem, o painel e a lista apresentam
+ * números diferentes para o mesmo veículo — que é o defeito que estes testes fixam.
+ */
+describe('averageFuelConsumption — acumulação de parciais (A8)', () => {
+  it('inclui os litros do parcial no intervalo entre dois depósitos atestados', () => {
+    // (10 + 50) L / (11 000 - 10 000) km = 6,00 L/100 km.
+    // Medir o intervalo adjacente daria 50 L / 500 km = 10,00 L/100 km.
+    const average = averageFuelConsumption([
+      fuel('a', '2026-01-01', 40, 10_000),
+      fuel('parcial', '2026-01-15', 10, 10_500, false),
+      fuel('b', '2026-02-01', 50, 11_000),
+    ]);
+
+    expect(average).toBeCloseTo(6, 2);
+  });
+
+  it('o médio coincide com o consumo por sessão do intervalo fechado', () => {
+    const series = [
+      fuel('a', '2026-01-01', 40, 10_000),
+      fuel('parcial', '2026-01-15', 10, 10_500, false),
+      fuel('b', '2026-02-01', 50, 11_000),
+    ];
+
+    const perSession = deriveFuelConsumption(series).get('b')?.consumptionPer100Km ?? null;
+
+    // O painel e a lista de abastecimentos não podem discordar sobre o mesmo veículo.
+    expect(averageFuelConsumption(series)).toBe(perSession);
+  });
+
+  it('dois depósitos atestados consecutivos: usa os litros do segundo', () => {
+    const average = averageFuelConsumption([
+      fuel('a', '2026-01-01', 40, 10_000),
+      fuel('b', '2026-02-01', 60, 11_000),
+    ]);
+
+    expect(average).toBeCloseTo(6, 2);
+  });
+
+  it('um parcial entre dois atestados, com litros diferentes dos atestados', () => {
+    // (20 + 30) L / 1 000 km = 5,00 L/100 km.
+    const average = averageFuelConsumption([
+      fuel('a', '2026-01-01', 50, 10_000),
+      fuel('parcial', '2026-01-15', 20, 10_500, false),
+      fuel('b', '2026-02-01', 30, 11_000),
+    ]);
+
+    expect(average).toBeCloseTo(5, 2);
+  });
+
+  it('acumula vários parciais entre dois atestados', () => {
+    // (5 + 15 + 40) L / 1 000 km = 6,00 L/100 km.
+    // Medir o intervalo adjacente daria 40 L / 400 km = 10,00 L/100 km.
+    const average = averageFuelConsumption([
+      fuel('a', '2026-01-01', 40, 10_000),
+      fuel('p1', '2026-01-10', 5, 10_200, false),
+      fuel('p2', '2026-01-20', 15, 10_600, false),
+      fuel('b', '2026-02-01', 40, 11_000),
+    ]);
+
+    expect(average).toBeCloseTo(6, 2);
+  });
+
+  it('acumula um parcial maior do que os depósitos atestados', () => {
+    // (60 + 20) L / 1 000 km = 8,00 L/100 km.
+    const average = averageFuelConsumption([
+      fuel('a', '2026-01-01', 20, 10_000),
+      fuel('parcial', '2026-01-15', 60, 10_500, false),
+      fuel('b', '2026-02-01', 20, 11_000),
+    ]);
+
+    expect(average).toBeCloseTo(8, 2);
+  });
+
+  it('um abastecimento sem odómetro entre os dois atestados não produz consumo', () => {
+    // A distância entre os dois atestados é conhecida, mas não se sabe em que ponto do
+    // intervalo entrou o abastecimento sem odómetro: o Zemlo diz "sem dados" em vez de
+    // atribuir os litros a uma distância que não consegue verificar (§49).
+    const average = averageFuelConsumption([
+      fuel('a', '2026-01-01', 60, 10_000),
+      { ...fuel('sem-km', '2026-01-15', 20, 0), odometerKm: null },
+      fuel('b', '2026-02-01', 40, 11_000),
+    ]);
+
+    expect(average).toBeNull();
+  });
+
+  it('um parcial sem odómetro entre os dois atestados não produz consumo', () => {
+    const average = averageFuelConsumption([
+      fuel('a', '2026-01-01', 40, 10_000),
+      { ...fuel('sem-km', '2026-01-15', 10, 0, false), odometerKm: null },
+      fuel('b', '2026-02-01', 50, 11_000),
+    ]);
+
+    expect(average).toBeNull();
+  });
+
+  it('não trata a quilometragem desconhecida como zero', () => {
+    // Um abastecimento atestado sem odómetro não fecha intervalo nenhum: se a ausência
+    // fosse lida como 0 km, a divisão por uma distância nula daria infinito.
+    const average = averageFuelConsumption([
+      fuel('a', '2026-01-01', 40, 10_000),
+      { ...fuel('b', '2026-02-01', 60, 0), odometerKm: null },
+    ]);
+
+    expect(average).toBeNull();
+  });
+
+  it('devolve null quando não há dois depósitos atestados', () => {
+    expect(averageFuelConsumption([])).toBeNull();
+    expect(averageFuelConsumption([fuel('a', '2026-01-01', 60, 10_000)])).toBeNull();
+
+    // Terminar num parcial não fecha intervalo: o depósito não ficou cheio.
+    expect(
+      averageFuelConsumption([
+        fuel('a', '2026-01-01', 40, 10_000),
+        fuel('parcial', '2026-02-01', 20, 11_000, false),
+      ]),
+    ).toBeNull();
+  });
+
+  it('ignora intervalos demasiado curtos em vez de os contar', () => {
+    const average = averageFuelConsumption([
+      fuel('a', '2026-01-01', 40, 10_000),
+      fuel('b', '2026-01-01', 40, 10_005),
+    ]);
+
+    expect(average).toBeNull();
+  });
+
+  it('não conta os litros anteriores ao primeiro depósito atestado', () => {
+    // O parcial inicial entra num depósito cujo nível se desconhece: não pertence a
+    // nenhum intervalo medido.
+    const average = averageFuelConsumption([
+      fuel('inicial', '2026-01-01', 30, 9_000, false),
+      fuel('a', '2026-01-10', 40, 10_000),
+      fuel('b', '2026-02-01', 50, 11_000),
+    ]);
+
+    expect(average).toBeCloseTo(5, 2);
+  });
+
+  it('um abastecimento sem odómetro antes da âncora não contamina o intervalo seguinte', () => {
+    // A regra é sobre um abastecimento sem odómetro **entre** dois atestados. Antes do
+    // primeiro atestado não há intervalo a contaminar: o que vai dos 10 000 aos 11 000 km
+    // é determinável.
+    const average = averageFuelConsumption([
+      { ...fuel('inicial', '2026-01-01', 30, 0), odometerKm: null },
+      fuel('a', '2026-01-10', 40, 10_000),
+      fuel('b', '2026-02-01', 50, 11_000),
+    ]);
+
+    expect(average).toBeCloseTo(5, 2);
+  });
+});
+
 describe('preços derivados', () => {
   it('calcula o preço por litro em cêntimos', () => {
     expect(pricePerLitreCents(60, 10_200)).toBe(170);
@@ -730,6 +891,26 @@ describe('consumptionSummary', () => {
       charging: [],
     });
     expect(summary.fuelMonthly[0]?.value).toBeNull();
+  });
+
+  it('o global e a série mensal acumulam os parciais (A8)', () => {
+    // O painel lê `fuelL100Km` e a série mensal lê `fuelMonthly`: os dois têm de refletir
+    // o parcial acumulado, senão o defeito do médio reaparece num ecrã diferente do que
+    // foi corrigido.
+    const summary = consumptionSummary({
+      from: '2026-01-01',
+      to: '2026-01-31',
+      fuel: [
+        fuel('a', '2026-01-01', 40, 10_000),
+        fuel('parcial', '2026-01-15', 10, 10_500, false),
+        fuel('b', '2026-01-25', 50, 11_000),
+      ],
+      charging: [],
+    });
+
+    // (10 + 50) L / 1 000 km = 6,00 L/100 km, e não 50 L / 500 km = 10,00.
+    expect(summary.fuelMonthly[0]?.value).toBeCloseTo(6, 2);
+    expect(summary.fuelL100Km).toBeCloseTo(6, 2);
   });
 });
 

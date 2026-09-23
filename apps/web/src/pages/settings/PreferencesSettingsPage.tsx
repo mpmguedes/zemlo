@@ -52,7 +52,29 @@ export function PreferencesSettingsPage() {
       </div>
     );
   }
-  if (!preferences.data) return null;
+  /*
+   * Sem dados, sem carregamento e sem erro. Não é alcançável pelo caminho normal, e é por
+   * isso que não pode devolver `null`: um ecrã em branco é indistinguível de um defeito
+   * (`WEB-005`).
+   */
+  if (!preferences.data) {
+    return (
+      <div className="z-page">
+        <PageHeader title="Preferências" back={{ to: '/settings', label: 'Definições' }} />
+        <Card>
+          <p className="z-small z-muted">
+            Não conseguimos ler as tuas preferências neste momento. As tuas escolhas anteriores
+            não foram alteradas — podes tentar novamente.
+          </p>
+          <div style={{ marginTop: 'var(--z-space-3)' }}>
+            <Button variant="secondary" size="sm" onClick={() => void preferences.refetch()}>
+              Tentar novamente
+            </Button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
 
   const data = preferences.data;
   const effectiveLeadDays = leadDays ?? String(data.reminderLeadDays);

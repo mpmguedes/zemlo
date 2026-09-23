@@ -120,12 +120,22 @@ export function CalendarPage() {
         data={calendar.data}
         isLoading={calendar.isLoading}
         error={calendar.error}
-        onRetry={() => void calendar.refetch()}
       />
 
       {showUpcoming ? (
         <Section title="A seguir" hint="os próximos prazos, por ordem de proximidade">
-          <UpcomingList entries={calendar.data?.entries ?? []} limit={8} />
+          {/*
+           * Sem esta distinção, um erro do mês faria a lista cair em `entries: []` e dizer
+           * «Sem prazos à frente» — a mesma afirmação falsa que a grelha produzia. A repetição
+           * é a de cima: uma segunda mensagem de erro a poucos centímetros seria ruído.
+           */}
+          {calendar.isError ? (
+            <p className="z-small z-muted">
+              Não foi possível carregar os próximos prazos. Usa «Tentar novamente» acima.
+            </p>
+          ) : (
+            <UpcomingList entries={calendar.data?.entries ?? []} limit={8} />
+          )}
         </Section>
       ) : null}
 

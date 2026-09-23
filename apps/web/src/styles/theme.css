@@ -11,6 +11,10 @@
  * A regra que se mantém: qualquer cor nova tem de vir do `BRAND`. Se um tom não existe
  * lá, é porque não deve existir aqui.
  *
+ * A exceção são as superfícies `--z-*-soft` (`--z-ok-soft`, `--z-danger-soft`, …): não
+ * existem como tons no `BRAND` e são afinadas aqui à mão. São FUNDOS, não tinta — o que
+ * delas se exige não é representar a marca, é dar contraste às tintas que lá assentam.
+ *
  * Papéis (e não nomes de cor):
  *   --z-petrol-*   estrutura, superfícies calmas, ações primárias
  *   --z-amber-*    AÇÕES, destaque e alertas — nunca decoração (§57)
@@ -58,10 +62,20 @@
   --z-neutral-900: #182020;
 
   /* ---- Estado (STATE) ----------------------------------------------------- */
+  /* As cores de estado servem superfícies, barras e marcadores. Como TEXTO sobre
+     superfícies claras, duas delas não chegam aos 4,5:1 exigidos (todo o texto do produto
+     tem 12–15 px, logo nada se qualifica como «texto grande»): `ok` dá 4,33:1 sobre branco
+     e 3,82:1 sobre o seu próprio verde suave; `danger` dá 4,43:1 sobre o laranja suave.
+     Escurecer as originais estragaria a marca onde o contraste NÃO é exigido — as barras
+     de estado e os marcadores —, por isso as originais ficam intactas e acrescenta-se a
+     tinta: o tom mais próximo do original que mantém margem sobre o limiar em todos os
+     fundos em que é usado. Medição em `WEB-011` / `PC-24`. */
   --z-state-ok: #1f8a5b;
+  --z-state-ok-ink: #1b784f;
   --z-state-info: #178186;
   --z-state-warn: #d99b0b;
   --z-state-danger: #c2410c;
+  --z-state-danger-ink: #ba3e0c;
 
   /* ======================================================================= */
   /* Papéis — tema claro (omissão)                                          */
@@ -76,7 +90,10 @@
 
   --z-ink: var(--z-neutral-900);
   --z-text: var(--z-neutral-800);
-  --z-text-muted: var(--z-neutral-500);
+  /* Era `--z-neutral-500` (#6f7d7c): 4,29:1 sobre o cartão, 4,08:1 sobre o fundo e 3,82:1
+     sobre a superfície afundada — abaixo de 4,5:1 em todos os fundos em que é usado, em 36
+     declarações de `app.css`. Sobe um passo na escala, como o `--z-text-subtle`. */
+  --z-text-muted: var(--z-neutral-600);
   /* Contraste mínimo de 4,5:1 sobre `--z-bg-elevated`. */
   --z-text-subtle: var(--z-neutral-600);
   --z-text-on-inverse: #ffffff;
@@ -87,6 +104,9 @@
   --z-border-focus: var(--z-petrol-500);
 
   --z-accent: var(--z-petrol-500);
+  /* Tinta de acento. O petróleo-500 dá 3,66:1 sobre `--z-accent-soft` e 4,42:1 sobre o
+     fundo: serve superfícies, contornos e barras, não texto. */
+  --z-accent-ink: var(--z-petrol-600);
   --z-accent-hover: var(--z-petrol-600);
   --z-accent-active: var(--z-petrol-700);
   --z-accent-soft: var(--z-petrol-100);
@@ -94,17 +114,37 @@
 
   /* Âmbar com significado: só em botões de destaque, avisos e marcadores de alerta. */
   --z-highlight: var(--z-amber-500);
+  /* `--z-highlight` é cor de SUPERFÍCIE. Como marca sobre superfície clara dá 2,43:1 —
+     abaixo dos 3:1 exigidos a um objeto gráfico. `--z-highlight-strong` é a mesma família
+     um passo mais fundo e passa (3,60:1 sobre o cartão, 3,07:1 sobre o âmbar suave): é ele
+     que serve as barras e os contornos. */
   --z-highlight-strong: var(--z-amber-600);
   --z-highlight-soft: var(--z-amber-100);
   --z-highlight-ink: var(--z-amber-900);
+  /* Tinta sobre âmbar. Substitui os `#fff` escritos à mão (2,43:1) no badge da barra
+     inferior e no botão de destaque. */
+  --z-highlight-contrast: var(--z-amber-900);
+  /* O âmbar leva tinta escura, logo o hover CLAREIA em vez de escurecer: o
+     `--z-highlight-strong` é mais fundo e levaria a tinta a 3,22:1. */
+  --z-highlight-hover: var(--z-amber-400);
 
   --z-ok: var(--z-state-ok);
+  /* Tinta de estado `ok` sobre superfícies claras (etiqueta, faixa). `--z-ok` fica para o
+     que não é texto: barras de estado, contornos e marcadores. */
+  --z-ok-ink: var(--z-state-ok-ink);
+  /* Texto sobre uma superfície sólida `--z-ok-ink` (o aviso flutuante). */
+  --z-ok-contrast: #ffffff;
   --z-ok-soft: #e5f4ec;
   --z-warn: var(--z-state-warn);
   --z-warn-soft: var(--z-amber-100);
   --z-danger: var(--z-state-danger);
+  --z-danger-ink: var(--z-state-danger-ink);
+  --z-danger-contrast: #ffffff;
   --z-danger-soft: #fbeae3;
   --z-info-soft: var(--z-petrol-50);
+  /* A faixa informativa usava `--z-petrol-800` fixo, que no tema escuro assenta sobre uma
+     superfície escura (1,18:1). A tinta informativa muda com o tema. */
+  --z-info-ink: var(--z-petrol-800);
 
   --z-shadow-1: 0 1px 2px rgba(24, 32, 32, 0.06), 0 1px 1px rgba(24, 32, 32, 0.04);
   --z-shadow-2: 0 4px 12px rgba(24, 32, 32, 0.08), 0 1px 3px rgba(24, 32, 32, 0.05);
@@ -206,6 +246,7 @@
     --z-border-focus: var(--z-petrol-300);
 
     --z-accent: var(--z-petrol-400);
+    --z-accent-ink: var(--z-petrol-300);
     --z-accent-hover: var(--z-petrol-300);
     --z-accent-active: var(--z-petrol-200);
     --z-accent-soft: #123a40;
@@ -216,14 +257,23 @@
     --z-highlight-strong: var(--z-amber-300);
     --z-highlight-soft: #40320c;
     --z-highlight-ink: var(--z-amber-100);
+    --z-highlight-contrast: var(--z-amber-900);
+    --z-highlight-hover: var(--z-amber-300);
 
     --z-ok: #4bbd8a;
+    /* No escuro o tom de marca já tem contraste como texto (5,71:1 sobre `--z-ok-soft`):
+       a tinta é o próprio tom, não há variante separada. */
+    --z-ok-ink: var(--z-ok);
+    --z-ok-contrast: #06232a;
     --z-ok-soft: #11352a;
     --z-warn: var(--z-amber-400);
     --z-warn-soft: #40320c;
     --z-danger: #ef8a63;
+    --z-danger-ink: var(--z-danger);
+    --z-danger-contrast: #3c1f14;
     --z-danger-soft: #3c1f14;
     --z-info-soft: #10333a;
+    --z-info-ink: var(--z-petrol-200);
 
     --z-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
     --z-shadow-2: 0 4px 12px rgba(0, 0, 0, 0.45);

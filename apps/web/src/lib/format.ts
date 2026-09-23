@@ -120,6 +120,25 @@ export function formatBytes(bytes: number): string {
 /* Datas                                                                       */
 /* -------------------------------------------------------------------------- */
 
+/*
+ * `month: 'short'` **não** dá o nome abreviado do mês em `pt-PT` quando o esqueleto inclui o
+ * ano: o CLDR resolve-o para `2-digit`, e o resultado é uma data numérica. Medido neste
+ * ambiente (ICU 78.2, Node 22; `supportedLocalesOf(['pt-PT'])` → `['pt-PT']`):
+ *
+ *     pt-PT  {day, month:'short', year}  → "01/09/2026"        month resolvido: "2-digit"
+ *     pt-PT  {month:'short', year}       → "09/2026"           month resolvido: "2-digit"
+ *     pt-PT  {month:'short'}             → "set."              month resolvido: "short"
+ *     pt-PT  {month:'long',  year}       → "setembro de 2026"
+ *     pt     {day, month:'short', year}  → "01 de set. de 2026"
+ *
+ * É esta a razão pela qual, em `pt-PT`, o nome do mês só se obtém com `month: 'long'` — e a
+ * razão pela qual recortar o dia de um `dateLong` (`PC-17`) nunca produziu um nome de mês:
+ * o nome nunca chegou a ser pedido ao ICU.
+ *
+ * O `'short'` fica como está de propósito. Passá-lo a `'2-digit'` daria exatamente o mesmo
+ * resultado e apagaria a intenção de quem o escreveu: o que aqui falta é o CLDR do `pt-PT`,
+ * não a correção do pedido.
+ */
 const DATE_FORMATTER = new Intl.DateTimeFormat('pt-PT', {
   day: '2-digit',
   month: 'short',
@@ -149,7 +168,14 @@ const WEEKDAY_FORMATTER = new Intl.DateTimeFormat('pt-PT', { weekday: 'long', ti
  * viajasse.
  */
 
-/** `16 set 2026`. */
+/**
+ * `01/09/2026`.
+ *
+ * A forma `16 set 2026` que aqui esteve documentada era **falsa**: em `pt-PT` o CLDR resolve
+ * o mês para `2-digit`, e a saída é sempre uma data numérica (ver a nota em `DATE_FORMATTER`).
+ * O comentário errado não era um pormenor de redação: foi a premissa que levou a recortar
+ * `1 de ` do resultado para tentar obter o nome do mês — e o nome nunca lá estava.
+ */
 export function dateLong(date: CivilDate | null | undefined): string {
   if (!date) return '—';
   return DATE_FORMATTER.format(civilDateToUtc(date));
@@ -161,7 +187,12 @@ export function dateShort(date: CivilDate | null | undefined): string {
   return SHORT_DATE_FORMATTER.format(civilDateToUtc(date));
 }
 
-/** `setembro de 2026`. */
+/**
+ * `setembro de 2026`.
+ *
+ * É a **única** forma correta de obter o nome do mês em `pt-PT` (ver a nota em
+ * `DATE_FORMATTER`). Consumida pelo cabeçalho do calendário (`WEB-010`).
+ */
 export function monthLong(date: CivilDate | null | undefined): string {
   if (!date) return '—';
   return MONTH_FORMATTER.format(civilDateToUtc(date));

@@ -685,7 +685,7 @@ export async function updateChargingSession(
     data.pricePerKwhCents = pricePerKwhCents(energyKwh, amountCents);
   }
 
-  const updated = await prisma.chargingSession.update({ where: { id: sessionId }, data });
+  await prisma.chargingSession.update({ where: { id: sessionId }, data });
 
   await updateLinkedExpense(current.expenseId, {
     amountCents: input.amountCents,
@@ -694,7 +694,16 @@ export async function updateChargingSession(
     vendor: input.location,
   });
 
-  return mapChargingSession(updated, zeroChargingDerived());
+  /*
+   * Devolver o registo através de `getChargingSession` para que as métricas derivadas —
+   * consumo do intervalo, custo por 100 km, potência média e energia adicionada à bateria —
+   * venham já calculadas. O cliente não deve ter de voltar a pedir o registo depois de o
+   * editar, e muito menos receber zeros: era o que acontecia antes, com
+   * `mapChargingSession(updated, zeroChargingDerived())`, que devolvia as cinco derivadas a
+   * `null` enquanto a leitura seguinte as trazia preenchidas. Mesmo padrão de
+   * `updateFuelSession`, que já delega em `getFuelSession`.
+   */
+  return getChargingSession(userId, sessionId);
 }
 
 export async function deleteChargingSession(userId: string, sessionId: string): Promise<void> {
@@ -837,14 +846,4 @@ function findIndexAfterCursor(items: Array<{ date: CivilDate; id: string }>, cur
   } catch {
     return 0;
   }
-}
-
-function zeroChargingDerived(): ChargingView['derived'] {
-  return {
-    averagePowerKw: null,
-    addedSocPercent: null,
-    distanceSincePreviousKm: null,
-    consumptionKwh100Km: null,
-    costPer100KmCents: null,
-  };
 }

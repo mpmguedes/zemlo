@@ -173,19 +173,87 @@ A recuperação de password está implementada (`POST /auth/password-reset` e
 `POST /auth/password-reset/confirm`), com tokens de uso único, expiração de 60 minutos e
 hash SHA-256 em repouso. Ao concluir, **todas** as sessões da conta são revogadas.
 
-A **entrega** do link, no entanto, depende de um fornecedor de email que o MVP não traz.
-Sem `SMTP_HOST` configurado, o link é escrito no log da aplicação:
+A entrega do link está implementada: `registerEmailSender()`
+(`apps/api/src/services/email.ts`) é chamada no arranque, **antes** de a porta abrir, e escolhe
+o transporte a partir da configuração. Ligar um servidor de correio é, por isso, uma questão de
+**configuração** — não de código.
+
+#### Variáveis
+
+| Variável                   | Obrigatória                        | Notas                                                                                       |
+| -------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------- |
+| `SMTP_HOST`                | para entrega real                  | Sem ela a entrega fica inativa (ver abaixo)                                                 |
+| `SMTP_PORT`                | não                                | Por omissão `587`. **`465` implica TLS implícito**; `587` e `25` negociam `STARTTLS`        |
+| `SMTP_USER` / `SMTP_PASSWORD` | se o servidor exigir autenticação | Enviadas por `AUTH LOGIN`                                                                    |
+| `SMTP_FROM`                | não                                | Por omissão `Zemlo <ola@appzemlo.com>`. Aceita nome de apresentação — o envelope leva só o endereço (A30) |
+
+A configuração é **validada no arranque**: um `SMTP_FROM` de que não saia um endereço
+utilizável, um `SMTP_USER` que não seja um endereço, ou um `HOSTNAME` com mudança de linha
+fazem a API falhar antes de escutar, em vez de falharem no primeiro email enviado (A30).
+
+#### Sem `SMTP_HOST`: entrega inativa
+
+Sem `SMTP_HOST`, o link é escrito no log e **não** chega a ninguém:
 
 ```
 INFO  Email não enviado — entrega por configurar; conteúdo registado
-      {"to":"…","subject":"Zemlo — reposição da tua password","body":"…/repor-password?token=…"}
+      {"to":"…","subject":"Zemlo — reposição da tua password","text":"…/repor-password?token=[redigido]"}
 ```
 
-Isso serve para desenvolvimento e testes de ponta a ponta, e **não** serve para
-utilizadores reais: quem se esquecer da password não recebe nada. Antes de abrir a
-plataforma a utilizadores, é obrigatório ligar um transporte real — implementar
-`EmailSender` em `apps/api/src/services/email.ts` e registá-lo com `setEmailSender`. Nada
-do fluxo de tokens precisa de mudar.
+O parâmetro `token` do url é substituído por `[redigido]` antes de a mensagem entrar no logger.
+O log continua a mostrar *que* o email foi composto e para que página aponta — o que deixa de
+ser possível é usar o link a partir dele.
+
+Em desenvolvimento é este o comportamento pretendido. **Em produção, a API recusa arrancar**
+sem entrega: um servidor que aceitasse pedidos deixaria o utilizador sem receber nada e a única
+cópia da ligação de recuperação num log. Quem quiser mesmo arrancar sem entrega tem de o dizer
+explicitamente:
+
+```ini
+EMAIL_ALLOW_LOG_TRANSPORT=true
+```
+
+Com esta variável o arranque passa, mas fica registado um aviso de que os links de recuperação
+ficam no log e não chegam aos utilizadores. Só o valor exato `true` é aceite — `1` ou `yes`
+continuam a recusar. Qualquer alteração a credenciais, servidor ou portas de produção é uma
+alteração de **configuração**, com autorização própria; não é preciso tocar em código.
+
+### 3.4.2. Entrada com Google (`AUTH-002`)
+
+Sem configuração, a instalação arranca normalmente e os dois endpoints respondem `503` com uma
+mensagem que diz o que falta. Não é preciso configurar nada para não usar esta funcionalidade.
+
+```ini
+GOOGLE_CLIENT_ID=…              # da consola da Google
+GOOGLE_CLIENT_SECRET=…          # o par: as duas ou nenhuma
+GOOGLE_REDIRECT_URI=…           # opcional; por omissão PUBLIC_BASE_URL + /api/v1/auth/google/callback
+GOOGLE_ISSUER=https://accounts.google.com   # opcional; só o emissor, sem caminho nem barra final
+```
+
+**As duas primeiras são um par.** Com uma só, a API **recusa arrancar** — e é de propósito:
+com metade das credenciais o botão passa a ter destino na interface e o fluxo falha sempre, no
+fim, depois de o utilizador já ter escolhido a conta Google. Falhar no arranque diz o mesmo
+mais cedo e mais barato.
+
+**O `GOOGLE_REDIRECT_URI` tem de coincidir exatamente com o registado na consola da Google.**
+A Google compara-o literalmente: um `?`, um `#` ou uma barra a mais produz
+`redirect_uri_mismatch`, cuja resposta não diz o que está mal. A API valida o formato no
+arranque (absoluto, sem query nem fragmento) para apanhar os casos que consegue apanhar. O
+valor efetivo é impresso no arranque, na linha `login Google:` — é esse que se copia para a
+consola. Em produção tem de ser `https`.
+
+**O endereço de retorno tem de ser servido por esta API.** O fluxo deixa um cookie
+`HttpOnly` no browser que só volta se o callback for servido pelo mesmo host — é ele que liga
+o pedido ao browser que o começou. Um `GOOGLE_REDIRECT_URI` a apontar para outro host faz o
+fluxo falhar com «não corresponde ao pedido feito neste browser».
+
+> **Limitação declarada, e importante em produção com mais do que uma instância.** O estado do
+> fluxo (o `state`, o `nonce` e o verificador PKCE) vive na **memória do processo**, e não na
+> base de dados — não há escrita nenhuma enquanto o utilizador não volta. Consequência: com
+> **várias instâncias da API atrás de um balanceador**, o `/start` pode cair numa instância e o
+> `/callback` noutra, e o segundo não reconhece o `state`. Nesse cenário tem de haver
+> armazenamento partilhado (ou afinidade de sessão no balanceador). Com uma instância — que é o
+> que a §3.5 descreve — não há problema. Registado como `PC-29`.
 
 ### 3.5. Serviço
 
@@ -220,6 +288,57 @@ WantedBy=multi-user.target
 O servidor encerra de forma limpa com `SIGTERM`: deixa de aceitar ligações novas, dá dez
 segundos às que estão a decorrer, fecha a ligação à base de dados e sai. Um `systemctl
 restart` durante um deploy não perde pedidos em curso.
+
+### 3.5.1. Trabalho periódico (agendador)
+
+O Zemlo tem **um** trabalho periódico: sincronizar as notificações internas de todos os
+utilizadores. Sem ele, um lembrete legal (inspeção, seguro, IUC) só avisava quem abrisse a
+aplicação — e o ecrã que mostrava o aviso era o mesmo que o gerava.
+
+| Variável | Por omissão | Efeito |
+| --- | --- | --- |
+| `NOTIFICATIONS_SYNC_INTERVAL_MINUTES` | `15` | Intervalo entre passagens. **`0` desliga o agendador.** Máximo `1440` (um dia) |
+
+O agendador é **in-process**: corre dentro do processo da API, arrancado pelo `server.ts`
+depois de a porta estar aberta, e parado no encerramento (`SIGTERM`). Não atrasa o arranque
+e não impede o serviço de aceitar pedidos.
+
+**Uma passagem corre no arranque**, sem esperar o primeiro intervalo: o trabalho pendente
+está na base de dados, e uma instância reiniciada não pode deixar passar 15 minutos por
+trabalho que já estava por fazer.
+
+**A idempotência não está no agendador, está na base de dados.** Cada notificação tem uma
+`dedupeKey` derivada do lembrete, do estado e da data efetiva, e o índice único
+`(userId, dedupeKey)` é a garantia final. Correr a sincronização duas vezes não duplica
+nada — é o que torna seguro um reinício, um temporizador que dispara durante uma passagem
+anterior, e dois processos a partilhar a mesma base de dados.
+
+**Uma tarefa não corre duas vezes ao mesmo tempo no mesmo processo.** Se uma passagem
+ainda estiver em curso quando o intervalo seguinte dispara, a segunda é **ignorada** e
+registada como ignorada (`tarefa agendada ignorada: a execução anterior ainda está em
+curso`). Uma execução em curso nunca é interrompida — nem pela guarda, nem pelo `stop()`.
+
+O que se observa no log:
+
+```
+agendador iniciado {"intervalMinutes":15,"runOnStart":true,"jobs":["notification-sync"]}
+tarefa agendada iniciada {"job":"notification-sync"}
+tarefa agendada concluída {"job":"notification-sync","durationMs":42,"result":{"usersConsidered":3,"usersSynced":3,"notificationsCreated":1,"failures":[],"durationMs":41}}
+```
+
+Uma falha num utilizador **não** impede os outros: é registada com o `userId` e o motivo
+(`não foi possível sincronizar as notificações de um utilizador`), conta-se em
+`failures`, e a passagem continua. Uma falha da tarefa inteira é registada como
+`tarefa agendada falhou` e **não** desarma o relógio — a passagem seguinte é uma nova
+oportunidade.
+
+**Com mais do que uma instância da API, decida onde isto corre.** A guarda de reentrância
+é por processo: duas instâncias correm o trabalho as duas. Não duplica notificações (a
+`dedupeKey` impede-o), mas faz o dobro do trabalho. Nesse cenário, ponha
+`NOTIFICATIONS_SYNC_INTERVAL_MINUTES=0` em todas menos uma — ou em todas, e corra o
+trabalho por fora. O núcleo (`runNotificationSync`) não conhece temporizadores e pode ser
+invocado por um entrypoint externo sem alterações; o que **não** existe ainda é esse
+entrypoint.
 
 ### 3.6. Cloudflare Tunnel
 
@@ -402,11 +521,23 @@ Para que ninguém procure em vão:
   credenciais e a especificação das entidades estão implementados; a publicação efetiva não.
 - **Ligação a APIs de fabricantes, OBD e wallboxes.** O modelo e a normalização de origem
   (§50) estão prontos; nenhuma integração concreta existe.
-- **Trabalho agendado.** As notificações são materializadas quando o utilizador abre a
-  aplicação, o que para o MVP é equivalente. `syncNotifications` já é idempotente e pode
-  correr em lote quando o agendador existir.
-- **Upload de ficheiros.** A API **serve** os bytes de um documento que já exista no
-  armazenamento (`GET /api/v1/documents/:id/content`, autenticado e restrito ao dono — §A17),
-  mas **não aceita** ficheiros novos: não há `multipart`, nem escrita pela API. Os bytes
-  entram pelo importador de bundle ou por escrita directa no directório de documentos
+- **Trabalho agendado.** Existe **um** — a sincronização de notificações — e está
+  documentado em §3.5.1. O que **não** existe é um entrypoint externo (`dist/jobs/…`) para
+  o correr fora da API: o núcleo não conhece temporizadores e está preparado para isso, mas
+  o ficheiro que o invocaria não foi escrito, porque não há nenhuma instalação com mais do
+  que uma instância da API que o justifique. Ver §3.5.1 para o que fazer nesse caso
+  (desligar o agendador in-process numa das instâncias).
+- **Envio de ficheiros pela interface web.** A API já **serve** e já **aceita** os bytes
+  (`GET`, `POST` e `PUT /api/v1/documents/:id/content`, autenticados e restritos ao dono —
+  §A17.1, §A31 e §PROD-008; o `POST` e o `PUT` recebem o ficheiro com o **corpo cru**, sem
+  `multipart`; o `POST` cria o ficheiro e recusa com `409` um documento que já tenha um, e o
+  `PUT` substitui-o). O que **não existe** é o controlo na web: não há `<input type="file">` para
+  documentos, e por isso a **substituição** também não está exposta. Os bytes entram pela
+  API, pelo importador de bundle ou por escrita directa no directório de documentos
   (`DOCUMENT_STORAGE_DIR`; por omissão `data/documents-storage/` ao lado da base de dados).
+- **Associação de uma conta Google a uma conta Zemlo existente.** A entrada com Google está
+  implementada (`AUTH-002`, §3.4.2), incluindo a criação automática de conta. O que **não**
+  existe é ligar uma identidade Google a uma conta que já tenha o mesmo email: esse caso é
+  recusado com `409` e encaminhado para `AUTH-003`, que ainda não está implementada. Também
+  não existe ecrã para pedir a aceitação dos termos no primeiro acesso federado — a conta é
+  criada com `acceptedTermsAt` nulo (`PC-28`).

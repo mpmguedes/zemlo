@@ -35,9 +35,18 @@ const SessionContext = createContext<SessionContextValue | null>(null);
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const client = useQueryClient();
-  // `hasCredentials` é o estado síncrono que decide se vale a pena pedir o perfil. Vem do
-  // armazenamento, não de uma chamada à rede: uma aplicação que só sabe se há sessão
-  // depois de uma ida ao servidor mostra um ecrã de carregamento a quem não tem sessão.
+  /*
+   * `hasCredentials` é o estado síncrono que decide se vale a pena pedir o perfil. Vem do
+   * armazenamento, não de uma chamada à rede: uma aplicação que só sabe se há sessão
+   * depois de uma ida ao servidor mostra um ecrã de carregamento a quem não tem sessão.
+   *
+   * O ramo do token de renovação é o que faz a sessão sobreviver ao fecho do separador: o
+   * token de acesso vive em `sessionStorage` e desaparece, o de renovação vive em
+   * `localStorage` e fica. Quem volta no dia seguinte entra com credenciais, o primeiro
+   * pedido recebe 401 e é renovado em silêncio — é assim que os 90 dias configurados se
+   * tornam 90 dias reais. Este ramo esteve morto até `WEB-013`: `getRefreshToken()`
+   * devolvia sempre `null`, pelo que a única credencial que contava era a de uma hora.
+   */
   const [hasCredentials, setHasCredentials] = useState<boolean>(
     () => Boolean(getAccessToken() ?? getRefreshToken()),
   );
@@ -86,16 +95,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const signIn = useCallback<SessionContextValue['signIn']>(
     async (email, password, totp) => {
-      const session = await auth.login(email, password, totp);
-      return afterAuth(session.user);
+      // `auth.login` devolve o perfil, não a sessão: o token de renovação fica no cliente
+      // HTTP e não passa por estado do React nem por props.
+      const profile = await auth.login(email, password, totp);
+      return afterAuth(profile);
     },
     [afterAuth],
   );
 
   const signUp = useCallback<SessionContextValue['signUp']>(
     async (payload) => {
-      const session = await auth.signup(payload);
-      return afterAuth(session.user);
+      const profile = await auth.signup(payload);
+      return afterAuth(profile);
     },
     [afterAuth],
   );

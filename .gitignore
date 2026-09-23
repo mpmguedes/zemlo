@@ -37,6 +37,13 @@ apps/api/prisma/sqlite/*.db*
 *.tmp
 *~
 
+# Artefacto de redireccionamento mal escrito: `> dev/null` (sem a barra inicial) escreve
+# num ficheiro literal `dev/null` em vez do dispositivo nulo. Aconteceu uma vez — o
+# ficheiro continha uma cópia transpilada de `apps/api/scripts/check-integrity.mjs`, não
+# rastreada e não ignorada, à espera de ser apanhada por um `git add -A`. A regra é
+# estreita de propósito: só este caminho exato, para não esconder um `dev/` legítimo.
+dev/null
+
 # Scripts de depuração pontuais (prefixo `_`, por convenção do projeto)
 **/scripts/_*
 

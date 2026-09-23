@@ -1,0 +1,32 @@
+name: zemlo_mobile
+description: Zemlo — app mobile (Flutter). Consome a mesma API e o mesmo contrato partilhado que a web (§34).
+publish_to: none
+version: 0.1.0+1
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+  flutter: '>=3.22.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Cliente HTTP. `package:http` e não `dio`: o que este cliente precisa é de um `send`
+  # substituível nos testes e de controlo explícito sobre cabeçalhos. Uma biblioteca com
+  # interceptores traria uma segunda camada de política de 401, e a política de 401 deste
+  # cliente tem de viver num só sítio (§A23).
+  http: ^1.2.0
+
+  # Armazenamento seguro: Keychain (iOS) / Keystore (Android). O token de renovação vale 90
+  # dias e é o segredo mais valioso que o cliente guarda — não pode ficar em SharedPreferences.
+  flutter_secure_storage: ^9.2.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  # Sem `uses-material-design: true` enquanto não houver ecrãs: esta tarefa entrega a
+  # arquitetura e o cliente do contrato, não a interface. Os ecrãs são `MOB-003` em diante.
+  uses-material-design: false

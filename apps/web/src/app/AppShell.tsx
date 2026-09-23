@@ -259,7 +259,7 @@ function TabBar({ unreadCount }: { unreadCount: number }) {
               height: 34,
               borderRadius: '50%',
               background: 'var(--z-highlight)',
-              color: '#fff',
+              color: 'var(--z-highlight-contrast)',
               fontSize: '1.2rem',
             }}
           >
@@ -294,6 +294,20 @@ function TabLink({
         {badge && badge > 0 ? <span className="z-tabbar__badge">{badge > 9 ? '9+' : badge}</span> : null}
       </span>
       <span>{label}</span>
+      {/*
+       * O badge vive dentro do ícone, que é `aria-hidden` — o número nunca chegava ao leitor
+       * de ecrã, e o nome acessível do link era só «Avisos». Movê-lo para fora do ícone
+       * partiria o posicionamento absoluto que o encosta ao canto dele (`app.css`,
+       * `.z-tabbar__badge`). A contagem vai então num texto só para leitores de ecrã, a
+       * seguir ao rótulo: o nome passa a ser «Avisos 3 por ler» (`WEB-006`, achado A3).
+       *
+       * Escreve-se o número por extenso (`12 por ler`) e não o `9+` do badge: o `9+` existe
+       * para caber num círculo de 16 px, e essa restrição não existe em texto lido em voz
+       * alta. A barra lateral já fazia isto bem — era a barra inferior que discordava.
+       */}
+      {badge && badge > 0 ? (
+        <span className="z-sr-only">{`${formatNumber(badge, 0)} por ler`}</span>
+      ) : null}
     </NavLink>
   );
 }

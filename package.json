@@ -33,6 +33,7 @@
     "verify:regressions": "npm run verify:regressions --workspace @zemlo/api",
     "verify:integration": "npm run verify:integration --workspace @zemlo/api",
     "verify:all": "npm run verify:config && npm run verify && npm run verify:regressions",
+    "readme:numbers": "node scripts/check-readme-numbers.mjs --check",
     "db:cleanup": "npm run db:cleanup --workspace @zemlo/api",
     "db:integrity": "npm run db:integrity --workspace @zemlo/api",
     "db:accounts": "npm run db:accounts --workspace @zemlo/api"

@@ -114,11 +114,41 @@ export async function createTestDb(): Promise<TestDb> {
       if (destroyed) return;
       destroyed = true;
       await prisma.$disconnect();
+      await removeTree(dir);
+    },
+  };
+}
+
+/**
+ * Apaga a árvore temporária, com repetição sobre o bloqueio do ficheiro.
+ *
+ * `$disconnect()` resolve **antes** de o sistema libertar o handle do SQLite. No Windows essa
+ * janela é suficiente para o `rmSync` rebentar com `EBUSY`, e a consequência medida foi
+ * desproporcionada: **exit code 1 com todos os testes verdes** — um ficheiro marcado como falhado
+ * por causa do teardown (`PC-26`). Num CI isso é pior do que um erro: é um semáforo vermelho ao
+ * acaso, e ao segundo dia alguém desliga o CI.
+ *
+ * A repetição é **limitada** e o erro original é **relançado** quando as tentativas se esgotam —
+ * não se engole nada. Um bloqueio persistente continua a ser uma falha, e é isso que se quer.
+ *
+ * Exportada para poder ser exercida directamente contra um erro transitório injectado
+ * (`test/teardown-retry.test.ts`) — a corrida não se reproduz de forma fiável, pelo que um teste
+ * que dependesse de a provocar a sério seria intermitente, que é precisamente o defeito.
+ */
+export async function removeTree(dir: string, attempts = 5): Promise<void> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
       // `force` e `recursive`: um teste que falhe a meio pode ter deixado o ficheiro
       // aberto, e o objectivo é não deixar lixo em disco.
       rmSync(dir, { recursive: true, force: true });
-    },
-  };
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      const transitorio = code === 'EBUSY' || code === 'EPERM' || code === 'ENOTEMPTY';
+      if (!transitorio || attempt >= attempts) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 25 * attempt));
+    }
+  }
 }
 
 /* -------------------------------------------------------------------------- */

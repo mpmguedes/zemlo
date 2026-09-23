@@ -74,6 +74,31 @@ export const STATE = {
   danger: '#c2410c',
 } as const;
 
+/**
+ * Tintas de estado — a variante de cada cor de estado que sobrevive como TEXTO.
+ *
+ * Uma cor de estado serve, em primeiro lugar, superfícies, barras e marcadores. Como texto
+ * sobre superfícies claras, duas das cores de `STATE` não atingem os 4,5:1 que a WCAG exige
+ * a texto normal (e todo o texto do Zemlo tem 12–15 px, logo nada se qualifica como "texto
+ * grande"): `ok` dá 4,33:1 sobre branco e 3,82:1 sobre o verde suave; `danger` dá 4,43:1
+ * sobre o laranja suave.
+ *
+ * Escurecer as cores originais seria a correção óbvia — e a errada: estragaria a marca
+ * precisamente onde o contraste não é exigido (a barra de um cartão de estado, o marcador
+ * de um dia no calendário). Por isso as originais ficam intactas e acrescenta-se a tinta.
+ *
+ * O tom foi escolhido por **medição**, não a olho: é o mais próximo do original que mantém
+ * margem sobre o limiar em TODOS os fundos em que é usado (≥ 4,75:1, e não 4,50:1, para não
+ * ficar no limite). Medições e prova em `docs/PROPOSAL-A3-WEB-011.md` (`WEB-011` / `PC-24`).
+ *
+ * `info` e `warn` não precisam de tinta própria: como texto usam tons que já existem nas
+ * escalas — `petrol-800`/`petrol-200` e `amber-900`.
+ */
+export const STATE_INK = {
+  ok: '#1b784f',
+  danger: '#ba3e0c',
+} as const;
+
 /** Marca completa, pronta a serializar para CSS custom properties. */
 export const BRAND = {
   name: 'Zemlo',
@@ -83,6 +108,7 @@ export const BRAND = {
   amber: AMBER,
   neutral: NEUTRAL,
   state: STATE,
+  stateInk: STATE_INK,
 } as const;
 
 /**
@@ -136,6 +162,9 @@ export function brandCssVariables(): string {
   }
   for (const [key, value] of Object.entries(STATE)) {
     lines.push(`  --z-state-${key}: ${value};`);
+  }
+  for (const [key, value] of Object.entries(STATE_INK)) {
+    lines.push(`  --z-state-${key}-ink: ${value};`);
   }
   return `:root {\n${lines.join('\n')}\n}`;
 }

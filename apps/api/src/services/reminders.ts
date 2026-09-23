@@ -76,15 +76,23 @@ export async function createReminder(
   const vehicle = await requireVehicleAccess(userId, input.vehicleId);
   const context = await loadReminderContext(userId, vehicle);
 
-  if (input.trigger !== 'time' && input.dueOdometerKm === null && input.intervalKm === null) {
-    throw unprocessable(
-      'Um lembrete por quilometragem precisa de uma quilometragem alvo — ou de um intervalo a partir da quilometragem atual.',
-    );
-  }
-  if (input.trigger !== 'distance' && input.dueDate === null && input.intervalMonths === null) {
-    throw unprocessable('Um lembrete por tempo precisa de uma data — ou de um intervalo em meses.');
-  }
-
+  /*
+   * A condição de um lembrete tem de existir — e a verificação é sobre a **ausência**, não
+   * sobre `null`.
+   *
+   * `dueDate`, `dueOdometerKm`, `intervalMonths` e `intervalKm` são `.nullish()` no contrato
+   * (`contracts.ts:592-595`): um campo **omitido** chega aqui como `undefined`, não como `null`.
+   * Comparar com `=== null` deixava estas guardas inertes para o cliente real — que omite o
+   * campo quando não tem o dado — e criava um lembrete que nunca dispara, mostrado ao
+   * utilizador com «Sem dados suficientes para calcular» para sempre. `null` explícito e campo
+   * omitido são a mesma intenção do cliente; ambos são recusados (`AUD-014`).
+   *
+   * Os intervalos são um atalho que se **materializa** num alvo concreto. Por isso a validação
+   * vem depois da materialização e olha para o alvo, não para o pedido (`AUD-015`): um intervalo
+   * que não chegou a produzir alvo — `intervalKm` num veículo sem quilometragem registada — não
+   * é uma condição, e deixá-lo passar criaria exatamente o lembrete morto que `AUD-014` veio
+   * eliminar.
+   */
   // Os intervalos permitem criar um lembrete sem o utilizador ter de calcular datas.
   const dueDate =
     input.dueDate ??
@@ -96,6 +104,8 @@ export async function createReminder(
     (input.intervalKm !== null && input.intervalKm !== undefined && vehicle.odometerKm !== null
       ? vehicle.odometerKm + input.intervalKm
       : null);
+
+  assertCondicao({ trigger: input.trigger, dueDate, dueOdometerKm });
 
   try {
     const reminder = await prisma.reminder.create({
@@ -214,12 +224,40 @@ export async function getReminder(userId: string, reminderId: string): Promise<R
   return evaluateOne(record, context, record.vehicleId);
 }
 
+/**
+ * Edita um lembrete.
+ *
+ * A invariante de `AUD-015` é sobre o **estado final**, não sobre o pedido. `zReminderUpdateRequest`
+ * é `zReminderCreateRequest.partial()` (`contracts.ts:604`), pelo que todos os campos são
+ * opcionais e `null` é aceite: um pedido de uma só linha pode apagar a última condição que
+ * restava. Validar os campos recebidos — ou não validar nada, como antes — deixava passar um
+ * lembrete que nunca mais dispara.
+ *
+ * O estado que interessa é o que vai ficar gravado: cada campo vale o que o pedido traz, ou o
+ * que já lá estava quando o pedido o omite. A validação é a **mesma função** da criação
+ * (`assertCondicao`), aplicada a esse estado em vez do pedido.
+ *
+ * Nota deliberada: a edição **não** materializa intervalos, ao contrário da criação. Um
+ * `PATCH {dueDate: null}` sobre um lembrete por tempo com `intervalMonths` é recusado — o
+ * cliente pediu para tirar a data e o serviço não inventa outra; a criação, essa, aceita o
+ * intervalo porque a materialização faz parte do que o cliente pediu ao criar.
+ */
 export async function updateReminder(
   userId: string,
   reminderId: string,
   input: ReminderUpdateRequest,
 ): Promise<Reminder> {
-  await requireRecord('reminder', userId, reminderId);
+  const existing = (await requireRecord('reminder', userId, reminderId)) as {
+    trigger: string;
+    dueDate: Date | null;
+    dueOdometerKm: number | null;
+  };
+
+  assertCondicao({
+    trigger: (input.trigger ?? existing.trigger) as Reminder['trigger'],
+    dueDate: input.dueDate !== undefined ? input.dueDate : toCivilDate(existing.dueDate),
+    dueOdometerKm: input.dueOdometerKm !== undefined ? input.dueOdometerKm : existing.dueOdometerKm,
+  });
 
   const data: Record<string, unknown> = {};
   if (input.title !== undefined) data.title = input.title;
@@ -231,7 +269,11 @@ export async function updateReminder(
   if (input.repeat !== undefined) data.repeat = input.repeat;
   if (input.notes !== undefined) data.notes = input.notes;
 
-  await prisma.reminder.update({ where: { id: reminderId }, data });
+  try {
+    await prisma.reminder.update({ where: { id: reminderId }, data });
+  } catch (error) {
+    throw translatePrismaError(error, 'atualizar lembrete');
+  }
   return getReminder(userId, reminderId);
 }
 
@@ -535,6 +577,48 @@ function compareUrgency(a: Reminder, b: Reminder): number {
   const aKm = a.evaluation.kmRemaining ?? Number.MAX_SAFE_INTEGER;
   const bKm = b.evaluation.kmRemaining ?? Number.MAX_SAFE_INTEGER;
   return aKm - bKm;
+}
+
+/** O que decide se um lembrete tem condição: o alvo que fica gravado, não o campo do pedido. */
+interface EstadoCondicao {
+  trigger: Reminder['trigger'];
+  dueDate: CivilDate | null;
+  dueOdometerKm: number | null;
+}
+
+/**
+ * A invariante da condição de um lembrete — **uma só** função, usada pela criação e pela edição
+ * (`AUD-014`, `AUD-015`).
+ *
+ * Vale sobre o **estado final**: o que o lembrete vai ter gravado, depois de materializados os
+ * intervalos. O que faz um lembrete disparar é `dueDate`/`dueOdometerKm` — é só isso que
+ * `evaluateReminder` consome (`domain/reminders.ts:87-114`) — e é por isso que é o alvo, e não o
+ * campo do pedido, que decide se a condição existe.
+ *
+ * As duas causas de falha têm a mesma forma mas não a mesma instrução: não ter dado nada é
+ * diferente de ter dado um intervalo que não chegou a produzir alvo. A mensagem nomeia as duas
+ * rotas para o utilizador não ter de adivinhar qual delas lhe falta.
+ */
+function assertCondicao(estado: EstadoCondicao): void {
+  if (estado.trigger !== 'time' && ausente(estado.dueOdometerKm)) {
+    throw unprocessable(
+      'Um lembrete por quilometragem precisa de uma quilometragem alvo. Indica-a, ou um intervalo a partir da quilometragem atual — que exige uma quilometragem já registada no veículo.',
+    );
+  }
+  if (estado.trigger !== 'distance' && ausente(estado.dueDate)) {
+    throw unprocessable('Um lembrete por tempo precisa de uma data. Indica-a, ou um intervalo em meses.');
+  }
+}
+
+/**
+ * Ausente: `null` explícito **ou** campo omitido.
+ *
+ * As duas formas de dizer «não tenho este dado» chegam ao serviço de maneira diferente — `null`
+ * quando o cliente o escreve, `undefined` quando omite o campo — e tratá-las de forma diferente
+ * foi exatamente o defeito de `AUD-014`.
+ */
+function ausente(value: number | string | null | undefined): boolean {
+  return value === null || value === undefined;
 }
 
 function topicForTrigger(trigger: string): string {

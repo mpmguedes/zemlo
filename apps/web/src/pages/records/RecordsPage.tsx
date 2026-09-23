@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, NavLink, useParams } from 'react-router-dom';
 import {
   EXPENSE_CATEGORIES,
   MAINTENANCE_TYPES,
@@ -22,7 +22,7 @@ import {
 import { errorMessage, errorRequestId } from '../../api/errors';
 import { useSelectedVehicle } from '../../hooks';
 import { useQuickLog } from '../../components/QuickLogContext';
-import { Button, Card, Chip, InlineError, LoadingBlock, PageHeader, Section } from '../../ui/primitives';
+import { Button, Card, Chip, EmptyState, InlineError, LoadingBlock, PageHeader, Section } from '../../ui/primitives';
 import { RecordsEmptyState } from '../../components/records';
 import { consumption, dateLong, econsumption, km, litres, money, monthBounds, today } from '../../lib/format';
 
@@ -52,7 +52,7 @@ export function RecordsPage() {
   const quickLog = useQuickLog();
   const profile = useProfile();
 
-  const config = configFor(kind ?? 'expenses');
+  const config = configFor(kind ?? '');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [category, setCategory] = useState('');
@@ -61,7 +61,7 @@ export function RecordsPage() {
   const timeZone = profile.data?.timeZone ?? 'Europe/Lisbon';
 
   const expenses = useExpenses(
-    config.key === 'expenses'
+    config?.key === 'expenses'
       ? { vehicleId: selectedVehicleId, from, to, category, limit: 100 }
       : // Consulta inativa para os outros tipos: o filtro tem de continuar a ser um valor
         // válido do contrato (a API recusa uma categoria desconhecida com 422), pelo que se
@@ -69,13 +69,13 @@ export function RecordsPage() {
         { vehicleId: selectedVehicleId, limit: 1, category: 'fines' },
   );
   const fuel = useFuelSessions(
-    config.key === 'fuel' ? { vehicleId: selectedVehicleId, from, to, limit: 100 } : { vehicleId: selectedVehicleId, limit: 1 },
+    config?.key === 'fuel' ? { vehicleId: selectedVehicleId, from, to, limit: 100 } : { vehicleId: selectedVehicleId, limit: 1 },
   );
   const charging = useChargingSessions(
-    config.key === 'charging' ? { vehicleId: selectedVehicleId, from, to, limit: 100 } : { vehicleId: selectedVehicleId, limit: 1 },
+    config?.key === 'charging' ? { vehicleId: selectedVehicleId, from, to, limit: 100 } : { vehicleId: selectedVehicleId, limit: 1 },
   );
   const maintenance = useMaintenanceRecords(
-    config.key === 'maintenance' ? { vehicleId: selectedVehicleId, from, to, limit: 100 } : { vehicleId: selectedVehicleId, limit: 1 },
+    config?.key === 'maintenance' ? { vehicleId: selectedVehicleId, from, to, limit: 100 } : { vehicleId: selectedVehicleId, limit: 1 },
   );
 
   /*
@@ -87,10 +87,19 @@ export function RecordsPage() {
     () => ({ expenses, fuel, charging, maintenance }),
     [expenses, fuel, charging, maintenance],
   );
-  const active = queries[config.key];
 
   const vehicleById = useMemo(() => new Map(vehicles.map((vehicle) => [vehicle.id, vehicle])), [vehicles]);
 
+  /*
+   * Tipo de registo desconhecido: recusar, não degradar.
+   *
+   * O ramo tem de vir **depois** de todos os hooks (as quatro consultas são declaradas
+   * sempre, com filtro inativo quando não correspondem ao tipo) e antes de se tocar em
+   * `active` — que só existe para um tipo que existe.
+   */
+  if (!config) return <UnknownRecordKind />;
+
+  const active = queries[config.key];
   const records: unknown[] = active.data?.items ?? [];
   const total = active.data?.total ?? null;
 
@@ -332,9 +341,44 @@ const RECORD_CONFIG: Record<string, RecordConfig> = {
   },
 };
 
-/** Configuração de um tipo de registo, com uma entrada para cada valor conhecido. */
-function configFor(kind: string): RecordConfig {
-  return RECORD_CONFIG[kind] ?? (RECORD_CONFIG.expenses as RecordConfig);
+/**
+ * Configuração de um tipo de registo, ou `null` quando esse tipo não existe.
+ *
+ * `null` é uma resposta de primeira classe: quem chama tem de **decidir** o que mostrar, em
+ * vez de receber a configuração de despesas sem saber que o tipo não existe. Era essa a
+ * origem de `AUD-008` — `/records/insurance` mostrava o ecrã de despesas, sem erro nenhum,
+ * e o utilizador agia sobre dados que não tinha pedido. Uma degradação silenciosa é pior do
+ * que uma recusa: um 404 sabe-se que é um 404.
+ *
+ * Os tipos com ecrã próprio continuam a resolver; os que ainda não têm (inspeções, impostos,
+ * seguros, odómetro) passam a ser recusados de forma visível. Construí-los é `WEB-004`.
+ */
+function configFor(kind: string): RecordConfig | null {
+  return RECORD_CONFIG[kind] ?? null;
+}
+
+/**
+ * Secção de registos que não existe.
+ *
+ * Reutiliza `EmptyState` e o mesmo vocabulário da `NotFoundPage` (`App.tsx`) — um segundo
+ * estilo de recusa no mesmo produto seria pior do que a duplicação que evita. Diz o que
+ * **existe** em vez de só o que falta, e dá sempre um caminho de volta.
+ */
+function UnknownRecordKind() {
+  return (
+    <div className="z-page">
+      <EmptyState
+        icon="🧭"
+        title="Não encontrámos esta secção"
+        body="As secções de registos são despesas, abastecimentos, carregamentos e manutenção. O endereço pode ter vindo de uma versão antiga da aplicação — a partir do painel chegas a todas."
+        action={
+          <NavLink to="/" className="z-btn z-btn--primary">
+            Voltar ao painel
+          </NavLink>
+        }
+      />
+    </div>
+  );
 }
 
 /* -------------------------------------------------------------------------- */
@@ -361,8 +405,10 @@ function recordTitle(kind: string, record: unknown): string {
  * litro, distância desde o registo anterior. Mostrá-los na lista é o que transforma um livro
  * de despesas num instrumento de decisão — e o trabalho de os calcular já foi feito pelo
  * servidor, pelo que reimplementá-lo aqui seria duplicar a regra do método «depósito a
- * depósito» (que é subtil: um depósito parcial no meio torna o intervalo inválido e a API
- * devolve `null` em vez de um valor errado).
+ * depósito». Essa regra é subtil e não é a mesma coisa para os dois casos: um abastecimento
+ * parcial **com** odómetro é acumulado no intervalo seguinte; um abastecimento **sem**
+ * odómetro torna o intervalo não determinável e a API devolve `null`, em vez de atribuir
+ * arbitrariamente os litros a uma distância que não consegue verificar.
  */
 function recordMeta(kind: string, record: unknown): string {
   if (kind === 'fuel') {

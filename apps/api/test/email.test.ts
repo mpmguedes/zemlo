@@ -37,7 +37,6 @@ import {
   setEmailSender,
   type EmailSender,
 } from '../src/services/email.js';
-import { logger } from '../src/core/logger.js';
 
 /** Um link de recuperação como o que o email transporta. */
 const RESET_URL = 'https://appzemlo.com/repor-password?token=AbC123xyzTokenValue456';
@@ -117,16 +116,23 @@ describe('ConsoleEmailSender', () => {
   afterEach(() => {
     captura.parar();
     vi.restoreAllMocks();
+    // Repor o sender de consola, para uma escolha não contaminar o caso seguinte.
+    setEmailSender({ transport: 'teste', delivers: false, async send() {} });
   });
 
   it('não deixa o token do link chegar ao log', async () => {
     /*
-     * Reconstruir o sender de consola sem depender de o ambiente não ter SMTP: a escolha
-     * é feita por `registerEmailSender`, e forçar a ausência de SMTP alterando variáveis
-     * de ambiente teria efeitos sobre a configuração partilhada por toda a suite.
+     * O sender vem do caminho de **produção** — `registerEmailSender()` — e não é
+     * reconstruído aqui. Sem SMTP e fora de produção é ele que constrói e registra o
+     * `ConsoleEmailSender` verdadeiro; a partir daí `sendEmail` usa-o.
+     *
+     * É este o ponto do teste, e o motivo de `AUD-004` existir. Uma cópia local do sender,
+     * com a redação escrita à mão, passa mesmo que a produção perca o `redactResetLinks()`
+     * — foi exatamente o que aconteceu até 2026-09-22: o ficheiro era verde com o token a
+     * sair em claro no log.
      */
-    const consoleSender = construirConsoleSender();
-    setEmailSender(consoleSender);
+    const sender = registerEmailSender();
+    expect(sender.delivers).toBe(false);
 
     await sendEmail({
       to: 'pessoa@zemlo.test',
@@ -145,7 +151,7 @@ describe('ConsoleEmailSender', () => {
   });
 
   it('continua a registar que o email foi composto, para o log servir para algo', async () => {
-    setEmailSender(construirConsoleSender());
+    registerEmailSender();
 
     await sendEmail({
       to: 'pessoa@zemlo.test',
@@ -161,27 +167,6 @@ describe('ConsoleEmailSender', () => {
     expect(saida).toContain('reposição');
   });
 });
-
-/**
- * Um `ConsoleEmailSender` equivalente ao que a aplicação usa sem SMTP.
- *
- * Reconstruído aqui porque a classe não é exportada — exportá-la só para o teste alargaria
- * a superfície pública do módulo por causa de uma verificação. A duplicação é de quatro
- * linhas e a asserção recai sobre o comportamento do logger, que é o que se quer fixar.
- */
-function construirConsoleSender(): EmailSender {
-  return {
-    transport: 'log (sem SMTP configurado)',
-    delivers: false,
-    async send(message) {
-      logger.info('Email não enviado — entrega por configurar; conteúdo registado', {
-        to: message.to,
-        subject: message.subject,
-        text: redactResetLinks(message.text),
-      });
-    },
-  };
-}
 
 /* -------------------------------------------------------------------------- */
 /* Escolha do transporte no arranque                                           */

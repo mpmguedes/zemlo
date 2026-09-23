@@ -29,7 +29,12 @@ import {
 } from './http/middleware.js';
 import { authRouter } from './http/routes/auth.js';
 import { complianceRouter } from './http/routes/compliance.js';
-import { documentsRouter } from './http/routes/documents.js';
+import {
+  ACCEPTED_DOCUMENT_UPLOAD_TYPES,
+  DOCUMENT_UPLOAD_MAX_BYTES,
+  documentsRouter,
+  isDocumentUpload,
+} from './http/routes/documents.js';
 import { financialRouter } from './http/routes/financial.js';
 import { healthRouter, metricsRouter } from './http/routes/health.js';
 import {
@@ -212,6 +217,74 @@ export function createApp(): Express {
             return;
           }
           mountedImportRouter(request, response, next);
+        });
+      });
+    });
+  });
+
+  /*
+   * O upload do conteúdo de um documento — a mesma isenção, com outra lista de tipos. Serve
+   * os dois verbos de escrita de bytes: o `POST` (upload) e o `PUT` (substituição, `PROD-008`).
+   *
+   * ## Porque é que esta camada existe, e porque não bastava uma condição no router
+   *
+   * A razão é a mesma do importador, e está explicada em detalhe acima: o `requireJsonBody()`
+   * corre na aplicação, antes de qualquer router ser resolvido, pelo que um router montado em
+   * `/api/v1` nunca veria um pedido que o middleware já recusou. E um `next()` a partir daqui
+   * voltaria a cair no `requireJsonBody()`, que recusaria um `Content-Type: application/pdf`
+   * com 415 depois de o corpo já ter sido lido.
+   *
+   * A isenção tem, por isso, de **entregar** o pedido a um router que responda — e é o que
+   * `mountedDocumentsUploadRouter` faz. Não há duplicação de rota: é o **mesmo**
+   * `documentsRouter`, montado também aqui para o caminho exato que a isenção identifica.
+   * Para todo o resto — incluindo o `GET` do mesmo caminho — a lista da v1 continua a ser o
+   * único caminho, e o `requireJsonBody()` continua intacto.
+   *
+   * ## O âmbito
+   *
+   * Uma condição, avaliada por `isDocumentUpload()` (ver `routes/documents.ts`): `POST` **e**
+   * `PUT` sobre o caminho exato `/api/v1/documents/<id>/content`. Os dois verbos que escrevem
+   * bytes — o `POST` cria o ficheiro, o `PUT` troca-o (`PROD-008`) — e nada mais. Compara o
+   * método **e** o caminho porque, ao contrário das rotas do importador, este caminho é
+   * partilhado com a transferência — e isentar o download por causa de uma decisão sobre
+   * uploads seria um efeito lateral.
+   *
+   * ## O que a isenção troca, e o que não troca
+   *
+   * Troca a proteção de tipo global por uma proteção **mais forte**, específica desta rota: o
+   * `Content-Type` é validado contra uma lista fechada dentro do handler, o tamanho é
+   * limitado por `DOCUMENT_UPLOAD_MAX_BYTES` **durante a leitura**, e a autorização continua
+   * a ser a do serviço (o documento tem de ser do utilizador autenticado).
+   */
+  const parseDocumentUpload = raw({
+    type: [...ACCEPTED_DOCUMENT_UPLOAD_TYPES],
+    limit: DOCUMENT_UPLOAD_MAX_BYTES,
+  });
+
+  const mountedDocumentsUploadRouter = express.Router();
+  mountedDocumentsUploadRouter.use(API_BASE_PATH, documentsRouter);
+
+  app.use((request, response, next) => {
+    if (!isDocumentUpload(request.method, request.path)) {
+      next();
+      return;
+    }
+
+    // O `optionalAuth` e o `noStore` correm aqui pela mesma razão do importador: o pedido não
+    // segue a cadeia normal, pelo que nunca passaria pela linha que os monta. São exatamente
+    // os mesmos middlewares e na mesma ordem — o contrato de autenticação é o da aplicação.
+    optionalAuth()(request, response, (error?: unknown) => {
+      if (error) {
+        next(error);
+        return;
+      }
+      noStore()(request, response, () => {
+        parseDocumentUpload(request, response, (parseError?: unknown) => {
+          if (parseError) {
+            next(parseError);
+            return;
+          }
+          mountedDocumentsUploadRouter(request, response, next);
         });
       });
     });

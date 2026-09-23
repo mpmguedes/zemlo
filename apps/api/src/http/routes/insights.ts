@@ -46,9 +46,7 @@ import {
   loadVehicleAnalytics,
 } from '../../services/analytics.js';
 import { recordSuggestionDecision } from '../../services/suggestions.js';
-import { listReminders } from '../../services/reminders.js';
-import { syncNotifications } from '../../services/notifications.js';
-import { documentsExpiringSoon } from '../../services/documents.js';
+import { syncNotificationsForUser } from '../../services/notifications.js';
 
 export const insightsRouter = Router();
 
@@ -136,43 +134,16 @@ insightsRouter.get(
       today: today(request),
     });
 
-    // Sincronização de notificações: best-effort. Uma falha aqui não deve impedir o
-    // utilizador de ver o seu dashboard.
+    /*
+     * Sincronização de notificações: best-effort. Uma falha aqui não deve impedir o
+     * utilizador de ver o seu dashboard.
+     *
+     * O trabalho em si vive em `services/notifications.ts` e é o **mesmo** que o
+     * agendador corre sem pedido nenhum (`jobs/notification-sync.ts`). Aqui fica apenas a
+     * decisão que é própria de um pedido HTTP: engolir a falha para o ecrã aparecer.
+     */
     try {
-      const reminderList = await listReminders(user.id, {
-        includeCompleted: false,
-        windowDays: 180,
-        windowKm: 5000,
-      });
-      const expiring = await documentsExpiringSoon(user.id, today(request), 30);
-      await syncNotifications({
-        userId: user.id,
-        timeZone: user.timeZone,
-        vehicles: vehicles.map((vehicle) => ({
-          id: vehicle.id,
-          plateDisplay: vehicle.plateDisplay,
-          odometerKm: vehicle.odometerKm,
-        })),
-        reminders: reminderList.items.map((reminder) => ({
-          id: reminder.id,
-          vehicleId: reminder.vehicleId,
-          title: reminder.title,
-          topic: topicForReminder(reminder.title),
-          state: reminder.evaluation.state,
-          summary: reminder.evaluation.summary,
-          daysRemaining: reminder.evaluation.daysRemaining,
-          kmRemaining: reminder.evaluation.kmRemaining,
-          dueDate: reminder.dueDate,
-          projectedDate: reminder.evaluation.projectedDate,
-        })),
-        expiringDocuments: expiring.map((document) => ({
-          id: document.id,
-          name: document.name,
-          expiresAt: document.expiresAt,
-          daysToExpiry: document.daysToExpiry,
-          vehicleId: document.vehicleId,
-        })),
-      });
+      await syncNotificationsForUser(user.id, request.meta.timeZone);
     } catch {
       // Silencioso de propósito: ver comentário acima.
     }
@@ -298,26 +269,3 @@ insightsRouter.post(
     response.status(204).end();
   }),
 );
-
-/* -------------------------------------------------------------------------- */
-/* Auxiliares                                                                  */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Tópico de notificação inferido do título do lembrete.
- *
- * O modelo `Reminder` já tem uma coluna `topic`, mas os lembretes criados antes de essa
- * coluna existir têm o valor por omissão (`maintenance`). Inferir pelo título mantém as
- * notificações corretas para dados antigos e é o tipo de compatibilidade que se paga
- * uma vez e se esquece.
- */
-function topicForReminder(title: string): string {
-  const normalized = title.toLowerCase();
-  if (normalized.includes('seguro') || normalized.includes('apólice') || normalized.includes('apolice')) {
-    return 'insurance';
-  }
-  if (normalized.includes('inspeção') || normalized.includes('inspecao')) return 'inspection';
-  if (normalized.includes('iuc') || normalized.includes('imposto')) return 'tax';
-  if (normalized.includes('validade') || normalized.includes('documento')) return 'document';
-  return 'maintenance';
-}

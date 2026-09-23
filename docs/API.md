@@ -54,6 +54,8 @@ Cabeçalhos úteis: `X-Request-Id` (correlação), `X-Zemlo-Api-Version`, `Retry
 | POST | `/auth/signup` | criar conta. Requer `acceptedTerms: true`. Devolve `{ user, tokens }` |
 | POST | `/auth/login` | iniciar sessão. `totp` aceita 6 dígitos **ou** código de recuperação `XXXXX-XXXXX` |
 | POST | `/auth/refresh` | renovar sessão com `refreshToken` |
+| GET | `/auth/google/start` | iniciar a entrada com Google. Responde **302** para o emissor e deixa o cookie `zemlo_oauth_state` |
+| GET | `/auth/google/callback` | regresso do emissor. Devolve `{ user, tokens }`, como o `/auth/login` |
 | POST | `/auth/logout` | terminar a sessão atual |
 | POST | `/auth/logout-all` | terminar todas as sessões |
 | POST | `/auth/password-reset` | pedir link de recuperação. Resposta **idêntica** exista ou não a conta (202) |
@@ -82,6 +84,60 @@ Cabeçalhos úteis: `X-Request-Id` (correlação), `X-Zemlo-Api-Version`, `Retry
   "tokens": { "accessToken": "…", "expiresIn": 3600, "tokenType": "Bearer" }
 }
 ```
+
+### Login com Google (`AUTH-002`)
+
+Dois endpoints, e são os **únicos** desta API feitos para ser visitados por **navegação de
+topo** — não chamados por código. É por isso que o primeiro responde com um redirecionamento
+e não com JSON.
+
+```txt
+browser ──GET /auth/google/start──► API ──302──► accounts.google.com
+                                     │
+                                     └── Set-Cookie: zemlo_oauth_state=<state>; HttpOnly; SameSite=Lax
+
+browser ──GET /auth/google/callback?code=…&state=…──► API ──► token endpoint (back-channel)
+                                                              │
+                                                              └── 200 { user, tokens }
+```
+
+**O que o servidor garante:**
+
+- o `client_secret` **nunca** chega ao cliente. A troca do `code` acontece no servidor, entre a
+  API e o emissor;
+- `state` e `nonce` são gerados pelo servidor e verificados no regresso. O `state` é de **uso
+  único**: repetir o mesmo callback é recusado;
+- o `state` é também ligado ao **browser** por um cookie `HttpOnly`. Um callback com um `state`
+  válido mas sem a marca do browser é recusado — é o que impede que alguém faça outra pessoa
+  terminar um fluxo que não começou;
+- o `redirect_uri` vem **só** da configuração (`GOOGLE_REDIRECT_URI` ou `PUBLIC_BASE_URL`),
+  nunca do cabeçalho `Host`;
+- o `id_token` é validado quanto a assinatura (JWKS do emissor), `iss`, `aud`, `exp`/`iat` e
+  `nonce`, **antes** de qualquer claim ser lido;
+- o endereço tem de vir confirmado pelo emissor (`email_verified: true`). Um endereço que o
+  emissor não confirmou não cria conta.
+
+**O que acontece a cada caso:**
+
+| Caso | Resultado |
+| --- | --- |
+| Identidade Google já associada a uma conta | Início de sessão nessa conta |
+| Identidade Google desconhecida, email livre | **Conta criada automaticamente**, com a identidade associada e `emailVerified` herdado do emissor |
+| Identidade Google desconhecida, email já numa conta Zemlo | **Recusado (409)**. Não há associação implícita — essa é `AUTH-003` |
+
+**Erros.** Todos usam o envelope único (§«Códigos de erro»). Os que têm significado próprio:
+
+| Situação | Estado | Nota |
+| --- | --- | --- |
+| Login federado não configurado no servidor | `503` | `service_unavailable`; a mensagem diz qual a variável em falta |
+| `state` ausente, desconhecido, expirado ou já usado | `400` | |
+| Marca do browser ausente ou de outro fluxo | `400` | |
+| `id_token` inválido (assinatura, `iss`, `aud`, expirado, `nonce`) | `400` | A causa exata fica no log; o cliente recebe uma mensagem única |
+| Endereço não confirmado pelo emissor, ou sem endereço | `400` | |
+| Email já pertence a uma conta Zemlo | `409` | Encaminha para `AUTH-003` |
+| Utilizador cancelou no ecrã do emissor | `400` | Mensagem própria: cancelar não é um ataque |
+
+**Configuração:** `docs/OPERATIONS.md` §3.5.
 
 ---
 
@@ -156,9 +212,11 @@ precisamente quem quer ver o consumo:
                "consumptionL100Km": 6, "costPer100KmCents": 1020 } }
 ```
 
-O consumo usa o método **depósito a depósito**: só é calculado entre dois abastecimentos
-atestados. Um abastecimento parcial no meio torna o intervalo não fiável e o Zemlo
-devolve `null` em vez de um valor errado. O mesmo princípio no carregamento elétrico.
+O consumo usa o método **depósito a depósito**: um intervalo é fechado entre dois
+abastecimentos atestados com odómetro, e os litros dos abastecimentos parciais pelo meio
+acumulam-se nesse intervalo, em vez de serem descartados. Quando o intervalo não fica
+atestado nos dois extremos, o Zemlo devolve `null` em vez de um valor errado. O mesmo
+princípio no carregamento elétrico.
 
 ---
 
@@ -184,15 +242,106 @@ registo é associado ao veículo mais recentemente atualizado.
 | GET | `/documents/expiring?withinDays=60` | a expirar, para o cartão de estado |
 | POST | `/documents` | cria o registo e os metadados. **Não aceita ficheiros** |
 | GET/PATCH/DELETE | `/documents/:id` | detalhe, edição de metadados, eliminação |
+| POST | `/documents/:id/content` | **recebe os bytes** do ficheiro (upload, §A31) |
+| PUT | `/documents/:id/content` | **substitui os bytes** do ficheiro (§PROD-008) |
 | GET | `/documents/:id/content` | **transfere os bytes** do ficheiro (§A17.1) |
 
 A transferência exige sessão, é restrita ao dono do documento, e o `Content-Type` só é
 anunciado quando o tipo está numa lista de permissão — tipos activos (`text/html`,
 `image/svg+xml`) são servidos como `application/octet-stream`.
 
-O que continua a não existir é o **upload**: os bytes só entram no armazenamento pelo
-importador de bundle ou por escrita directa. Não há `multipart`, e a API nunca escreve
-ficheiros a partir de um pedido.
+### Upload dos bytes (§A31)
+
+`POST /documents/:id/content` recebe o ficheiro com o **corpo cru** — o ficheiro tal como o
+cliente o leu, não `multipart/form-data`. O documento tem de **existir primeiro** (é o
+`POST /documents` que cria a ficha), pelo que o upload é o segundo passo.
+
+| Aspeto | Comportamento |
+| --- | --- |
+| `Content-Type` | lista fechada: `application/pdf`, `image/jpeg`, `image/png`, `image/gif`, `image/webp`, `image/heic`, `image/heif`, `text/plain`, `application/octet-stream`. Os parâmetros (`; charset=`) são ignorados |
+| Tamanho | máximo de **25 MiB**, verificado durante a leitura do corpo |
+| Autorização | sessão obrigatória; o documento tem de ser do utilizador |
+| Chave | gerada pelo servidor (`<userId>/<32 hex>`). O cliente não a envia nem a pode sugerir |
+| Resposta | `200` com o documento atualizado (inclui `storageKey`, `sizeBytes`, `mimeType`) |
+| Metadados | `name`, `category`, `date`, `expiresAt`, `vehicleId` e `notes` **não** são tocados. `fileName` também não: o corpo cru não transporta nomes |
+
+Erros: `400` sem corpo ou sem `Content-Type`; `413` acima do limite; `415` tipo não aceite;
+`404` documento inexistente ou de outra conta; `409` documento que **já tem** ficheiro — a
+substituição é o `PUT` (§PROD-008), e não este verbo.
+
+O tipo **activo** é recusado à entrada (`text/html`, `image/svg+xml`), e não apenas rebaixado
+na transferência: o ficheiro nunca chega a ser guardado.
+
+`multipart/form-data` continua a não existir na API, e é uma decisão (A31): traria uma
+dependência para transportar um único ficheiro, e o modo de falha seria pior — o que chegaria
+ao leitor seria um envelope, e o primeiro erro possível seria um `------WebKitFormBoundary…`.
+
+### Substituição dos bytes (§PROD-008)
+
+`PUT /documents/:id/content` define o conteúdo do ficheiro: troca-o quando já existe e cria-o
+quando não existe. O corpo cru, a lista de tipos e o limite são **os mesmos** do upload — a
+leitura é literalmente a mesma função, para que os dois verbos não possam divergir.
+
+| Aspeto | Comportamento |
+| --- | --- |
+| Semântica | o `PUT` **define** o conteúdo: um documento sem ficheiro passa a tê-lo, e um que já tem passa a ter o novo. Não há `404` para "não havia nada para substituir" |
+| Corpo e tipo | idênticos ao `POST`: o mesmo `Content-Type` da lista fechada, o mesmo máximo de 25 MiB, `400` se o corpo vier vazio |
+| Autorização | sessão obrigatória; o documento tem de ser do utilizador (`404` caso contrário, e nada é escrito) |
+| Chave | **nova**, gerada pelo servidor. A antiga é removida **depois** de o registo apontar para a nova |
+| Resposta | `200` com o documento atualizado (inclui `storageKey`, `sizeBytes`, `mimeType`) |
+| Metadados | `name`, `category`, `date`, `expiresAt`, `vehicleId`, `notes` e `fileName` **não** são tocados |
+
+A ordem é a garantia, e é assimétrica:
+
+1. os bytes **novos** são guardados primeiro;
+2. o registo passa a apontar para a chave nova (`storageKey`, `sizeBytes` e `mimeType`);
+3. só então a chave **antiga** é removida.
+
+Se a etapa 1 falhar, nada mudou: o documento continua a apontar para o ficheiro antigo, que
+existe e é servido. Se a etapa 2 falhar, a chave nova — que ninguém referencia — é removida, e
+o documento continua a apontar para a antiga. Invertida, a ordem produziria o pior estado
+possível: um registo a apontar para um ficheiro que já não existe, que a lista mostra e o
+download recusa, e que o utilizador não consegue compor pela API.
+
+Matriz dos estados:
+
+| Estado de partida / falha | Resultado |
+| --- | --- |
+| sem ficheiro → `PUT` | passa a ter ficheiro (`200`); não havia nada a remover |
+| ficheiro → `PUT` | aponta para a chave nova; a antiga sai, se nenhum outro registo a referenciar |
+| falha ao guardar os bytes novos | `500`; o documento continua a apontar para o ficheiro antigo, que continua a ser servido |
+| falha ao apontar o registo | `500`; a chave nova é removida e o documento continua a apontar para a antiga |
+| falha ao remover a chave antiga | `200`; o documento serve os bytes novos e a chave antiga fica órfã — resíduo registado no log, com o `documentId` e **sem** a chave |
+| chave antiga partilhada (`PC-21`) | os bytes antigos **não** são removidos enquanto outro registo os referenciar |
+
+A remoção da chave antiga é a **mesma** função que a eliminação usa (`discardDocumentBytes`,
+§PROD-007), com a mesma contagem de referências e a mesma higiene de log: não há uma segunda
+implementação de limpeza, que divergiria da primeira ao primeiro refactor.
+
+### Eliminação dos bytes (§PROD-007)
+
+`DELETE /documents/:id` devolve o espaço ao armazenamento: apaga o registo, os eventos e os
+lembretes que dele derivam — e, por fim, os bytes.
+
+| Aspeto | Comportamento |
+| --- | --- |
+| Ordem | o **registo sai primeiro**, os bytes depois. Não existe estado intermédio em que o registo aponte para um ficheiro inexistente |
+| Falha do armazenamento | **não** falha o pedido: a resposta continua `204` e o resíduo é registado no log (`documentId` + código do erro, **nunca** a chave nem o caminho) |
+| Ficheiro já inexistente | sem erro — a remoção é idempotente |
+| Chave partilhada | se outro registo da mesma conta ainda apontar para a mesma chave, os bytes **não** são apagados |
+| Documento sem ficheiro | elimina-se sem tocar no armazenamento |
+| Resposta | `204` sem corpo; `404` para documento inexistente ou de outra conta |
+
+A remoção é *best-effort* por decisão: o pedido do utilizador foi apagar o registo, e o
+registo foi apagado. Um erro HTTP obrigaria a repetir um pedido que já teve efeito — e a
+repetição responderia `404`.
+
+**Fora de âmbito:** esta operação fecha a torneira, não limpa o chão. Órfãos anteriores a esta
+versão exigiriam uma varredura do armazenamento, que é uma decisão à parte. E a eliminação de
+**conta** (`DELETE /me`) apaga os documentos por cascata do esquema, **não** passa por aqui —
+os bytes desses documentos continuam por remover. A substituição (§PROD-008) deixa o mesmo tipo
+de resíduo quando a remoção da chave antiga falha, e pela mesma razão: a varredura continua a
+ser o que falta, e continua a estar fora de âmbito.
 
 ---
 

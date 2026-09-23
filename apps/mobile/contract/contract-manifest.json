@@ -1,0 +1,509 @@
+{
+  "generatedBy": "apps/mobile/contract/generate.mjs",
+  "contractPackage": "@zemlo/shared",
+  "contractSourceHash": {
+    "packages/shared/src/types.ts": "88c052d536105ecbd3a9f0108459b89b049add3bbdbb6eddb0294a3949bfdfde",
+    "packages/shared/dist/index.js": "b441e04bb4c417bf731a7efbca8b7813c5ae7bdb1c3ebcd42fdf6f43f9d19389"
+  },
+  "versions": {
+    "platform": "0.1.0",
+    "api": "v1",
+    "basePath": "/api/v1"
+  },
+  "consumed": {
+    "A11 · envelope de erro": [
+      "ApiErrorBody",
+      "ApiErrorCode"
+    ],
+    "A23 · sessão e renovação": [
+      "AuthTokens",
+      "AuthSessionResponse",
+      "UserProfile"
+    ],
+    "A9 · paginação por cursor": [
+      "Page"
+    ],
+    "primeiro tipo de domínio (prova o mecanismo)": [
+      "VehicleSummary"
+    ]
+  },
+  "enums": {
+    "ApiErrorCode": [
+      "validation_error",
+      "unauthorized",
+      "forbidden",
+      "not_found",
+      "conflict",
+      "rate_limited",
+      "unprocessable",
+      "internal_error",
+      "service_unavailable",
+      "payload_too_large",
+      "gone"
+    ],
+    "DocumentCategory": [
+      "registration",
+      "insurance",
+      "inspection",
+      "invoice",
+      "receipt",
+      "maintenance",
+      "warranty",
+      "tax",
+      "certificate",
+      "photo",
+      "other"
+    ],
+    "DocumentContentState": [
+      "included",
+      "missingContent",
+      "externalReference"
+    ],
+    "ExpenseCategory": [
+      "fuel",
+      "charging",
+      "maintenance",
+      "tyres",
+      "insurance",
+      "tax",
+      "inspection",
+      "wash",
+      "parking",
+      "tolls",
+      "repairs",
+      "accessories",
+      "fines",
+      "other"
+    ],
+    "FuelType": [
+      "gasoline",
+      "diesel",
+      "lpg",
+      "cng",
+      "hybrid",
+      "phev",
+      "electric",
+      "hydrogen",
+      "other"
+    ],
+    "MaintenanceType": [
+      "service",
+      "oil",
+      "filters",
+      "brakes",
+      "tyres",
+      "battery",
+      "timing",
+      "suspension",
+      "clutch",
+      "ac",
+      "diagnostics",
+      "bodywork",
+      "software",
+      "recall",
+      "other"
+    ],
+    "NotificationChannel": [
+      "push",
+      "email",
+      "in_app"
+    ],
+    "NotificationFrequency": [
+      "immediate",
+      "daily",
+      "weekly",
+      "off"
+    ],
+    "NotificationTopic": [
+      "maintenance",
+      "inspection",
+      "insurance",
+      "tax",
+      "document",
+      "summary",
+      "security"
+    ],
+    "ProviderKind": [
+      "manual",
+      "api",
+      "obd",
+      "import",
+      "document",
+      "estimated"
+    ],
+    "ReminderTrigger": [
+      "distance",
+      "time",
+      "both"
+    ],
+    "SuggestionType": [
+      "vehicle.add_odometer",
+      "vehicle.add_insurance",
+      "vehicle.add_inspection",
+      "vehicle.add_maintenance_plan",
+      "vehicle.add_details",
+      "expense.add_odometer",
+      "account.enable_2fa",
+      "documents.add_first"
+    ],
+    "UserProfileDistanceUnit": [
+      "km",
+      "mi"
+    ],
+    "UserProfileVolumeUnit": [
+      "l",
+      "gal_us",
+      "gal_uk"
+    ],
+    "VehicleType": [
+      "car",
+      "suv",
+      "van",
+      "motorcycle",
+      "scooter",
+      "bicycle",
+      "quad",
+      "truck",
+      "camper",
+      "other"
+    ]
+  },
+  "models": {
+    "ApiErrorBody": {
+      "typeParams": [],
+      "fields": {
+        "error": "ApiErrorBodyError"
+      }
+    },
+    "ApiErrorBodyError": {
+      "typeParams": [],
+      "fields": {
+        "code": "ApiErrorCode",
+        "message": "String",
+        "fields": "List<ApiErrorBodyErrorFieldsItem>?",
+        "requestId": "String?"
+      }
+    },
+    "ApiErrorBodyErrorFieldsItem": {
+      "typeParams": [],
+      "fields": {
+        "path": "String",
+        "message": "String"
+      }
+    },
+    "AuthSessionResponse": {
+      "typeParams": [],
+      "fields": {
+        "user": "UserProfile",
+        "tokens": "AuthTokens"
+      }
+    },
+    "AuthTokens": {
+      "typeParams": [],
+      "fields": {
+        "accessToken": "String",
+        "expiresIn": "num",
+        "tokenType": "String",
+        "refreshToken": "String"
+      }
+    },
+    "Page": {
+      "typeParams": [
+        "T"
+      ],
+      "fields": {
+        "items": "List<T>",
+        "nextCursor": "String?",
+        "total": "num?"
+      }
+    },
+    "SourceInfo": {
+      "typeParams": [],
+      "fields": {
+        "kind": "String?",
+        "label": "String?",
+        "integrationId": "String?",
+        "observedAt": "String?"
+      }
+    },
+    "UserProfile": {
+      "typeParams": [],
+      "fields": {
+        "id": "String",
+        "email": "String",
+        "name": "String?",
+        "locale": "String",
+        "timeZone": "String",
+        "distanceUnit": "UserProfileDistanceUnit",
+        "volumeUnit": "UserProfileVolumeUnit",
+        "currency": "String",
+        "emailVerified": "bool",
+        "twoFactorEnabled": "bool",
+        "createdAt": "String",
+        "counts": "UserProfileCounts",
+        "onboarding": "UserProfileOnboarding"
+      }
+    },
+    "UserProfileCounts": {
+      "typeParams": [],
+      "fields": {
+        "vehicles": "num",
+        "expenses": "num",
+        "documents": "num",
+        "integrations": "num"
+      }
+    },
+    "UserProfileOnboarding": {
+      "typeParams": [],
+      "fields": {
+        "hasVehicle": "bool",
+        "hasOdometer": "bool",
+        "hasInsurance": "bool",
+        "hasInspection": "bool",
+        "hasMaintenancePlan": "bool",
+        "complete": "bool"
+      }
+    },
+    "VehicleSummary": {
+      "typeParams": [],
+      "fields": {
+        "id": "String",
+        "plate": "String",
+        "plateDisplay": "String",
+        "make": "String?",
+        "model": "String?",
+        "version": "String?",
+        "year": "num?",
+        "vehicleType": "String",
+        "fuelType": "String",
+        "nickname": "String?",
+        "archived": "bool",
+        "odometerKm": "num?",
+        "odometerSource": "SourceInfo?",
+        "odometerUpdatedAt": "String?",
+        "emoji": "String",
+        "createdAt": "String",
+        "updatedAt": "String"
+      }
+    }
+  },
+  "aliases": {},
+  "registry": {
+    "DOCUMENT_CATEGORIES": [
+      "registration",
+      "insurance",
+      "inspection",
+      "invoice",
+      "receipt",
+      "maintenance",
+      "warranty",
+      "tax",
+      "certificate",
+      "photo",
+      "other"
+    ],
+    "EVENT_TYPES": [
+      "vehicle.created",
+      "vehicle.updated",
+      "odometer.recorded",
+      "expense.created",
+      "fuel.created",
+      "charging.created",
+      "maintenance.created",
+      "insurance.created",
+      "inspection.created",
+      "tax.created",
+      "document.created",
+      "reminder.created",
+      "reminder.completed",
+      "document.expiring",
+      "odometer.corrected",
+      "note"
+    ],
+    "EXPENSE_CATEGORIES": [
+      "fuel",
+      "charging",
+      "maintenance",
+      "tyres",
+      "insurance",
+      "tax",
+      "inspection",
+      "wash",
+      "parking",
+      "tolls",
+      "repairs",
+      "accessories",
+      "fines",
+      "other"
+    ],
+    "FUEL_TYPES": [
+      "gasoline",
+      "diesel",
+      "lpg",
+      "cng",
+      "hybrid",
+      "phev",
+      "electric",
+      "hydrogen",
+      "other"
+    ],
+    "INSPECTION_RESULTS": [
+      "passed",
+      "passed_with_defects",
+      "failed",
+      "pending"
+    ],
+    "INSURANCE_COVERAGES": [
+      "third_party",
+      "third_party_fire_theft",
+      "comprehensive",
+      "other"
+    ],
+    "INTEGRATION_CATEGORIES": [
+      "manufacturer",
+      "home_assistant",
+      "wallbox",
+      "obd",
+      "charging_network",
+      "other"
+    ],
+    "MAINTENANCE_TYPES": [
+      "service",
+      "oil",
+      "filters",
+      "brakes",
+      "tyres",
+      "battery",
+      "timing",
+      "suspension",
+      "clutch",
+      "ac",
+      "diagnostics",
+      "bodywork",
+      "software",
+      "recall",
+      "other"
+    ],
+    "NOTIFICATION_CHANNELS": [
+      "push",
+      "email",
+      "in_app"
+    ],
+    "NOTIFICATION_FREQUENCIES": [
+      "immediate",
+      "daily",
+      "weekly",
+      "off"
+    ],
+    "NOTIFICATION_TOPICS": [
+      "maintenance",
+      "inspection",
+      "insurance",
+      "tax",
+      "document",
+      "summary",
+      "security"
+    ],
+    "PAYMENT_METHODS": [
+      "cash",
+      "card",
+      "transfer",
+      "direct_debit",
+      "mbway",
+      "voucher",
+      "other"
+    ],
+    "PROVIDER_KINDS": [
+      "manual",
+      "api",
+      "obd",
+      "import",
+      "document",
+      "estimated"
+    ],
+    "QUICK_ACTIONS": [
+      "expense",
+      "fuel",
+      "charging",
+      "maintenance",
+      "odometer"
+    ],
+    "RECORD_KINDS": [
+      "expense",
+      "fuel",
+      "charging",
+      "maintenance",
+      "odometer"
+    ],
+    "REMINDER_STATES": [
+      "ok",
+      "soon",
+      "due",
+      "overdue",
+      "unknown"
+    ],
+    "REMINDER_TRIGGERS": [
+      "distance",
+      "time",
+      "both"
+    ],
+    "SUGGESTION_TYPES": [
+      "vehicle.add_odometer",
+      "vehicle.add_insurance",
+      "vehicle.add_inspection",
+      "vehicle.add_maintenance_plan",
+      "vehicle.add_details",
+      "expense.add_odometer",
+      "account.enable_2fa",
+      "documents.add_first"
+    ],
+    "TAX_KINDS": [
+      "iuc",
+      "isv",
+      "toll_device",
+      "other"
+    ],
+    "VEHICLE_TYPES": [
+      "car",
+      "suv",
+      "van",
+      "motorcycle",
+      "scooter",
+      "bicycle",
+      "quad",
+      "truck",
+      "camper",
+      "other"
+    ]
+  },
+  "knownWeaknesses": {
+    "note": "Campos do contrato cujo tipo TypeScript é `string` mas cujo domínio tem conjunto fechado. Causa: `registry.ts` declara `freeze<T extends readonly OptionMeta[]>(items: T): T` e `OptionMeta.code` é `string`, pelo que os códigos literais alargam e `CodeOf<T>` resolve para `string`. Só o esquema Zod os fecha, em tempo de execução.",
+    "codeOfAliasesTotal": 19,
+    "codeOfAliasesWithoutClosedSet": 19,
+    "codeOfAliasesOpenNames": [
+      "DocumentCategory",
+      "EventType",
+      "ExpenseCategory",
+      "FuelType",
+      "InspectionResult",
+      "InsuranceCoverage",
+      "IntegrationCategory",
+      "MaintenanceType",
+      "NotificationChannel",
+      "NotificationFrequency",
+      "NotificationTopic",
+      "PaymentMethod",
+      "ProviderKind",
+      "RecordKind",
+      "ReminderState",
+      "ReminderTrigger",
+      "SuggestionType",
+      "TaxKind",
+      "VehicleType"
+    ],
+    "stringFieldsWithEnumOfSameName": [
+      "VehicleSummary.vehicleType → VehicleType",
+      "VehicleSummary.fuelType → FuelType"
+    ]
+  }
+}

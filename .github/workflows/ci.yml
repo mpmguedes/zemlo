@@ -1,0 +1,150 @@
+name: CI
+
+# Corre em cada push e em cada pull request. `workflow_dispatch` permite reexecutar à mão
+# quando um vermelho for de ambiente (ver `PC-26` no ROADMAP).
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# Um push novo cancela a execução anterior do mesmo ramo: o resultado que interessa é o do
+# último commit, e não faz sentido pagar duas vezes por dois.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------------------
+  # O que não precisa de servidor nem de base de dados.
+  # ---------------------------------------------------------------------------------------
+  qualidade:
+    name: Qualidade — tipos, testes e configuração
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Obter o código
+        uses: actions/checkout@v4
+
+      - name: Preparar o Node
+        uses: actions/setup-node@v4
+        with:
+          # `engines` do package.json exige >=22.11.0.
+          node-version: '22'
+          cache: npm
+
+      - name: Instalar dependências
+        # O `postinstall` corre `db:generate`, que reconstrói os clientes Prisma — não são
+        # versionados (`.gitignore`: `apps/api/prisma/generated/`), pelo que sem isto nada
+        # compila nem corre.
+        run: npm ci
+
+      - name: O schema SQLite derivado está sincronizado
+        # O canónico é o PostgreSQL; o SQLite é **gerado** a partir dele. Alterar o canónico
+        # sem regenerar o derivado deixaria os testes a validar um esquema que ninguém usa.
+        run: npm run db:check-schema
+
+      - name: Verificação de tipos (3 workspaces)
+        # Nota honesta: este comando **exclui** `**/*.test.ts` (`PC-15`), pelo que um erro de
+        # tipo num teste não falha aqui. Está registado, não resolvido.
+        run: npm run typecheck
+
+      - name: Testes
+        # `scripts/ci/run-tests.mjs` distingue falha de teste de falha de ambiente (`PC-26`):
+        # um bloqueio de ficheiro no teardown, com **zero** asserções falhadas, avisa alto e
+        # não pinta o CI de vermelho; uma asserção falhada, uma suite que não carrega, ou
+        # qualquer saída que o script não consiga explicar, **falha**.
+        run: node scripts/ci/run-tests.mjs
+
+      - name: Guardas de configuração
+        # Não precisa de servidor: prova que a API recusa arrancar com valores inseguros.
+        run: npm run verify:config
+
+      - name: Números do README conferem com o repositório
+        # Não precisa de servidor nem de base de dados: conta as tabelas dos dois schemas,
+        # as decisões e as rotas da web e compara-as com o que o README declara (`AUD-010`).
+        # Sem isto, os números escritos à mão voltam a envelhecer sem ninguém dar por isso.
+        run: npm run readme:numbers
+
+  # ---------------------------------------------------------------------------------------
+  # O que precisa de uma base de dados semeada e de um servidor a correr.
+  #
+  # `verify:auth` é corrido **explicitamente**: não está no `verify:all` do `package.json`
+  # (`verify:all` = `verify:config && verify && verify:regressions`), e sem ele o critério
+  # «uma falha em `auth` falha o CI» não ficaria cumprido.
+  # ---------------------------------------------------------------------------------------
+  verificacao:
+    name: Verificação — base semeada e servidor a correr
+    needs: qualidade
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NODE_ENV: development
+      DATABASE_PROVIDER: sqlite
+      # Caminho **absoluto**: um caminho relativo é resolvido de sítios diferentes por
+      # `prisma db push` (relativo ao schema) e pelo cliente em runtime, e a base acabaria
+      # criada num sítio e procurada noutro.
+      DATABASE_URL: file:${{ github.workspace }}/apps/api/prisma/sqlite/ci.db
+      PUBLIC_BASE_URL: http://127.0.0.1:4000
+      HOST: 127.0.0.1
+      PORT: '4000'
+      # Segredo descartável, só deste passo: não abre nada e não existe em produção. O CI
+      # não recebe segredos de produção — e não precisa deles.
+      JWT_SECRET: ci-disposable-secret-0123456789abcdef
+    steps:
+      - name: Obter o código
+        uses: actions/checkout@v4
+
+      - name: Preparar o Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Criar o esquema na base de dados de CI
+        run: npm run db:push
+
+      - name: Semear
+        run: npm run db:seed
+
+      - name: Arrancar a API e esperar que esteja pronta
+        # A sonda é `/health` e **não** `/api/v1/health`: a saúde vive **fora** do prefixo
+        # versionado, de propósito (`app.ts:347-349` — um orquestrador não deve ter de saber
+        # que versão da API corre para saber se o processo responde). `/api/v1/health/live`
+        # devolve **404**. Este erro foi cometido e apanhado a correr o passo localmente.
+        #
+        # Usa-se `/health` e não `/health/live` porque é `/health` que também verifica a base
+        # de dados (503 se não responder) — e é a base que os passos seguintes precisam.
+        # Assim, uma base quebrada falha aqui, com o log à vista, e não a meio do `verify`.
+        run: |
+          cd apps/api
+          npx tsx src/server.ts > "$RUNNER_TEMP/api.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/api.pid"
+          for tentativa in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:4000/health > /dev/null; then
+              echo "API pronta ao fim de ${tentativa}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::A API não ficou pronta em 60s"
+          tail -50 "$RUNNER_TEMP/api.log"
+          exit 1
+
+      - name: Fluxos ponta a ponta
+        run: npm run verify
+
+      - name: Segurança da autenticação
+        run: npm run verify:auth
+
+      - name: Regressões
+        run: npm run verify:regressions
+
+      - name: Log da API (sempre, para diagnóstico)
+        if: always()
+        run: tail -100 "$RUNNER_TEMP/api.log" || true

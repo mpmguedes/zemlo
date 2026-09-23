@@ -16,17 +16,24 @@ telemetria, famílias e frotas sem reconstrução estrutural.
 | Área | Estado |
 | --- | --- |
 | API REST (Node 22 · Express · TypeScript) | ✅ MVP completo (§39) |
-| Modelo de dados (27 tabelas, PostgreSQL + SQLite) | ✅ |
+| Modelo de dados (29 tabelas, PostgreSQL + SQLite) | ✅ |
 | Autenticação (email/password, JWT, 2FA TOTP, sessões renováveis) | ✅ |
-| App web (React · Vite · mobile-first, 30 rotas) | ✅ |
-| Testes (63 unitários · 231 ponta a ponta · 70 regressões · 12 guardas · 28 integração) | ✅ a passar |
-| Documentação (API, arquitetura, 30 decisões, operações, identidade) | ✅ |
+| App web (React · Vite · mobile-first, 31 rotas) | ✅ |
+| Testes (1 841 automáticos · 235 ponta a ponta · 70 regressões · 12 guardas · 28 integração) | ✅ a passar |
+| Documentação (API, arquitetura, 32 decisões, operações, identidade) | ✅ |
 | App mobile (Flutter) | ⏳ pós-MVP (§3.6) |
 | Integrações de fabricantes, OBD, wallboxes, MQTT | ⏳ modelo e especificação prontos, sem ligação |
 
 A app web consome a mesma API que a futura app mobile consumirá (§34) — o contrato em
 `packages/shared` é a única definição de "despesa" ou "lembrete" no projeto, para que as
 duas aplicações não possam divergir.
+
+Os números desta tabela são **medidos** no repositório, não escritos de memória: `npm run
+readme:numbers` conta as tabelas dos dois schemas, as decisões e as rotas da web (atributos
+`path` com valor próprio em `apps/web/src/App.tsx`, sem o apanha-tudo do `NotFound`), e falha
+se este documento divergir. Os totais das suítes de verificação não são contados por ele —
+são reportados pelo próprio comando que os corre, e cada um tem o seu em «Verificar que tudo
+funciona», abaixo.
 
 > **Nota sobre os testes.** O número de verificações não é uma medida de qualidade por si
 > só. Três defeitos que inutilizavam contas ou corrompiam totais passaram por 223
@@ -94,9 +101,10 @@ de cabeçalhos para manter. Ver `docs/ARCHITECTURE.md` §7.
 ### Verificar que tudo funciona
 
 ```bash
-npm test                                    # 63 testes unitários do domínio
+npm test                                    # 1 841 testes automáticos (API 1 707 · web 134)
+npm run readme:numbers                      # os números deste README conferem com o repositório
 npm run verify:config                       # 12 guardas de configuração de produção
-npm run verify                              # 231 verificações ponta a ponta (API a correr)
+npm run verify                              # 235 verificações ponta a ponta (API a correr)
 npm run verify:regressions                  # 70 regressões de defeitos já corrigidos
 npm run verify:integration                  # 28 verificações da integração em produção
 npm run typecheck                           # tipos em todos os pacotes
@@ -128,7 +136,7 @@ zemlo/
 │   │   │   └── seed.ts             Dados de demonstração realistas
 │   │   ├── scripts/
 │   │   │   ├── sync-sqlite-schema.mjs   Deriva o schema SQLite do canónico
-│   │   │   ├── verify.ts                231 verificações ponta a ponta
+│   │   │   ├── verify.ts                235 verificações ponta a ponta
 │   │   │   ├── verify-regressions.ts    70 regressões de defeitos corrigidos
 │   │   │   ├── verify-config.ts         12 guardas de configuração
 │   │   │   ├── verify-integration.mjs   28 verificações da integração em produção
@@ -142,9 +150,9 @@ zemlo/
 │   │   │   ├── http/               Middlewares, validação e rotas
 │   │   │   ├── app.ts              Composição da aplicação Express
 │   │   │   └── server.ts           Arranque e encerramento limpo
-│   │   └── test/domain.test.ts     63 testes do domínio
+│   │   └── test/domain.test.ts     77 testes do domínio
 │   │
-│   └── web/                        App web React (mobile-first, 30 rotas)
+│   └── web/                        App web React (mobile-first, 31 rotas)
 │       ├── public/favicon.svg      Símbolo Z-estrada
 │       ├── scripts/
 │       │   ├── verify-qr.ts        Verificação do codificador de QR (ISO/IEC 18004)
@@ -172,7 +180,7 @@ zemlo/
 └── docs/
     ├── API.md                      Contrato completo da API
     ├── ARCHITECTURE.md             Como o sistema está construído
-    ├── DECISIONS.md                Porque cada decisão foi tomada (30 decisões)
+    ├── DECISIONS.md                Porque cada decisão foi tomada (32 decisões)
     ├── OPERATIONS.md               Deploy, backups, monitorização, recuperação
     └── BRAND.md                    Símbolo Z-estrada: conceito e regras
 ```
@@ -236,12 +244,13 @@ que começa colapsada. Quem só quer saber quanto gastou não é confrontado com
 | `npm run dev:web` | App web com proxy para a API |
 | `npm run build` | Build de produção de tudo |
 | `npm run typecheck` | Verificação de tipos em todos os pacotes |
-| `npm test` | Testes unitários do domínio |
+| `npm test` | Testes automáticos: domínio, rotas HTTP e interface web |
 | `npm run verify` | Verificação ponta a ponta contra uma API a correr |
 | `npm run verify:config` | Guardas de configuração (12 cenários, incluindo produção) |
 | `npm run verify:regressions` | Regressões: cada defeito corrigido, fixado por uma verificação |
 | `npm run verify:integration` | Fronteira API + aplicação web em modo de produção |
 | `npm run verify:all` | As três suítes que precisam da API a correr |
+| `npm run readme:numbers` | Confere os números deste README com o repositório (falha se divergirem) |
 | `npm run db:cleanup` | Remove contas deixadas por verificações interrompidas |
 | `npm run db:integrity` | Verifica que não há referências órfãs na base de dados |
 | `npm run db:accounts` | Lista as contas existentes, para identificar restos de testes |
@@ -304,7 +313,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"     
   erro, fluxos de confirmação.
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — as quatro camadas da API, modelo de
   dados, autenticação, pontos de extensão, superfície de segurança.
-- **[docs/DECISIONS.md](docs/DECISIONS.md)** — 30 decisões de arquitetura com alternativas
+- **[docs/DECISIONS.md](docs/DECISIONS.md)** — 32 decisões de arquitetura com alternativas
   consideradas e o que se perde com cada escolha.
 - **[docs/OPERATIONS.md](docs/OPERATIONS.md)** — deploy, segredos, migrações, backups,
   monitorização e recuperação.

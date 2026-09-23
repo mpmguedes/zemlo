@@ -80,6 +80,41 @@ export interface AuthenticatedUser {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Contas novas                                                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * O bloco de preferências com que **toda** a conta nasce, pronto a espalhar no `create`.
+ *
+ * Criar as preferências no instante em que a conta nasce — em vez de assumir a ausência em
+ * cada leitura — é o que evita ter de tratar esse caso em todo o lado. Estava escrito
+ * dentro do `signUp`; foi extraído quando o login federado (`AUTH-002`) passou a criar
+ * contas, porque duas cópias desta lista divergiriam em silêncio. O sintoma seria um
+ * utilizador entrado com Google a receber avisos diferentes de um registado com password,
+ * sem nada no código a apontar para a causa.
+ */
+export function newAccountPreferences() {
+  return {
+    preferences: {
+      create: {
+        reminderLeadDays: 30,
+        reminderLeadKm: 1000,
+      },
+    },
+    notificationPreferences: {
+      create: [
+        { topic: 'maintenance', channel: 'in_app', frequency: 'immediate' },
+        { topic: 'inspection', channel: 'in_app', frequency: 'immediate' },
+        { topic: 'insurance', channel: 'in_app', frequency: 'immediate' },
+        { topic: 'tax', channel: 'in_app', frequency: 'immediate' },
+        { topic: 'document', channel: 'in_app', frequency: 'immediate' },
+        { topic: 'security', channel: 'in_app', frequency: 'immediate' },
+      ],
+    },
+  };
+}
+
+/* -------------------------------------------------------------------------- */
 /* Registo                                                                     */
 /* -------------------------------------------------------------------------- */
 
@@ -112,24 +147,9 @@ export async function signUp(
         acceptedTermsAt: new Date(),
         termsVersion: '0.1',
         lastLoginAt: new Date(),
-        // Cada conta nasce com preferências por omissão. Criá-las aqui evita ter de
-        // tratar a ausência de preferências em cada leitura.
-        preferences: {
-          create: {
-            reminderLeadDays: 30,
-            reminderLeadKm: 1000,
-          },
-        },
-        notificationPreferences: {
-          create: [
-            { topic: 'maintenance', channel: 'in_app', frequency: 'immediate' },
-            { topic: 'inspection', channel: 'in_app', frequency: 'immediate' },
-            { topic: 'insurance', channel: 'in_app', frequency: 'immediate' },
-            { topic: 'tax', channel: 'in_app', frequency: 'immediate' },
-            { topic: 'document', channel: 'in_app', frequency: 'immediate' },
-            { topic: 'security', channel: 'in_app', frequency: 'immediate' },
-          ],
-        },
+        // Cada conta nasce com preferências por omissão — uma só definição, partilhada
+        // com o login federado. Ver `newAccountPreferences`.
+        ...newAccountPreferences(),
       },
     });
 
@@ -332,6 +352,25 @@ export async function createSession(
   });
 
   return { sessionId: session.id, refreshToken, expiresAt: session.expiresAt };
+}
+
+/**
+ * Emite uma sessão **e** devolve a resposta de autenticação completa.
+ *
+ * Existe para o login federado (`AUTH-002`) não duplicar a emissão de sessão. Um segundo
+ * caminho que construísse o par de tokens à mão divergiria deste à primeira alteração — e o
+ * sintoma seria um login com Google sem `refreshToken` no corpo, ou com uma duração
+ * diferente da configurada, sem nada que o assinalasse. O login federado tem de terminar
+ * exatamente no mesmo estado que o login por password: mesma rotação (A23), mesma
+ * expiração, mesmo `audit('session.created')` — que é feito por `createSession`.
+ */
+export async function issueSessionResponse(
+  user: { id: string; email: string; timeZone: string },
+  meta: RequestMetadata,
+  deviceLabel: string | null,
+): Promise<AuthSessionResponse> {
+  const session = await createSession(user.id, meta, deviceLabel);
+  return buildSessionResponse(user, session);
 }
 
 /**

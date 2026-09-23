@@ -22,6 +22,32 @@ import { Button } from './primitives';
  *    vermelho — quem usa leitor de ecrã tem de saber que o campo está errado *e* porquê;
  *  - um campo de erro mostra **um** erro. Dois avisos sobre o mesmo campo fazem o
  *    utilizador corrigir um e descobrir que continua errado.
+ *
+ * ## Porque é que o asterisco é `aria-hidden` e o `aria-required` é que fala
+ *
+ * O asterisco de «obrigatório» é desenhado a partir de `required`, mas é **`aria-hidden`**:
+ * um asterisco lido em voz alta é «asterisco», que não informa ninguém. A informação viaja
+ * em `aria-required`, que os leitores de ecrã anunciam como «obrigatório» na descrição do
+ * campo (`WEB-006`, achado A1).
+ *
+ * ### Porque `aria-required` e não o `required` nativo — medido, não suposto
+ *
+ * A justificação óbvia seria «o nativo traz as bolhas de validação do browser, que competem
+ * com a validação da API». **Neste código essa justificação é falsa:** os 17 formulários do
+ * projeto usam `noValidate` (`grep -rn noValidate apps/web/src/` → 17 ocorrências), pelo que
+ * o nativo não produziria bolha nenhuma hoje. Ficou registado porque a versão anterior deste
+ * comentário afirmava o contrário.
+ *
+ * A razão verdadeira é a **independência do contexto**: um controlo partilhado pode ser
+ * usado dentro de um formulário que se esqueça do `noValidate` — e nesse dia o nativo
+ * reintroduziria a validação do browser sem ninguém dar por isso. `aria-required` garante o
+ * anúncio **no próprio controlo**, onde a obrigatoriedade é declarada, e não depende de uma
+ * decisão tomada noutro ficheiro.
+ *
+ * O que se perde, e fica dito: o nativo daria também `:invalid`/`:valid` para CSS e a
+ * semântica nativa completa. Se o projeto formalizar «todos os formulários são `noValidate`»,
+ * trocar é uma linha por controlo. As páginas de autenticação, escritas à mão, usam o nativo
+ * e são `noValidate` — as duas escolhas coexistem no produto.
  */
 
 interface FieldShellProps {
@@ -83,6 +109,7 @@ export function TextField({
           className="z-input"
           aria-describedby={describedBy}
           aria-invalid={error ? true : undefined}
+          aria-required={required || undefined}
         />
       )}
     </Field>
@@ -108,6 +135,7 @@ export function TextAreaField({
           className="z-textarea"
           aria-describedby={describedBy}
           aria-invalid={error ? true : undefined}
+          aria-required={required || undefined}
         />
       )}
     </Field>
@@ -144,6 +172,7 @@ export function SelectField({
           className="z-select"
           aria-describedby={describedBy}
           aria-invalid={error ? true : undefined}
+          aria-required={required || undefined}
         >
           {placeholder ? <option value="">{placeholder}</option> : null}
           {options.map((option) => (
@@ -219,6 +248,7 @@ export function MoneyField({
             onChange={(event) => onChange(event.target.value)}
             aria-describedby={describedBy}
             aria-invalid={error ? true : undefined}
+            aria-required={required || undefined}
           />
           <span className="z-input-group__suffix">€</span>
         </div>
@@ -297,6 +327,7 @@ export function NumberField({
             onChange={(event) => onChange(event.target.value)}
             aria-describedby={describedBy}
             aria-invalid={error ? true : undefined}
+            aria-required={required || undefined}
           />
           {suffix ? <span className="z-input-group__suffix">{suffix}</span> : null}
         </div>
@@ -339,6 +370,7 @@ export function DateField({
           className="z-input"
           aria-describedby={describedBy}
           aria-invalid={error ? true : undefined}
+          aria-required={required || undefined}
         />
       )}
     </Field>

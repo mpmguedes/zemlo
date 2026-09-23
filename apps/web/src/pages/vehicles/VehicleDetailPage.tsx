@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   REMINDER_TRIGGERS,
@@ -37,6 +37,7 @@ import {
   Chip,
   DetailList,
   DetailRow,
+  EmptyState,
   InlineError,
   LoadingBlock,
   Metric,
@@ -60,6 +61,7 @@ import { RecordsEmptyState, TimelineRow, groupByMonth } from '../../components/r
 import { useQuickLog } from '../../components/QuickLogContext';
 import { useTimeline } from '../../hooks/useTimeline';
 import { dateLong, km, money, relativeDate, today } from '../../lib/format';
+import { nextTabIndex } from '../../lib/tabs';
 import { amountOrUndefined, integerOrUndefined, textOrUndefined } from '../../lib/formPayload';
 
 /**
@@ -150,7 +152,29 @@ export function VehicleDetailPage() {
     );
   }
 
-  if (!vehicle.data) return null;
+  /*
+   * Sem dados, sem carregamento e sem erro: a consulta está desativada (`enabled`) porque o
+   * endereço não traz identificador — um link truncado ou escrito à mão. Devolver `null`
+   * deixava um **ecrã em branco**, sem mensagem e sem caminho de saída, que é precisamente o
+   * que `WEB-005` proíbe.
+   */
+  if (!vehicle.data) {
+    return (
+      <div className="z-page">
+        <PageHeader title="Veículo" back={{ to: '/vehicles', label: 'Veículos' }} />
+        <EmptyState
+          icon="🚗"
+          title="Não encontrámos este veículo"
+          body="O endereço pode estar incompleto ou o veículo pode ter sido eliminado. A partir da lista chegas a todos."
+          action={
+            <Link to="/vehicles" className="z-btn z-btn--primary">
+              Ver os meus veículos
+            </Link>
+          }
+        />
+      </div>
+    );
+  }
 
   const data = vehicle.data;
   const name = data.nickname ?? ([data.make, data.model].filter(Boolean).join(' ') || data.plateDisplay);
@@ -229,8 +253,47 @@ function VehicleSummaryBar({ vehicle }: { vehicle: VehicleDetail }) {
 /* -------------------------------------------------------------------------- */
 
 function Tabs({ active, onChange }: { active: TabKey; onChange: (key: TabKey) => void }) {
+  const list = useRef<HTMLDivElement>(null);
+
+  /*
+   * Teclado no padrão de separadores (`WEB-006`, achado A2).
+   *
+   * `role="tab"` não é decoração: quem o declara fica obrigado ao padrão que esse papel
+   * nomeia. Antes disto, os nove separadores eram nove paradas de tabulação e as setas não
+   * faziam nada — quem usa teclado atravessava nove botões para chegar ao conteúdo, e o
+   * comportamento não correspondia ao que o papel promete a um leitor de ecrã.
+   *
+   * São duas metades que só servem juntas: **roving tabindex** (só o separador ativo está na
+   * ordem de tabulação, e por isso `Tab` sai da lista em vez de a percorrer) e as **setas**
+   * para andar dentro dela. Sem a primeira, as setas seriam um atalho a mais; sem a segunda,
+   * os separadores inativos ficariam inalcançáveis por teclado.
+   *
+   * A aritmética das teclas vive em `lib/tabs.ts`, onde é testada; aqui fica só a ligação ao
+   * DOM — mudar o separador ativo e levar o foco atrás. O foco move-se **depois** de
+   * `onChange`: o elemento já existe (muda-lhe o `tabIndex`, não a identidade), por isso
+   * focá-lo antes da re-renderização funciona e o foco fica onde o utilizador o deixou.
+   */
+  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    const next = nextTabIndex(event.key, TABS.findIndex((tab) => tab.key === active), TABS.length);
+    if (next === null) return;
+
+    // Sem isto, `Home`/`End` e as setas mudavam de separador **e** deslocavam a página.
+    event.preventDefault();
+
+    const target = TABS[next];
+    if (!target) return;
+    onChange(target.key);
+    list.current?.querySelector<HTMLButtonElement>(`#tab-${target.key}`)?.focus();
+  }
+
   return (
-    <div className="z-tabs" role="tablist" aria-label="Secções do veículo">
+    <div
+      className="z-tabs"
+      role="tablist"
+      aria-label="Secções do veículo"
+      ref={list}
+      onKeyDown={onKeyDown}
+    >
       {TABS.map((tab) => (
         <button
           key={tab.key}
@@ -240,6 +303,7 @@ function Tabs({ active, onChange }: { active: TabKey; onChange: (key: TabKey) =>
           className="z-tabs__tab"
           aria-selected={active === tab.key}
           aria-controls={`panel-${tab.key}`}
+          tabIndex={active === tab.key ? 0 : -1}
           onClick={() => onChange(tab.key)}
         >
           <span aria-hidden="true">{tab.icon}</span>
@@ -307,6 +371,21 @@ function OverviewTab({ vehicle }: { vehicle: VehicleDetail }) {
           ))}
         </div>
       </section>
+
+      {/*
+       * A consulta dos custos do ano falhava em silêncio: o cartão era renderizado com
+       * `dashboard.data ? … : null`, pelo que um erro do servidor desaparecia sem deixar
+       * rasto — o utilizador via o separador sem a secção e sem saber porquê.
+       */}
+      {dashboard.isLoading ? <LoadingBlock label="A carregar os custos do ano…" /> : null}
+
+      {dashboard.isError ? (
+        <InlineError
+          message={errorMessage(dashboard.error)}
+          requestId={errorRequestId(dashboard.error)}
+          onRetry={() => void dashboard.refetch()}
+        />
+      ) : null}
 
       {dashboard.data ? (
         <Card>
@@ -674,7 +753,28 @@ function StatsTab({ vehicleId }: { vehicleId: string }) {
       />
     );
   }
-  if (!stats.data) return null;
+  /*
+   * Estado final do separador: sem carregamento e sem erro, mas sem dados. Não é alcançável
+   * pelo caminho normal, e é exatamente por isso que não pode devolver `null` — um buraco
+   * branco é indistinguível de um defeito para quem está a olhar para o ecrã.
+   */
+  if (!stats.data) {
+    return (
+      <div role="tabpanel" id="panel-stats" aria-labelledby="tab-stats">
+        <Card>
+          <p className="z-small z-muted">
+            Não há estatísticas para mostrar neste momento. Podes tentar novamente — os teus
+            registos não foram afetados.
+          </p>
+          <div style={{ marginTop: 'var(--z-space-3)' }}>
+            <Button variant="secondary" size="sm" onClick={() => void stats.refetch()}>
+              Tentar novamente
+            </Button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
   const data = stats.data;
 
   return (
@@ -838,6 +938,35 @@ function InsuranceTab({ vehicleId }: { vehicleId: string }) {
     }
   }
 
+  /*
+   * Os três estados do separador, **dentro** do painel.
+   *
+   * A envolvente com `role="tabpanel"` não é decorativa: o `aria-controls` do separador
+   * aponta para este `id`, e devolver um `LoadingBlock` solto deixaria o atributo a apontar
+   * para um elemento que não existe enquanto o pedido está em curso. Sem estado de erro, o
+   * separador ficava **vazio** quando o pedido falhava — sem mensagem e sem forma de repetir,
+   * que é o pior resultado possível numa interface assíncrona.
+   */
+  if (policies.isLoading) {
+    return (
+      <div role="tabpanel" id="panel-insurance" aria-labelledby="tab-insurance">
+        <LoadingBlock label="A carregar o seguro…" />
+      </div>
+    );
+  }
+
+  if (policies.isError) {
+    return (
+      <div role="tabpanel" id="panel-insurance" aria-labelledby="tab-insurance">
+        <InlineError
+          message={errorMessage(policies.error)}
+          requestId={errorRequestId(policies.error)}
+          onRetry={() => void policies.refetch()}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="z-stack" role="tabpanel" id="panel-insurance" aria-labelledby="tab-insurance">
       {policies.data && policies.data.items.length === 0 && !showForm ? (
@@ -957,6 +1086,26 @@ function InspectionsTab({ vehicleId }: { vehicleId: string }) {
         setErrors(map);
       }
     }
+  }
+
+  if (inspections.isLoading) {
+    return (
+      <div role="tabpanel" id="panel-inspections" aria-labelledby="tab-inspections">
+        <LoadingBlock label="A carregar as inspeções…" />
+      </div>
+    );
+  }
+
+  if (inspections.isError) {
+    return (
+      <div role="tabpanel" id="panel-inspections" aria-labelledby="tab-inspections">
+        <InlineError
+          message={errorMessage(inspections.error)}
+          requestId={errorRequestId(inspections.error)}
+          onRetry={() => void inspections.refetch()}
+        />
+      </div>
+    );
   }
 
   return (
@@ -1091,6 +1240,26 @@ function TaxesTab({ vehicleId }: { vehicleId: string }) {
   }
 
   void profile;
+
+  if (taxes.isLoading) {
+    return (
+      <div role="tabpanel" id="panel-taxes" aria-labelledby="tab-taxes">
+        <LoadingBlock label="A carregar os impostos…" />
+      </div>
+    );
+  }
+
+  if (taxes.isError) {
+    return (
+      <div role="tabpanel" id="panel-taxes" aria-labelledby="tab-taxes">
+        <InlineError
+          message={errorMessage(taxes.error)}
+          requestId={errorRequestId(taxes.error)}
+          onRetry={() => void taxes.refetch()}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="z-stack" role="tabpanel" id="panel-taxes" aria-labelledby="tab-taxes">
@@ -1323,6 +1492,26 @@ function RemindersTab({ vehicleId }: { vehicleId: string }) {
         setErrors(map);
       }
     }
+  }
+
+  if (reminders.isLoading) {
+    return (
+      <div role="tabpanel" id="panel-reminders" aria-labelledby="tab-reminders">
+        <LoadingBlock label="A avaliar lembretes…" />
+      </div>
+    );
+  }
+
+  if (reminders.isError) {
+    return (
+      <div role="tabpanel" id="panel-reminders" aria-labelledby="tab-reminders">
+        <InlineError
+          message={errorMessage(reminders.error)}
+          requestId={errorRequestId(reminders.error)}
+          onRetry={() => void reminders.refetch()}
+        />
+      </div>
+    );
   }
 
   return (

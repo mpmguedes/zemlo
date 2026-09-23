@@ -1,0 +1,22 @@
+// Análise estática do `apps/mobile`.
+//
+// `flutter_lints` é o conjunto recomendado oficialmente. As duas regras acrescentadas existem
+// por causa da regra do projeto «não duplicar contratos»: tornam visível, na análise, um
+// ficheiro que tente falar com a API fora do cliente, ou que escreva no armazenamento seguro
+// fora do `TokenStore`.
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  exclude:
+    # Gerado por `contract/generate.mjs`. Editar à mão é apagado na geração seguinte e
+    # `contract/verify.mjs` falha.
+    - 'lib/contract/generated/**'
+  language:
+    strict-casts: true
+    strict-raw-types: true
+
+linter:
+  rules:
+    # Um `print` num cliente HTTP acaba por despejar corpos de resposta — e um corpo de
+    # resposta pode conter o token de renovação (§A23).
+    avoid_print: true

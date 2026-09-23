@@ -89,6 +89,25 @@ export function isPrismaKnownError(error: unknown): error is { code: string; met
 }
 
 /**
+ * Um motivo curto e estável para um erro, para relatórios e registos de trabalho periódico.
+ *
+ * O código do Prisma quando existe (é estável e pesquisável); caso contrário o nome do
+ * erro com a mensagem truncada. A mensagem é mantida porque um trabalho que falha sem
+ * motivo não é diagnosticável, e é truncada porque um relatório não é o sítio para
+ * despejar um erro inteiro — um `PrismaClientKnownRequestError` traz a consulta colada à
+ * mensagem, e o relatório é lido por humanos.
+ */
+export function errorReason(error: unknown): string {
+  if (isPrismaKnownError(error)) return error.code;
+
+  if (error instanceof Error) {
+    const message = error.message.length > 200 ? `${error.message.slice(0, 200)}…` : error.message;
+    return `${error.name}: ${message}`;
+  }
+  return 'erro desconhecido';
+}
+
+/**
  * Traduz erros conhecidos do Prisma para erros de produto.
  * `P2002` é violação de unicidade — no Zemlo significa quase sempre
  * "já tens um veículo com esta matrícula".

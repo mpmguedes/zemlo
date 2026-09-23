@@ -29,6 +29,8 @@ import { addDays, optionLabel, todayIn, NOTIFICATION_TOPICS, type CivilDate } fr
 import { prisma } from '../core/db.js';
 import { logger } from '../core/logger.js';
 import { mapNotification } from '../domain/payload.js';
+import { documentsExpiringSoon } from './documents.js';
+import { listReminders } from './reminders.js';
 import { encodeCursor, decodeCursor } from './shared.js';
 
 /* -------------------------------------------------------------------------- */
@@ -206,6 +208,130 @@ export async function syncNotifications(input: SyncNotificationsInput): Promise<
   }
 
   return created;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Descoberta partilhada                                                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Janela de documentos a expirar considerada numa sincronização.
+ *
+ * Esta janela é **real**: `documentsExpiringSoon` usa-a como limite superior da consulta
+ * (`expiresAt <= hoje + withinDays`). Era um literal dentro do handler do dashboard;
+ * passa a constante com nome porque o agendador tem de usar exatamente o mesmo valor — duas
+ * cópias de uma janela divergem ao primeiro ajuste.
+ */
+export const NOTIFICATION_DOCUMENT_WINDOW_DAYS = 30;
+
+/*
+ * As janelas de lembretes (`windowDays: 180`, `windowKm: 5000`) **não** são uma janela.
+ *
+ * Medido: `services/reminders.ts` não tem uma única referência a `windowDays` nem a
+ * `windowKm` — o contrato aceita-os e o serviço ignora-os, e o único limite é o
+ * `take: 500` da consulta. Passá-los com nomes que sugerem uma garantia seria escrever no
+ * código uma promessa que ninguém cumpre (o mesmo defeito de `AUD-014`: uma guarda que não
+ * guarda). Os valores continuam a ser passados, porque era o que o dashboard já fazia e
+ * esta refatoração não muda comportamento — mas ficam como literais com esta nota, e a
+ * janela inerte fica registada como achado em vez de ser absorvida em silêncio.
+ */
+const REMINDER_LIST_WINDOW_DAYS = 180;
+const REMINDER_LIST_WINDOW_KM = 5000;
+
+/**
+ * Tópico de notificação inferido do título do lembrete.
+ *
+ * O modelo `Reminder` já tem uma coluna `topic`, mas os lembretes criados antes de essa
+ * coluna existir têm o valor por omissão (`maintenance`). Inferir pelo título mantém as
+ * notificações corretas para dados antigos e é o tipo de compatibilidade que se paga
+ * uma vez e se esquece.
+ *
+ * Vive aqui, e não na rota onde nasceu, porque quem decide o tópico é a política de
+ * notificações: o dashboard e o agendador têm de decidir o mesmo, e duas cópias
+ * divergiriam no primeiro título novo.
+ */
+export function topicForReminder(title: string): NotificationTopic {
+  const normalized = title.toLowerCase();
+  if (normalized.includes('seguro') || normalized.includes('apólice') || normalized.includes('apolice')) {
+    return 'insurance';
+  }
+  if (normalized.includes('inspeção') || normalized.includes('inspecao')) return 'inspection';
+  if (normalized.includes('iuc') || normalized.includes('imposto')) return 'tax';
+  if (normalized.includes('validade') || normalized.includes('documento')) return 'document';
+  return 'maintenance';
+}
+
+/**
+ * Sincroniza as notificações de **um** utilizador: descobre o que está a vencer e
+ * materializa o que ainda não existe. Devolve quantas notificações foram criadas.
+ *
+ * ## Porque é que isto é uma função, e não três linhas dentro do handler
+ *
+ * Era três linhas dentro do handler do dashboard (`routes/insights.ts`), e é essa a razão
+ * pela qual **um lembrete legal não avisava ninguém enquanto ninguém olhasse o ecrã**
+ * (`PC-9`): a única forma de sincronizar era pedir o dashboard. O agendador
+ * (`jobs/notification-sync.ts`) tem de fazer exatamente o mesmo trabalho sem um pedido
+ * HTTP, e a alternativa — copiar a montagem do input para o trabalho periódico — deixaria
+ * duas implementações da mesma regra a divergir em silêncio. O ecrã e o agendador passam a
+ * partilhar esta função, e é por isso que o teste que compara os dois é uma asserção sobre
+ * uma só implementação, e não sobre duas que se parecem.
+ *
+ * ## O `timeZone` é parâmetro, e não um `request`
+ *
+ * A data "de hoje" decide o que está a vencer, e um dia mal calculado cria a notificação
+ * errada. O dashboard passa `request.meta.timeZone`, que o `optionalAuth` preenche com o
+ * fuso do utilizador autenticado; o agendador passa `user.timeZone`, porque não tem
+ * pedido. São o mesmo valor — e é essa igualdade que faz com que os dois caminhos
+ * produzam as mesmas notificações.
+ *
+ * ## Best-effort é do chamador, não daqui
+ *
+ * Esta função propaga os erros. Quem corre em lote decide o que fazer com um utilizador
+ * que falhou; quem responde a um pedido decide o mesmo, e as duas decisões são diferentes
+ * (o dashboard engole a falha para o ecrã aparecer; o agendador registra-a e continua para
+ * os restantes).
+ */
+export async function syncNotificationsForUser(userId: string, timeZone: string): Promise<number> {
+  const today = todayIn(timeZone);
+
+  const vehicles = await prisma.vehicle.findMany({
+    where: { userId, archived: false },
+    orderBy: { updatedAt: 'desc' },
+    select: { id: true, plateDisplay: true, odometerKm: true },
+  });
+
+  const reminderList = await listReminders(userId, {
+    includeCompleted: false,
+    windowDays: REMINDER_LIST_WINDOW_DAYS,
+    windowKm: REMINDER_LIST_WINDOW_KM,
+  });
+
+  const expiring = await documentsExpiringSoon(userId, today, NOTIFICATION_DOCUMENT_WINDOW_DAYS);
+
+  return syncNotifications({
+    userId,
+    timeZone,
+    vehicles,
+    reminders: reminderList.items.map((reminder) => ({
+      id: reminder.id,
+      vehicleId: reminder.vehicleId,
+      title: reminder.title,
+      topic: topicForReminder(reminder.title),
+      state: reminder.evaluation.state,
+      summary: reminder.evaluation.summary,
+      daysRemaining: reminder.evaluation.daysRemaining,
+      kmRemaining: reminder.evaluation.kmRemaining,
+      dueDate: reminder.dueDate,
+      projectedDate: reminder.evaluation.projectedDate,
+    })),
+    expiringDocuments: expiring.map((document) => ({
+      id: document.id,
+      name: document.name,
+      expiresAt: document.expiresAt,
+      daysToExpiry: document.daysToExpiry,
+      vehicleId: document.vehicleId,
+    })),
+  });
 }
 
 /**

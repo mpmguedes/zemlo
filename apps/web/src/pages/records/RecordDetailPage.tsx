@@ -14,7 +14,7 @@ import {
 import { fetchRecordDetail } from '../../api/queries';
 import { errorMessage, errorRequestId } from '../../api/errors';
 import { useVehicles } from '../../api/hooks';
-import { Card, Chip, DetailList, DetailRow, InlineError, LoadingBlock, PageHeader } from '../../ui/primitives';
+import { Card, Chip, DetailList, DetailRow, EmptyState, InlineError, LoadingBlock, PageHeader } from '../../ui/primitives';
 import { COVERAGE_OPTIONS } from '../../components/formParts';
 import { consumption, dateLong, econsumption, km, litres, money, percent } from '../../lib/format';
 
@@ -57,7 +57,28 @@ export function RecordDetailPage() {
     );
   }
 
-  if (!query.data) return null;
+  /*
+   * Sem dados, sem carregamento e sem erro: a consulta está desativada porque o endereço não
+   * traz identificador do registo. Devolver `null` deixava um ecrã em branco, sem mensagem e
+   * sem caminho de saída (`WEB-005`).
+   */
+  if (!query.data) {
+    return (
+      <div className="z-page">
+        <PageHeader title="Registo" back={{ to: `/records/${kind}`, label: 'Registos' }} />
+        <EmptyState
+          icon="🔍"
+          title="Não encontrámos este registo"
+          body="O endereço pode estar incompleto ou o registo pode ter sido eliminado. A lista tem tudo o que já registaste."
+          action={
+            <Link to={`/records/${kind}`} className="z-btn z-btn--primary">
+              Voltar à lista
+            </Link>
+          }
+        />
+      </div>
+    );
+  }
 
   const record = query.data as { vehicleId?: string; source?: { kind: string | null; label: string | null; observedAt: string | null } };
   const vehicle = vehicles.data?.items.find((item) => item.id === record.vehicleId);

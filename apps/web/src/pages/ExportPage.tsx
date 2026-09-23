@@ -279,6 +279,18 @@ export function ExportPage() {
 
       <Section title="O que está a ser exportado" hint="contadores da tua conta">
         {metrics.isLoading ? <LoadingBlock label="A contar registos…" /> : null}
+        {/*
+         * O erro desta consulta não era lido: a secção ficava só com o título, sem contadores
+         * e sem explicação (`WEB-005`). Não bloqueia a exportação — os botões acima funcionam
+         * independentemente destes números —, pelo que o erro fica aqui e não substitui a página.
+         */}
+        {metrics.isError ? (
+          <InlineError
+            message={errorMessage(metrics.error)}
+            requestId={errorRequestId(metrics.error)}
+            onRetry={() => void metrics.refetch()}
+          />
+        ) : null}
         {metrics.data ? (
           <Card>
             <DetailList>

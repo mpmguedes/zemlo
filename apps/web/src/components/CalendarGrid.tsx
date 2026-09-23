@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { daysBetween, type CalendarEntry, type CalendarResponse } from '@zemlo/shared';
 import { Card, Chip, EmptyState } from '../ui/primitives';
-import { dateLong, money, relativeDate, today } from '../lib/format';
+import { dateLong, monthLong, money, relativeDate, today } from '../lib/format';
 
 /**
  * Calendário mensal (§21).
@@ -61,11 +61,19 @@ export interface CalendarProps {
   onMonthChange: (month: string) => void;
   data: CalendarResponse | undefined;
   isLoading: boolean;
+  /**
+   * Erro da consulta do mês, se houver.
+   *
+   * A grelha **não** desenha o erro — quem o desenha, com a repetição do pedido, é o
+   * `CalendarPage`, que o mostra acima do cartão. O que a grelha precisa é de saber que
+   * falhou, para não afirmar «Nada marcado neste mês»: sem esta distinção, `data` ausente
+   * por erro e `data` ausente por mês vazio produziam o mesmo ecrã, e o utilizador lia uma
+   * afirmação falsa sobre os seus dados por cima da mensagem de erro.
+   */
   error: unknown;
-  onRetry: () => void;
 }
 
-export function CalendarGrid({ month, onMonthChange, data, isLoading }: CalendarProps) {
+export function CalendarGrid({ month, onMonthChange, data, isLoading, error }: CalendarProps) {
   const reference = today();
   const [selected, setSelected] = useState<string | null>(null);
   const cells = useMemo(() => buildGrid(month), [month]);
@@ -86,7 +94,7 @@ export function CalendarGrid({ month, onMonthChange, data, isLoading }: Calendar
     return map;
   }, [data]);
 
-  const monthLabel = dateLong(`${month}-01`).replace(/^1 de /, '').replace(/^1 /, '');
+  const monthLabel = monthLong(`${month}-01`);
   const selectedEntries = selected ? entriesByDay.get(selected) ?? [] : [];
 
   function shiftMonth(delta: number) {
@@ -242,7 +250,12 @@ export function CalendarGrid({ month, onMonthChange, data, isLoading }: Calendar
         </p>
       )}
 
-      {!isLoading && (data?.entries.length ?? 0) === 0 ? (
+      {/*
+       * O estado vazio só é verdade quando a consulta **correu bem**: com um erro, `data` é
+       * `undefined` e a condição antiga (`(data?.entries.length ?? 0) === 0`) era verdadeira,
+       * pelo que o ecrã dizia «Nada marcado neste mês» a seguir à mensagem de erro.
+       */}
+      {!isLoading && !error && (data?.entries.length ?? 0) === 0 ? (
         <EmptyState
           icon="🗓️"
           title="Nada marcado neste mês"

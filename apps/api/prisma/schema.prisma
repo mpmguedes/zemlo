@@ -101,7 +101,13 @@ model User {
   importBookEntries ImportBookEntry[]
   columnMaps        ColumnMap[]
 
-  @@index([authProvider, authProviderId])
+  /// Único, e não apenas indexado: duas contas nunca podem partilhar o mesmo
+  /// identificador federado. Era `@@index`, o que deixava a regra entregue a uma
+  /// consulta-antes-de-gravar — e dois pedidos simultâneos do mesmo utilizador
+  /// podiam passar ambos a verificação. O `NULL` continua a ser distinto em
+  /// PostgreSQL e SQLite, pelo que as contas de email/password (ambos os campos a
+  /// `NULL`) não colidem entre si. Ver `PC-25` e `AUTH-002` (§7.1).
+  @@unique([authProvider, authProviderId])
 }
 
 model UserPreference {

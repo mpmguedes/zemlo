@@ -68,14 +68,25 @@ export function pricePerKwhCents(energyKwh: number, amountCents: number): number
 }
 
 /**
+ * Intervalo mínimo para um consumo ser credível. Abaixo disto, quase sempre é um erro de
+ * introdução ou dois abastecimentos no mesmo dia, e não uma base para um consumo (§13).
+ *
+ * Vive aqui, e não repetido em cada função, porque faz parte da regra de A8: o consumo
+ * por sessão e o consumo médio têm de aplicar o mesmo limiar, senão divergem.
+ */
+const MIN_CONSUMPTION_INTERVAL_KM = 20;
+
+/**
  * Calcula, para cada abastecimento, a distância percorrida desde o anterior e o
  * consumo do intervalo.
  *
- * Método: "depósito a depósito". O consumo de um intervalo `i-1 → i` é fiável apenas
- * quando **ambos** os abastecimentos enchem o depósito e ambos têm odómetro. Um
- * abastecimento parcial no meio significa que os litros registados não correspondem
- * ao combustível consumido, e o Zemlo prefere mostrar "sem dados suficientes" a
- * mostrar um consumo errado (§49, §60).
+ * Método: "depósito a depósito". O consumo de um intervalo é fiável apenas quando
+ * **ambos** os abastecimentos que o delimitam enchem o depósito e têm odómetro: a âncora,
+ * que é o último depósito atestado com odómetro, e o abastecimento que o fecha. Os litros
+ * dos abastecimentos parciais pelo meio **acumulam-se** nesse intervalo, em vez de serem
+ * descartados; o que o torna não fiável é um abastecimento parcial a **fechá-lo**. Nesse
+ * caso os litros registados não correspondem ao combustível consumido, e o Zemlo prefere
+ * mostrar "sem dados suficientes" a mostrar um consumo errado (§49, §60).
  *
  * As entradas devem vir ordenadas por data ascendente.
  */
@@ -107,9 +118,7 @@ export function deriveFuelConsumption(entries: readonly FuelEntryInput[]): Map<s
       const intervalCostCents = costsSinceAnchor + entry.amountCents;
       const intervalKm = entry.odometerKm - anchor.odometerKm;
 
-      // Um intervalo de menos de 20 km quase sempre significa um erro de introdução
-      // ou dois abastecimentos no mesmo dia; não é base para um consumo.
-      if (intervalKm >= 20 && intervalLitres > 0) {
+      if (intervalKm >= MIN_CONSUMPTION_INTERVAL_KM && intervalLitres > 0) {
         const consumption = (intervalLitres / intervalKm) * 100;
         consumptionPer100Km = roundOrNull(consumption, 2);
         costPer100KmCents = Math.round((intervalCostCents / intervalKm) * 100);
@@ -147,27 +156,59 @@ export function deriveFuelConsumption(entries: readonly FuelEntryInput[]): Map<s
  *
  * Ponderar por litros e quilómetros (em vez de fazer a média das médias) evita o
  * erro clássico de atribuir o mesmo peso a um depósito de 20 L e a um de 70 L.
+ *
+ * O intervalo é medido **entre dois depósitos atestados com odómetro** (A8): os litros
+ * dos abastecimentos parciais pelo meio somam-se ao intervalo em vez de serem
+ * descartados, e a distância é a que separa os dois depósitos atestados. Medir pares
+ * adjacentes produziria um número diferente do consumo por sessão que a lista de
+ * abastecimentos mostra para o mesmo veículo.
+ *
  * Devolve `null` quando não há um único intervalo fiável.
  */
 export function averageFuelConsumption(entries: readonly FuelEntryInput[]): number | null {
-  const derived = deriveFuelConsumption(entries);
   const ordered = [...entries].sort(compareByDateThenOdometer);
 
   let totalLitres = 0;
   let totalKm = 0;
 
-  for (let index = 1; index < ordered.length; index += 1) {
-    const entry = ordered[index] as FuelEntryInput;
-    const previous = ordered[index - 1] as FuelEntryInput;
-    const info = derived.get(entry.id);
-    if (!info?.reliable) continue;
-    if (previous.odometerKm === null || entry.odometerKm === null) continue;
-    const km = entry.odometerKm - previous.odometerKm;
-    if (km < 20) continue;
-    // Os litros consumidos no intervalo são os que entraram no abastecimento final
-    // mais eventuais parciais que tenham sido acumulados.
-    totalLitres += litresBetween(ordered, previous, entry);
-    totalKm += km;
+  /** Último depósito atestado com odómetro — o início do intervalo corrente. */
+  let anchor: FuelEntryInput | null = null;
+  /**
+   * Fica `true` quando passou, desde a âncora, um abastecimento sem odómetro. Nesse caso o
+   * intervalo não pode ser fechado: não se sabe em que ponto do intervalo é que esses
+   * litros entraram, e o Zemlo prefere "sem dados" a um consumo errado (§49).
+   */
+  let ambiguous = false;
+
+  for (const entry of ordered) {
+    const currentAnchor = anchor;
+
+    if (
+      currentAnchor &&
+      currentAnchor.odometerKm !== null &&
+      entry.fullTank &&
+      entry.odometerKm !== null
+    ) {
+      const intervalKm = entry.odometerKm - currentAnchor.odometerKm;
+      // Os litros do intervalo são os do abastecimento que o fecha mais os parciais
+      // acumulados desde a âncora (A8).
+      const intervalLitres = litresBetween(ordered, currentAnchor, entry);
+
+      if (!ambiguous && intervalKm >= MIN_CONSUMPTION_INTERVAL_KM && intervalLitres > 0) {
+        totalLitres += intervalLitres;
+        totalKm += intervalKm;
+      }
+    }
+
+    if (entry.odometerKm === null) {
+      ambiguous = true;
+    }
+
+    if (entry.fullTank && entry.odometerKm !== null) {
+      // Fecha o intervalo: este depósito passa a ser a nova âncora.
+      anchor = entry;
+      ambiguous = false;
+    }
   }
 
   if (totalKm <= 0 || totalLitres <= 0) return null;

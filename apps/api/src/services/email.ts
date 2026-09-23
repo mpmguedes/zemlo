@@ -54,19 +54,28 @@ export interface EmailSender {
  * registo de arranque — pode assim distinguir "entregue" de "registado" sem inspecionar o
  * ambiente.
  *
- * ## O corpo é registado como `text`, e isso é uma decisão de segurança
+ * ## O corpo é registado como `text`, e quem o protege é `redactResetLinks`
  *
  * Este sender existe para que o link de recuperação apareça no terminal de quem
  * desenvolve. Registá-lo é, por isso, a função dele.
  *
- * A chave chama-se `text` — e não `body` — porque `core/logger.ts` redige chaves
- * sensíveis pelo **nome**. `body` não está na lista de `SENSITIVE_KEYS`, pelo que um corpo
- * registado sob esse nome passaria em claro, *incluindo o token do link*. `text` está na
- * lista, e o url do corpo é substituído antes de sair do processo: o que aparece no
- * terminal é a mensagem sem o link.
+ * A chave chama-se `text` porque descreve o que o valor é: o corpo de uma mensagem. A
+ * alternativa original — `body` — é o nome de um corpo de resposta HTTP, que aqui não tem
+ * nada a ver com o conteúdo de um email.
  *
- * Para um corpo cujo conteúdo é sensível por natureza, a única forma de não depender de
- * quem escreve a chave é o sender tratar do assunto — que é o que `redactResetLinks` faz.
+ * ## O nome da chave não é a proteção, e importa que fique dito
+ *
+ * Uma versão anterior deste comentário afirmava que `text` está em `SENSITIVE_KEYS` e que é
+ * isso que impede o token de sair no log. **Não é verdade, e nunca foi:** `text` não está
+ * nessa lista, e não pode estar. O redator de `core/logger.ts` substitui o **valor inteiro**
+ * de uma chave que reconheça — se `text` estivesse lá, o log passaria a mostrar `[redigido]`
+ * em vez da mensagem, o que contradiz o propósito deste sender e o teste que exige a
+ * mensagem legível.
+ *
+ * A proteção real é o `redactResetLinks()` aplicado antes de a cadeia entrar no logger: é ele
+ * que substitui o parâmetro `token` do url e deixa o resto da mensagem legível. Não há, aqui,
+ * defesa em profundidade por nome de chave — se o `redactResetLinks()` sair, o token sai no
+ * log. É isso que `test/email.test.ts` vigia.
  */
 class ConsoleEmailSender implements EmailSender {
   readonly transport = 'log (sem SMTP configurado)';

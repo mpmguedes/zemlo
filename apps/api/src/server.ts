@@ -11,6 +11,8 @@ import { config } from './core/config.js';
 import { activeProvider, checkDatabase, describeDatabase, disconnectDatabase } from './core/db.js';
 import { logger } from './core/logger.js';
 import { createApp, logStartup } from './app.js';
+import { notificationSyncJob } from './jobs/notification-sync.js';
+import { createJobRunner } from './jobs/runner.js';
 
 async function main(): Promise<void> {
   logStartup();
@@ -53,6 +55,30 @@ async function main(): Promise<void> {
   });
 
   /* ------------------------------------------------------------------------ */
+  /* Trabalho periódico                                                       */
+  /* ------------------------------------------------------------------------ */
+
+  /*
+   * O agendador arranca **depois** de a porta estar aberta, e é aqui — no ponto de
+   * entrada — e não no `createApp()`.
+   *
+   * A diferença é a razão pela qual isto existe neste ficheiro: `createApp()` é chamado
+   * por todos os testes HTTP, e um agendador criado ali levantaria um relógio por teste,
+   * a escrever na base de dados por razões que não são as do teste. Aqui, corre uma vez,
+   * no processo que serve tráfego, e só nesse.
+   *
+   * Arranca depois de escutar porque o trabalho não pode atrasar a disponibilidade do
+   * serviço: um trabalho lento (ou uma base de dados grande) não deve transformar-se numa
+   * API que demora a aceitar pedidos. A primeira passagem é disparada pelo `runOnStart`
+   * do runner, sem bloquear nada.
+   */
+  const jobs = createJobRunner({
+    intervalMinutes: config.jobs.notificationSyncIntervalMinutes,
+    jobs: [notificationSyncJob],
+  });
+  jobs.start();
+
+  /* ------------------------------------------------------------------------ */
   /* Encerramento limpo                                                        */
   /* ------------------------------------------------------------------------ */
 
@@ -62,6 +88,12 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info(`A encerrar (${signal})…`);
+
+    // O relógio para primeiro: a partir daqui não começa trabalho novo. Uma execução já
+    // em curso não é interrompida (não se corta um trabalho a meio de escrever) e pode
+    // falhar quando a base de dados fechar — é registada como falha, e é por isso que
+    // esta ordem importa: parar o relógio antes reduz a janela ao mínimo.
+    jobs.stop();
 
     // Parar de aceitar ligações novas e dar 10 segundos às que estão a decorrer.
     const forceExit = setTimeout(() => {

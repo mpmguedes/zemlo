@@ -1,5 +1,5 @@
 /**
- * Contrato HTTP dos documentos — transferência e edição de metadados (§17).
+ * Contrato HTTP dos documentos — transferência, upload e edição de metadados (§17).
  *
  * ## Porque é que esta suite existe
  *
@@ -26,6 +26,10 @@
  *    armazenamento, chave de outra conta: todos indistinguíveis de fora;
  *  - **edição de metadados isolada** — o `PATCH` de uma conta não toca nos documentos de
  *    outra, e um documento alheio responde 404;
+ *  - **upload (`PROD-001`)** — a chave é gerada pelo servidor (o cliente não a pode
+ *    sugerir), os bytes voltam idênticos pela transferência, a metadata existente é
+ *    preservada, o limite de tamanho é o declarado, os tipos ativos são recusados à
+ *    entrada, e um documento alheio responde 404 sem que nada seja escrito;
  *  - **não regressão** — a lista, o detalhe, a criação e a eliminação continuam a
  *    comportar-se como antes.
  *
@@ -36,7 +40,7 @@
  * cliente no import e o armazenamento lê o directório na primeira utilização.
  */
 
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, mkdir, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 
@@ -737,12 +741,22 @@ describe('não regressão', () => {
     expect(response.status).toBe(404);
   });
 
-  it('a rota de conteúdo não aceita POST', async () => {
+  /**
+   * Este teste dizia `404` e chamava-se «a rota de conteúdo não aceita POST».
+   *
+   * Passou a `400` porque a asserção deixou de descrever o produto: `PROD-001` acrescentou a
+   * rota de upload, e o `404` anterior provava precisamente que ela **não existia**. Mantê-lo
+   * seria fixar a ausência da funcionalidade — e um teste que impede a funcionalidade de
+   * existir é pior do que nenhum. O que se verifica agora é o que a rota faz com um pedido
+   * que não traz ficheiro nem tipo.
+   */
+  it('a rota de conteúdo aceita POST desde PROD-001, e recusa um pedido sem ficheiro', async () => {
     const document = await seedDocument();
     const response = await request(app)
       .post(`/api/v1/documents/${document.id}/content`)
       .set('Authorization', `Bearer ${token}`);
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(400);
+    expect((await errorOf(response)).code).toBe('validation_error');
   });
 });
 
@@ -771,5 +785,345 @@ describe('sanitização do nome do ficheiro', () => {
     const nome = sanitizeDownloadName('Apólice.pdf', 'X', 'application/pdf');
     expect(nome).toMatch(/^[\w.\- ]+$/);
     expect(nome.endsWith('.pdf')).toBe(true);
+  });
+});
+
+/* ========================================================================== */
+/* 10. Upload do conteúdo (PROD-001)                                           */
+/* ========================================================================== */
+
+/**
+ * Envia bytes para o conteúdo de um documento, com corpo **cru**.
+ *
+ * O `Content-Type` é escrito à mão porque é ele que a rota valida — e é por isso que o
+ * auxiliar o aceita como parâmetro: metade destes testes existe para provar que um tipo
+ * errado é recusado, e um auxiliar que o deduzisse do corpo não os conseguiria escrever.
+ */
+async function upload(
+  documentId: string,
+  bytes: Buffer,
+  contentType = 'application/pdf',
+  bearer: string | null = token,
+): Promise<request.Response> {
+  const pending = request(app)
+    .post(`/api/v1/documents/${documentId}/content`)
+    .set('Content-Type', contentType)
+    .send(bytes);
+  if (bearer !== null) pending.set('Authorization', `Bearer ${bearer}`);
+  return pending;
+}
+
+/** Quantos ficheiros existem no espaço de um utilizador. `0` quando o directório não existe. */
+async function storedFileCount(userId: string): Promise<number> {
+  try {
+    return (await readdir(join(storageRoot, userId))).length;
+  } catch {
+    return 0;
+  }
+}
+
+/** Um documento sem ficheiro: o estado em que o upload é a operação que faz sentido. */
+function seedEmptyDocument(overrides: Parameters<typeof seedDocument>[0] = {}) {
+  return seedDocument({
+    withBytes: false,
+    storageKey: null,
+    mimeType: null,
+    fileName: null,
+    ...overrides,
+  });
+}
+
+describe('upload — caminho feliz', () => {
+  it('guarda os bytes e devolve o documento com a chave gerada pelo servidor', async () => {
+    const document = await seedEmptyDocument();
+    const bytes = Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n', 'latin1');
+
+    const response = await upload(document.id, bytes);
+
+    expect(response.status).toBe(200);
+    // A chave é do espaço do dono e é um identificador, não um caminho: `<userId>/<32 hex>`.
+    // É esta asserção que prova que a chave nasceu no servidor — o cliente não a enviou.
+    expect(response.body.storageKey).toMatch(new RegExp(`^${owner.id}/[0-9a-f]{32}$`));
+    expect(response.body.sizeBytes).toBe(bytes.byteLength);
+    expect(response.body.mimeType).toBe('application/pdf');
+  });
+
+  it('os bytes guardados são exatamente os enviados, incluindo zeros e bytes altos', async () => {
+    const document = await seedEmptyDocument();
+    // Uma sequência que não sobrevive a uma leitura textual nem a uma normalização.
+    const bytes = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x00, 0xff, 0x0a, 0x80, 0x7f, 0x00]);
+
+    const enviado = await upload(document.id, bytes);
+    expect(enviado.status).toBe(200);
+
+    const recebido = await download(document.id);
+    expect(recebido.status).toBe(200);
+    expect(Buffer.compare(recebido.bytes, bytes)).toBe(0);
+
+    const { sha256Hex } = await import('../src/services/document-storage.js');
+    expect(sha256Hex(recebido.bytes)).toBe(sha256Hex(bytes));
+  });
+
+  it('escreve o ficheiro no espaço do dono, e não noutro sítio', async () => {
+    const document = await seedEmptyDocument();
+    const antes = await storedFileCount(owner.id);
+
+    await upload(document.id, Buffer.from('%PDF-1.4\nx\n', 'latin1'));
+
+    expect(await storedFileCount(owner.id)).toBe(antes + 1);
+    // Nada foi escrito no espaço de outra conta, nem na raiz do armazenamento.
+    expect(await storedFileCount(other.id)).toBe(0);
+  });
+
+  it('ignora qualquer tentativa de sugerir a localização física', async () => {
+    const document = await seedEmptyDocument();
+
+    // Chave, caminho e nome de ficheiro sugeridos pelo cliente — nos três sítios onde um
+    // cliente os poderia tentar meter.
+    const response = await request(app)
+      .post(
+        `/api/v1/documents/${document.id}/content?storageKey=../../etc/passwd&path=/tmp/x&fileName=hack.html`,
+      )
+      .set('Content-Type', 'application/pdf')
+      .set('Authorization', `Bearer ${token}`)
+      .send(Buffer.from('%PDF-1.4\nx\n', 'latin1'));
+
+    expect(response.status).toBe(200);
+    // A chave devolvida é a que o servidor gerou: nada do que foi sugerido a influenciou.
+    expect(response.body.storageKey).toMatch(new RegExp(`^${owner.id}/[0-9a-f]{32}$`));
+    expect(response.body.storageKey).not.toContain('..');
+    expect(response.body.storageKey).not.toContain('passwd');
+    // O nome do ficheiro não é tocado: o corpo cru não transporta nomes.
+    expect(response.body.fileName).toBeNull();
+  });
+});
+
+describe('upload — a metadata existente é preservada', () => {
+  it('só toca nos campos do ficheiro', async () => {
+    const document = await seedEmptyDocument({
+      name: 'Apólice 2026',
+      category: 'insurance',
+      notes: 'franquia 300 €',
+      date: new Date('2026-01-15T00:00:00.000Z'),
+      expiresAt: new Date('2027-01-15T00:00:00.000Z'),
+    });
+
+    const bytes = Buffer.from('%PDF-1.4\nx\n', 'latin1');
+
+    const response = await upload(document.id, bytes);
+    expect(response.status).toBe(200);
+
+    const detail = await request(app)
+      .get(`/api/v1/documents/${document.id}`)
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(detail.body.name).toBe('Apólice 2026');
+    expect(detail.body.category).toBe('insurance');
+    expect(detail.body.notes).toBe('franquia 300 €');
+    expect(detail.body.date).toBe('2026-01-15');
+    expect(detail.body.expiresAt).toBe('2027-01-15');
+    // O que o upload **escreve**:
+    expect(detail.body.storageKey).toMatch(new RegExp(`^${owner.id}/[0-9a-f]{32}$`));
+    // O tamanho é medido sobre os bytes que chegaram, e não sobre o que o cliente declarou.
+    expect(detail.body.sizeBytes).toBe(bytes.byteLength);
+    expect(detail.body.mimeType).toBe('application/pdf');
+  });
+
+  it('o tipo gravado é o tipo base, sem parâmetros', async () => {
+    const document = await seedEmptyDocument();
+    const response = await upload(document.id, Buffer.from('notas\n', 'utf8'), 'text/plain; charset=utf-8');
+
+    expect(response.status).toBe(200);
+    expect(response.body.mimeType).toBe('text/plain');
+  });
+});
+
+describe('upload — tipo de conteúdo', () => {
+  it('recusa `text/html`, que é um tipo ativo', async () => {
+    const document = await seedEmptyDocument();
+    const response = await upload(document.id, Buffer.from('<script>alert(1)</script>', 'utf8'), 'text/html');
+
+    expect(response.status).toBe(415);
+    expect((await errorOf(response)).code).toBe('validation_error');
+    // E nada foi escrito: a recusa acontece antes de o documento ser tocado.
+    expect(await storedFileCount(owner.id)).toBe(0);
+  });
+
+  it('recusa `image/svg+xml`, que também executa', async () => {
+    const document = await seedEmptyDocument();
+    const response = await upload(
+      document.id,
+      Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>', 'utf8'),
+      'image/svg+xml',
+    );
+
+    expect(response.status).toBe(415);
+    expect(await storedFileCount(owner.id)).toBe(0);
+  });
+
+  it('recusa `application/json` — um pedido que não é um upload', async () => {
+    const document = await seedEmptyDocument();
+    const response = await upload(document.id, Buffer.from('{"a":1}', 'utf8'), 'application/json');
+
+    expect(response.status).toBe(415);
+  });
+
+  it('aceita `application/octet-stream`, o tipo genérico', async () => {
+    const document = await seedEmptyDocument();
+    const response = await upload(document.id, Buffer.from([1, 2, 3]), 'application/octet-stream');
+
+    expect(response.status).toBe(200);
+    expect(response.body.mimeType).toBe('application/octet-stream');
+  });
+
+  it('não confunde um tipo que começa como um tipo aceite', async () => {
+    const document = await seedEmptyDocument();
+    // `application/pdfx` começa por `application/pdf` — um `startsWith` deixá-lo-ia passar.
+    const response = await upload(document.id, Buffer.from('x', 'utf8'), 'application/pdfx');
+
+    expect(response.status).toBe(415);
+  });
+});
+
+describe('upload — corpo', () => {
+  it('recusa um corpo vazio com 400', async () => {
+    const document = await seedEmptyDocument();
+    const response = await upload(document.id, Buffer.alloc(0));
+
+    expect(response.status).toBe(400);
+    expect((await errorOf(response)).code).toBe('validation_error');
+    // Um ficheiro de zero bytes não é um ficheiro: o registo não pode anunciar um ficheiro
+    // que não abre.
+    const detail = await request(app)
+      .get(`/api/v1/documents/${document.id}`)
+      .set('Authorization', `Bearer ${token}`);
+    expect(detail.body.storageKey).toBeNull();
+  });
+});
+
+describe('upload — limite de tamanho', () => {
+  it('aceita um corpo exatamente no limite', async () => {
+    const { DOCUMENT_UPLOAD_MAX_BYTES } = await import('../src/http/routes/documents.js');
+    const document = await seedEmptyDocument();
+
+    const response = await upload(document.id, Buffer.alloc(DOCUMENT_UPLOAD_MAX_BYTES, 0x41));
+
+    expect(response.status).toBe(200);
+    expect(response.body.sizeBytes).toBe(DOCUMENT_UPLOAD_MAX_BYTES);
+  }, 120_000);
+
+  it('recusa um corpo um byte acima do limite, com 413', async () => {
+    const { DOCUMENT_UPLOAD_MAX_BYTES } = await import('../src/http/routes/documents.js');
+    const document = await seedEmptyDocument();
+
+    const response = await upload(document.id, Buffer.alloc(DOCUMENT_UPLOAD_MAX_BYTES + 1, 0x41));
+
+    expect(response.status).toBe(413);
+    expect((await errorOf(response)).code).toBe('payload_too_large');
+    // O corte é durante a leitura: nada chegou a ser escrito.
+    expect(await storedFileCount(owner.id)).toBe(0);
+  }, 120_000);
+});
+
+describe('upload — autorização e isolamento', () => {
+  it('exige sessão', async () => {
+    const document = await seedEmptyDocument();
+    const response = await upload(document.id, Buffer.from('x'), 'application/pdf', null);
+
+    expect(response.status).toBe(401);
+  });
+
+  it('recusa um token inválido', async () => {
+    const document = await seedEmptyDocument();
+    const response = await upload(document.id, Buffer.from('x'), 'application/pdf', 'nao-e-um-token');
+
+    expect(response.status).toBe(401);
+  });
+
+  it('outra conta não escreve bytes num documento alheio, e recebe 404', async () => {
+    const document = await seedEmptyDocument();
+    const antes = await storedFileCount(other.id);
+
+    const response = await upload(document.id, Buffer.from('%PDF-1.4\nx\n', 'latin1'), 'application/pdf', otherToken);
+
+    // 404 e não 403: um 403 confirmaria que o documento existe.
+    expect(response.status).toBe(404);
+    // Nada foi escrito no espaço de quem tentou.
+    expect(await storedFileCount(other.id)).toBe(antes);
+    // E o documento do dono continua sem ficheiro.
+    const detail = await request(app)
+      .get(`/api/v1/documents/${document.id}`)
+      .set('Authorization', `Bearer ${token}`);
+    expect(detail.body.storageKey).toBeNull();
+  });
+
+  it('responde 404 a um documento inexistente, e não 500', async () => {
+    const response = await upload('documento-que-nao-existe', Buffer.from('x'), 'application/pdf');
+
+    expect(response.status).toBe(404);
+    expect(await storedFileCount(owner.id)).toBe(0);
+  });
+});
+
+describe('upload — um documento tem um ficheiro', () => {
+  it('recusa substituir o ficheiro de um documento que já tem um, com 409', async () => {
+    const document = await seedDocument(); // já tem bytes (PDF_BYTES)
+    const antes = await storedFileCount(owner.id);
+
+    const response = await upload(document.id, Buffer.from('novo conteudo', 'latin1'));
+
+    expect(response.status).toBe(409);
+    expect((await errorOf(response)).code).toBe('conflict');
+    // Os bytes originais continuam intactos e acessíveis.
+    const recebido = await download(document.id);
+    expect(Buffer.compare(recebido.bytes, PDF_BYTES)).toBe(0);
+    // E não ficou um ficheiro novo órfão no armazenamento: o upload foi recusado **antes**
+    // de escrever. Sem isto, a recusa criaria exatamente o lixo que PC-13 descreve.
+    expect(await storedFileCount(owner.id)).toBe(antes);
+  });
+});
+
+describe('upload — a isenção do parser, ao nível da unidade', () => {
+  it('identifica exatamente a rota de upload, e só ela', async () => {
+    const { isDocumentUpload } = await import('../src/http/routes/documents.js');
+
+    expect(isDocumentUpload('POST', '/api/v1/documents/abc/content')).toBe(true);
+
+    // O caminho é partilhado com a transferência: um `GET` não pode ser isentado.
+    expect(isDocumentUpload('GET', '/api/v1/documents/abc/content')).toBe(false);
+    expect(isDocumentUpload('DELETE', '/api/v1/documents/abc/content')).toBe(false);
+    // E nenhum caminho vizinho entra por engano.
+    expect(isDocumentUpload('POST', '/api/v1/documents/abc/content/extra')).toBe(false);
+    expect(isDocumentUpload('POST', '/api/v1/documents/abc/contentx')).toBe(false);
+    expect(isDocumentUpload('POST', '/api/v1/documents/content')).toBe(false);
+    expect(isDocumentUpload('POST', '/api/v1/documents/abc')).toBe(false);
+    expect(isDocumentUpload('POST', '/api/v1/documents/abc/content/../outro')).toBe(false);
+  });
+});
+
+describe('upload — não regressão', () => {
+  it('a transferência continua a servir o ficheiro depois de um upload', async () => {
+    const document = await seedEmptyDocument({ name: 'Certificado' });
+    const bytes = Buffer.from('%PDF-1.4\ncertificado\n%%EOF\n', 'latin1');
+
+    expect((await upload(document.id, bytes)).status).toBe(200);
+
+    const recebido = await download(document.id);
+    expect(recebido.status).toBe(200);
+    expect(recebido.contentType).toContain('application/pdf');
+    // Sem `fileName` gravado, o nome vem do nome do documento mais a extensão do tipo.
+    expect(recebido.disposition).toContain('Certificado.pdf');
+    expect(Buffer.compare(recebido.bytes, bytes)).toBe(0);
+  });
+
+  it('a criação de metadados continua a não aceitar ficheiros', async () => {
+    const response = await request(app)
+      .post('/api/v1/documents')
+      .set('Content-Type', 'application/json')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'Sem ficheiro', category: 'other' });
+
+    expect(response.status).toBe(201);
+    expect(response.body.storageKey).toBeNull();
   });
 });

@@ -390,11 +390,20 @@ function Conventions({
       {hasDate ? (
         <fieldset className="z-import__convention">
           <legend className="z-field__label">As datas estão em que ordem?</legend>
+          {/*
+           * O `aria-label` no grupo não é decorativo nem redundante com o `legend`: um
+           * `role="group"` sem nome é anunciado como «grupo» e nada mais, e os outros nove
+           * grupos do projeto têm nome (`WEB-006`, achado A4). A alternativa — tirar o
+           * `role="group"`, já que o `fieldset` agrupa — foi considerada e recusada: não
+           * tenho leitor de ecrã para verificar o que muda na locução, e entre uma alteração
+           * aditiva que não pode partir nada e uma subtrativa que não consigo testar, fica a
+           * aditiva.
+           */}
           <p className="z-xs z-muted" style={{ marginBottom: 'var(--z-space-2)' }}>
             Há datas em que o dia e o mês podem trocar-se. Escolhe para este ficheiro — a
             resposta fica guardada com o mapa.
           </p>
-          <div className="z-segmented" role="group">
+          <div className="z-segmented" role="group" aria-label="Ordem das datas">
             <button
               type="button"
               className="z-segmented__item"
@@ -425,7 +434,7 @@ function Conventions({
           <p className="z-xs z-muted" style={{ marginBottom: 'var(--z-space-2)' }}>
             «1.234,56» é o formato português; «1,234.56» é o formato inglês. Diz qual é o teu.
           </p>
-          <div className="z-segmented" role="group">
+          <div className="z-segmented" role="group" aria-label="Separador decimal">
             <button
               type="button"
               className="z-segmented__item"

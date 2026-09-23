@@ -162,10 +162,11 @@ facto. Isto permite gerar notificações a pedido, sem um trabalho agendado no M
 **ambos** os abastecimentos enchem o depósito e ambos têm odómetro. Caso contrário devolve
 `null`.
 
-**Porquê.** Um abastecimento parcial no meio de um intervalo significa que os litros
-registados não correspondem ao combustível consumido. O Zemlo prefere dizer "sem dados
-suficientes" a mostrar um consumo errado (§49, §60). Um consumo errado leva o utilizador a
-pensar que o carro tem um problema — ou, pior, a não detetar que tem.
+**Porquê.** Um abastecimento parcial que fecha o intervalo significa que os litros
+registados não correspondem ao combustível consumido: o depósito não ficou cheio e não se
+sabe quanto é que faltava. O Zemlo prefere dizer "sem dados suficientes" a mostrar um
+consumo errado (§49, §60). Um consumo errado leva o utilizador a pensar que o carro tem um
+problema — ou, pior, a não detetar que tem.
 
 **Detalhe que importa.** Os litros de um abastecimento parcial são **acumulados** para o
 intervalo seguinte, em vez de descartados. Descartá-los perderia informação real: o
@@ -348,9 +349,18 @@ guarda (Documento Único, apólices, certificados). E a autorização continua a
 num único ponto, a cada pedido, em vez de congelada num URL assinado — não existem links
 partilháveis nem validade a gerir.
 
-O que **continua** a não existir é o upload: os bytes só entram no armazenamento pelo
-importador de bundle (`services/import/apply.ts`) ou por escrita directa no directório.
-A omissão deixou de ser de capacidade (ler) e passou a ser de entrada (escrever).
+**Correção de A1 (2026-09-22, `AUD-009`) — o upload deixou de ser a omissão.** O texto que aqui
+estava dizia que «continua a não existir o upload» e que «a omissão deixou de ser de capacidade
+(ler) e passou a ser de entrada (escrever)». **Isso passou a ser falso**: o upload foi decidido em
+**`A31`** e implementado em `POST /api/v1/documents/:documentId/content`
+(`http/routes/documents.ts:340`; `uploadDocumentContent` em `services/documents.ts:385`), com
+autorização pela mesma porta do download, recusa de um documento que já tenha ficheiro e recusa de
+um corpo de zero bytes — ver `PROD-001`.
+
+O que **continua** a não existir é o **envio de bytes pela interface web**: não há
+`<input type="file">` para documentos (`apps/web/src/pages/DocumentsPage.tsx:22-26`), pelo que os
+bytes entram pela API, pelo importador de bundle (`services/import/apply.ts`) ou por escrita
+directa no directório.
 
 **Notas de implementação que valem a pena reter.**
 
@@ -1118,3 +1128,265 @@ produção usa. `test/smtp.test.ts` guarda a linha que sai no fio.
 O harness de cenários de configuração, `apps/api/scripts/verify-config.ts`, continua a não cobrir
 SMTP. A propriedade ficou provada na suíte, que corre sempre, em vez de num script que é preciso
 lembrar de correr à mão.
+
+## A31. O conteúdo de um documento é um sub-recurso com o seu próprio verbo — e a isenção do corpo cru passa a depender do método
+
+O upload de documentos (`PROD-001`) entra como `POST /documents/:documentId/content`, com o corpo
+**cru**, e não como um campo do `POST /documents`. A decisão foi entre duas formas, e a segunda
+foi recusada:
+
+1. **Dois passos** — `POST /documents` continua a criar metadados em JSON; os bytes vão depois
+   para o mesmo caminho que já os serve, com o verbo trocado (`GET` → `POST`). O contrato de
+   criação fica **intocado**.
+2. **Um passo** — `POST /documents` a aceitar corpo cru **e** metadados. Obrigaria a mudar
+   `zDocumentCreateRequest`, faria um pedido ter dois formatos possíveis decididos pelo
+   `Content-Type`, e obrigaria a coordenar uma alteração de contrato partilhado (§6 do ROADMAP)
+   com os agentes que consomem o mesmo ficheiro.
+
+A forma escolhida é a primeira. A razão principal não é a estética: é que a segunda **altera um
+contrato partilhado para acrescentar capacidade**, quando existe uma forma de a acrescentar sem o
+tocar. Um contrato partilhado alterado por conveniência é um custo que se paga em todos os
+consumidores — web, mobile e integrações —, e nenhum deles ganharia nada com isso.
+
+### 1. A simetria de verbos não é decoração
+
+`GET` e `POST` sobre `/documents/:id/content` são o mesmo recurso visto das duas pontas, e ambos
+começam pelo **mesmo** primeiro passo: `requireRecord('document', userId, documentId)`. É essa
+partilha que impede a autorização de divergir entre ler e escrever. Um caminho separado para o
+upload (`/documents/:id/upload`) teria a mesma funcionalidade e duas portas de autorização para
+manter coerentes.
+
+O modelo de dados também não mudou: `storageKey`, `sizeBytes` e `mimeType` já existiam no
+`Document` desde A17, e o `save` já existia na abstração desde o exportador nativo. O upload não
+acrescentou **nada** ao esquema — só ligou duas peças que já estavam construídas e nunca se falavam.
+Isto é verificável: `npm run db:check-schema` continua a dizer que o SQLite está sincronizado, e não
+houve migração nenhuma.
+
+### 2. A chave continua a nascer no servidor
+
+`uploadDocumentContent` não aceita `storageKey`, caminho, directório nem nome de ficheiro. A chave
+vem de `documentStorage().save(userId, bytes)`, que a constrói a partir do `userId` autenticado e de
+16 bytes aleatórios.
+
+A consequência prática é que **não existe nada a validar quanto à localização**: não há um caminho
+de código em que o cliente a possa sugerir. Um teste envia `?storageKey=../../etc/passwd`,
+`?path=/tmp/x` e `?fileName=hack.html` no mesmo pedido e verifica que a chave devolvida continua a
+ser `<userId>/<32 hex>` e que o `fileName` não é tocado. Não é uma validação que recusa a sugestão —
+é a ausência de um parâmetro onde a pôr.
+
+O `storageKey` continua, no entanto, a ser **aceite** no corpo de `POST /documents` e de
+`PATCH /documents/:id` (`zDocumentCreateRequest`, `contracts.ts:577`). Não é uma falha de
+isolamento — o armazenamento recusa qualquer chave cujo prefixo não seja o do utilizador, e
+`assertSafeKey` recusa caminhos absolutos e `..` —, mas é um campo que já não devia ser escrito pelo
+cliente. Retirá-lo é uma alteração de contrato partilhado e por isso **não** foi feita aqui: ficou
+registada como `PC-14`.
+
+### 3. A regra nova: a isenção do `requireJsonBody` passa a depender do método
+
+O importador já tinha uma isenção do `requireJsonBody` em `app.ts`, e o seu predicado
+(`isNativeImportUpload`) é **agnóstico ao método** — compara o caminho contra uma lista de quatro
+literais. Pôde sê-lo porque aqueles quatro caminhos são só de upload.
+
+O caminho dos documentos é **partilhado** com a transferência: `GET /documents/:id/content` é a
+mesma string que o upload. Isentar por caminho tornaria o download dependente de uma decisão sobre
+uploads. `isDocumentUpload` compara por isso o **método e o caminho** — `POST` e nada mais.
+
+Esta é a regra reutilizável, e vale para o próximo anexo binário que apareça (fotografias de
+wallbox, comprovativos de carregamento, ficheiros de OBD — `INT-002`–`INT-004` e o que vier):
+
+> Um caminho que serve duas representações diferentes — metadados em JSON e bytes crus — tem de
+> isentar o parser por **método + caminho**, e a isenção tem de entregar o pedido a um router que
+> responda sempre, ou o pedido volta a cair no `requireJsonBody` já com o corpo lido.
+
+O caminho é variável (`:documentId`), pelo que a lista de literais do importador deu lugar a uma
+expressão regular **ancorada nas duas pontas** — `/…/content` e `/…/content/extra` são endereços
+diferentes, e só o primeiro é isentado. Há um teste de unidade sobre o predicado que fixa as duas
+fronteiras, em vez de as inferir de uma resposta HTTP.
+
+### 4. Os tipos ativos são recusados à entrada, e não só rebaixados à saída
+
+`ACCEPTED_DOCUMENT_UPLOAD_TYPES` é uma lista **fechada** e não inclui `text/html` nem
+`image/svg+xml`. A transferência já os rebaixaria a `application/octet-stream` (`safeContentType`,
+lista de permissão), mas recusá-los na entrada é a defesa no sítio certo: o ficheiro nunca chega a
+ser guardado, e a mensagem diz ao utilizador o que aconteceu em vez de lhe devolver, mais tarde, um
+ficheiro com um tipo diferente do que ele enviou.
+
+A comparação é sobre o **tipo base** (`split(';')[0]`), e é `includes` sobre a lista e não um
+`startsWith`: `application/pdfx` começa por `application/pdf` e passaria indevidamente. É o mesmo
+cuidado que o importador já tinha, e tem teste próprio.
+
+### 5. Um documento tem um ficheiro — e a recusa é feita antes de escrever
+
+Substituir os bytes de um documento existente deixaria os antigos **órfãos**: o registo passaria a
+apontar para os novos e nada apagaria os velhos. É exactamente o defeito já registado em `PC-13`, e
+o upload não o pode criar. Um documento que já tem ficheiro responde `409`, e a verificação é feita
+**antes** de o armazenamento ser tocado.
+
+A ordem é o que importa, e está provada por mutação: mover a verificação para depois do `save`
+mantém a resposta `409` (o utilizador não nota nada) mas deixa um ficheiro órfão no disco. O teste
+conta os ficheiros do espaço do utilizador antes e depois, e é essa contagem — não o código de
+estado — que apanha a mutação.
+
+Substituir um ficheiro é, por isso, trabalho que fica por fazer e por decidir: ficou registado como
+`PROD-008`, deliberadamente **não** absorvido nesta tarefa.
+
+### 6. O limite é verificado durante a leitura, e o teste fixa-o nos dois lados
+
+`DOCUMENT_UPLOAD_MAX_BYTES` é 25 MiB — não os 64 MiB do bundle de importação, porque são grandezas
+diferentes: um bundle é uma conta inteira, um documento é uma fotografia de um certificado ou um PDF
+de uma apólice.
+
+O limite é aplicado pelo `express.raw({ limit })`, **durante** a leitura do corpo, e não sobre um
+buffer já em memória — que seria um limite aplicado depois de o custo ter sido pago. O valor vive
+numa constante exportada, e não escrito no parser, porque o teste de fronteira precisa de o importar:
+um teste que repetisse `25 * 1024 * 1024` deixaria de verificar o limite no dia em que o limite
+mudasse. Há dois testes, um **exactamente** no limite (aceite) e um **um byte acima** (`413`).
+
+### 7. O que a mutação provou
+
+Três mutações, cada uma restaurada e verificada por `sha256`, e nenhuma sobrevivente:
+
+- **remover o filtro de dono** na consulta do serviço → o teste de isolamento falha, e falha pelo
+  motivo certo: o ficheiro chegou a ser escrito no espaço da outra conta;
+- **trocar a lista fechada por `startsWith`** → cai o teste do tipo que "começa como um tipo
+  aceite", e só esse: `text/html` continua recusado, porque o defeito é subtil e é por isso que
+  precisa de um caso próprio;
+- **mover a verificação do `409` para depois do `save`** → o código de estado continua `409` e o
+  teste falha na contagem de ficheiros, que é a asserção que mede o efeito real.
+
+Um teste que passasse em todas as três não estaria a medir nada. A asserção sobre a contagem de
+ficheiros existe precisamente por causa da terceira: o código de estado, sozinho, não distingue
+"recusei antes de escrever" de "recusei depois de escrever".
+
+### 8. Uma alteração que a tarefa obrigou a fazer num teste existente
+
+`test/documents-http.test.ts` tinha um caso chamado «a rota de conteúdo não aceita POST», que
+afirmava `404`. Passou a `400`, porque a asserção deixou de descrever o produto: o `404` anterior
+provava exactamente que a rota **não existia**. Mantê-lo seria fixar a ausência da funcionalidade, e
+um teste que impede uma funcionalidade de existir é pior do que nenhum. Ficou registado no próprio
+teste, para que quem o vir daqui a um ano saiba que a mudança foi deliberada.
+
+---
+
+## A32. O agendador é um núcleo partilhado com um runner in-process — e a idempotência vive na base de dados
+
+`PROD-004` fecha `PC-9`: até aqui, `syncNotifications` tinha **um único chamador**, o handler do
+dashboard. Um lembrete legal — inspeção, seguro, IUC — só avisava quem abrisse a aplicação, e o ecrã
+que mostrava o aviso era o mesmo que o gerava. Para uma promessa de produto que é *avisar*, isso é
+uma diferença material: o aviso chegava depois do prazo, ou nunca. A entrada do ROADMAP pedia que o
+mecanismo (in-process vs. externo) fosse decidido **e registado** antes de implementar. É esta a
+decisão.
+
+**Decisão.** Três peças, com fronteiras explícitas:
+
+1. **Descoberta** (`services/notifications.ts`, `syncNotificationsForUser`) — o que está a vencer
+   para **um** utilizador, e a materialização das notificações em falta. Não sabe o que é um
+   temporizador nem um pedido HTTP.
+2. **Núcleo em lote** (`jobs/notification-sync.ts`, `runNotificationSync`) — percorre utilizadores,
+   corre a descoberta de cada um e devolve um relatório. Também não conhece temporizadores.
+3. **Runner** (`jobs/runner.ts`, `createJobRunner`) — a **única** peça que conhece o `setInterval`.
+   Recebe tarefas por nome e corre-as, com guarda de reentrância por tarefa.
+
+Quem arranca o runner é o `server.ts`, e **não** o `createApp()`. Isto não é arrumação: se o
+agendador nascesse dentro da aplicação, cada teste HTTP levantaria um relógio e passaria a escrever
+na base de dados por razões que não são as do teste.
+
+**Alternativas.** (a) `setInterval` dentro do serviço — o caminho mais curto, e o que torna o
+trabalho impossível de testar sem esperar por tempo real. (b) Um processo separado desde já — exige
+um entrypoint, um gestor de processos e uma decisão de operação que ainda não existe; o `Dockerfile`
+está fora de âmbito (`OPS-002`) e o ambiente não tem motor de contentores. (c) Cron do sistema —
+empurra para fora do repositório uma regra que precisa de testes.
+
+**O que se ganha.** O núcleo corre num teste, num script e — no dia em que fizer falta — num
+entrypoint externo, sem alterações: `runNotificationSync()` não depende de nada do processo da API.
+É essa separação que a decisão compra. É também a razão pela qual o entrypoint externo **não** foi
+implementado agora: construí-lo sem necessidade seria construir a segunda peça antes de haver razão
+para a primeira.
+
+### 1. A guarda de reentrância ignora, não enfileira
+
+Um trabalho mais lento do que o intervalo é normal (base de dados grande, conta lenta) e não pode
+ser um problema. Sem guarda, o `setInterval` empilha execuções, cada uma a ler a mesma base de
+dados, e a carga multiplica-se sozinha. A resposta é **ignorar** a passagem nova e registá-lo — não
+enfileirar, que trocaria uma multiplicação de carga por uma fila sem limite.
+
+A verificação e a inscrição (`inFlight.add`) acontecem **antes do primeiro `await`**: duas chamadas
+no mesmo ciclo do event loop não podem passar as duas. Uma execução em curso nunca é interrompida —
+nem pela guarda nem pelo `stop()`; o que se faz é não começar outra.
+
+### 2. A idempotência está na base de dados, não na memória do processo
+
+O núcleo não guarda estado entre execuções. O que está por fazer está na base de dados, e a
+`dedupeKey` única por `(userId, dedupeKey)` é a garantia final. É isso que torna seguro correr duas
+vezes — por um relógio que dispara durante a execução anterior, por uma instância reiniciada, ou por
+dois processos a partilhar a base de dados.
+
+**O que a mutação mediu aqui.** Retirar a verificação de existência (`findFirst` + `continue`) **não
+muda nada de observável**: o `create` seguinte é rejeitado pelo índice único, e o `catch` que existe
+para a corrida entre pedidos engole a violação. A mutação **sobreviveu** — e não por o teste ser
+fraco. A contra-prova isola o mecanismo: retirar a verificação **e** o `catch` faz cair três testes,
+o que mostra que o segundo `create` chega a ser tentado e é mesmo o **índice** que o recusa. A
+verificação é um atalho (evita uma exceção e uma linha de registo no caminho comum), não a garantia.
+
+> A regra que fica: quando uma mutação sobrevive, a pergunta não é «o teste é fraco?» mas «o
+> invariante está a ser mantido por outro mecanismo?». As duas respostas exigem medições diferentes,
+> e tratá-las como a mesma coisa leva a reforçar testes que já mediam o que deviam.
+
+### 3. O que esta decisão **não** garante
+
+**Não** há exclusão entre processos. Duas instâncias da API a correr o mesmo agendador correm-no as
+duas. Não é uma falha silenciosa — é a razão pela qual a idempotência vive na base de dados —, mas é
+uma decisão de operação: com mais do que uma instância, ou **uma** agenda
+(`NOTIFICATIONS_SYNC_INTERVAL_MINUTES=0` nas restantes), ou o trabalho passa a um entrypoint
+externo. Está em `docs/OPERATIONS.md` §3.5.1.
+
+### 4. O vocabulário: o isolamento é por utilizador
+
+O pedido desta tarefa falava de «isolamento por `condominio_id`» e de «configurações de automação».
+`condominio_id` é vocabulário do GesCondu/CondoFy e **não existe no Zemlo**: a unidade de isolamento
+aqui é o `userId`, e o pedido foi interpretado nesse sentido — a passagem de um utilizador nunca cria
+nada para outro, e há um teste que o fixa. Do mesmo modo, «estados habilitado/desabilitado» mapeia
+para duas coisas concretas: as **preferências de notificação** do utilizador (um tópico com
+`frequency: 'off'` no canal interno não gera notificação, e a preferência é escrita pela API, não à
+mão na tabela) e o **intervalo `0`**, que desliga o agendador em vez de o armar com um relógio de
+milissegundos.
+
+### 5. Dois achados medidos, deliberadamente não corrigidos
+
+1. **Um erro de base de dados ao criar uma notificação é engolido como «duplicado».** O `catch` de
+   `syncNotifications` existe para a corrida entre dois pedidos, mas apanha tudo e registra em
+   `debug` — um nível que não aparece em desenvolvimento nem em produção. Numa tarefa periódica o
+   efeito é o pior possível: uma avaria fica indistinguível de «não havia nada a fazer», e o
+   relatório diz que a conta foi sincronizada com sucesso. Estreitar o `catch` para `P2002` é uma
+   alteração de comportamento fora do âmbito de `PROD-004`; ficou **fixado num teste com o nome do
+   defeito**, para que a correção obrigue a mudá-lo.
+2. **As janelas de lembretes não são janelas.** `listReminders` aceita `windowDays` e `windowKm` e
+   **não os usa** — o único limite é `take: 500`. O contrato promete uma janela que o serviço não
+   aplica: é o mesmo defeito de forma que `AUD-014` (uma guarda que não guarda). Por isso os valores
+   ficam no código como literais com nota, e **não** como constantes exportadas com nome — dar-lhes
+   um nome seria escrever no código uma promessa que ninguém cumpre.
+
+### 6. O que a mutação provou
+
+Oito mutações, cada uma reposta e confirmada por `sha256`, mais a contra-prova da sobrevivente:
+
+| Mutação | Vermelhos |
+| --- | --- |
+| Remover a guarda de reentrância | 1 — o teste da guarda |
+| Remover o best-effort por utilizador | 1 — o teste da falha isolada |
+| A paginação não avança | 1 — o teste das três páginas |
+| Ignorar as preferências | 1 — o teste do tópico desligado |
+| A data efetiva passa a ser «hoje» | 1 — o teste dashboard/agendador |
+| O intervalo `0` arma relógio | 1 — o teste do agendador desligado |
+| Não inferir o tópico na descoberta | 4 |
+| Remover a verificação de existência | 0 — **sobrevivente, e equivalente** (§2) |
+| Remover a verificação **e** o `catch` | 3 — a contra-prova que isola o índice único |
+
+Duas correções que as mutações obrigaram a fazer **nos testes**, e não no código:
+
+- o teste da guarda falhava por **expiração** (5 s) e não por asserção: sem guarda, o segundo
+  `runNow()` fica preso no portão e o `await` nunca resolve. Um vermelho por expiração não diz qual
+  asserção falhou e é indistinguível de uma máquina lenta (`PC-26`). Passou a uma corrida com
+  tempo-limite, que falha em ~1 s a nomear o que se passou;
+- o teste do intervalo `0` deixava o runner armado quando a guarda avaria, o que faria a suíte
+  **pendurar** em vez de falhar. Passou a parar o runner num `finally`, como o teste irmão já fazia.

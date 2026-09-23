@@ -317,6 +317,19 @@ async function main() {
   check('Segundo veículo é criado', bmw.status === 201, `status ${bmw.status}`);
   const bmwId = bmw.body?.id;
 
+  // Terceiro veículo, com um único propósito: responder a uma pergunta que a série do
+  // BMW **não consegue** responder — o consumo médio acumula os abastecimentos parciais
+  // que ficam entre dois depósitos atestados? (AUD-012, `PC-1`.) A demonstração de que a
+  // série do BMW é insensível a essa correção está no bloco da série discriminante, §5.
+  const hatch = await api('POST', '/vehicles', {
+    plate: '77-QR-05',
+    make: 'Seat',
+    model: 'Ibiza',
+    fuelType: 'gasoline',
+  });
+  check('Terceiro veículo é criado', hatch.status === 201, `status ${hatch.status}`);
+  const hatchId = hatch.body?.id;
+
   /* ---------------------------------------------------------------------- */
   section('4. Quilometragem e validação de progressão (§11)');
 
@@ -478,6 +491,62 @@ async function main() {
     'O consumo médio ignora intervalos com abastecimento parcial',
     statsCheck.body?.consumption?.fuelL100Km === 6,
     `obtido ${statsCheck.body?.consumption?.fuelL100Km}`,
+  );
+
+  /* ---------------------------------------------------------------------- */
+  /* Série desenhada para DISCRIMINAR (AUD-012, `PC-1`).                      */
+  /*                                                                          */
+  /* A série do BMW acima **não distingue** a implementação corrigida da      */
+  /* avariada: o parcial de 30 L está a fechar a série, não a meio de um      */
+  /* intervalo, e os três intervalos atestados dão 6,00 L/100 km tanto na    */
+  /* versão que acumula os parciais como na que os descarta. Medido, não      */
+  /* inferido — é precisamente o `PC-1`.                                      */
+  /*                                                                          */
+  /* Aqui o parcial fica **entre** dois depósitos atestados, que é o caso que  */
+  /* a correção de A8 veio tratar:                                            */
+  /*                                                                          */
+  /*   atestado  40 L @ 10 000 km   →  âncora                                 */
+  /*   parcial   10 L @ 10 500 km   →  não fecha intervalo, acumula           */
+  /*   atestado  50 L @ 11 000 km   →  fecha: 60 L (10 + 50) em 1 000 km      */
+  /*                                                                          */
+  /* Implementação ATUAL   →  6,00 L/100 km  (os 10 L do parcial entram)      */
+  /* Implementação ANTIGA  → 10,00 L/100 km  (media pares adjacentes: 50 L    */
+  /*                                          em 500 km, de 10 500 a 11 000)  */
+  /*                                                                          */
+  /* Se a acumulação for revertida, este check tem de ficar vermelho. Foi     */
+  /* provado por mutação: repondo a media por pares adjacentes, esta linha    */
+  /* falha com 10 e as duas linhas do BMW continuam verdes.                   */
+  const discriminatingPlan = [
+    { date: civilDate(-80), litres: 40, odometerKm: 10_000, fullTank: true },
+    { date: civilDate(-50), litres: 10, odometerKm: 10_500, fullTank: false },
+    { date: civilDate(-20), litres: 50, odometerKm: 11_000, fullTank: true },
+  ];
+  const discriminatingResults = [];
+  for (const entry of discriminatingPlan) {
+    discriminatingResults.push(
+      await api('POST', '/records/fuel', {
+        vehicleId: hatchId,
+        litres: entry.litres,
+        amountCents: entry.litres * 170,
+        pricePerLitreCents: 170,
+        odometerKm: entry.odometerKm,
+        date: entry.date,
+        fullTank: entry.fullTank,
+        station: 'Repsol',
+      }),
+    );
+  }
+  check(
+    'A série com um parcial entre dois atestados é aceite',
+    discriminatingResults.every((r) => r.status === 201),
+    discriminatingResults.map((r) => r.status).join(', '),
+  );
+
+  const discriminatingStats = await api('GET', `/stats?vehicleId=${hatchId}&months=12`);
+  check(
+    'O consumo médio acumula o parcial que fica entre dois depósitos atestados',
+    discriminatingStats.body?.consumption?.fuelL100Km === 6,
+    `obtido ${discriminatingStats.body?.consumption?.fuelL100Km} — a implementação anterior a A8 devolvia 10,00 (50 L em 500 km)`,
   );
 
   /* ---------------------------------------------------------------------- */
@@ -721,6 +790,17 @@ async function main() {
   check('O dashboard de um diesel mostra o consumo de combustível', bmwDashboard.body?.usage?.fuelConsumptionL100Km === 6, `obtido ${bmwDashboard.body?.usage?.fuelConsumptionL100Km}`);
   check('O dashboard de um diesel não mostra consumo elétrico', bmwDashboard.body?.usage?.energyConsumptionKwh100Km === null);
 
+  // O dashboard tem de mostrar o **mesmo** número que as estatísticas, e pelo mesmo
+  // motivo tem de discriminar (AUD-012): a série do BMW dá 6,00 nas duas versões da
+  // média, pelo que o check acima passava antes e depois da correção de A8. Este lê o
+  // veículo cuja série foi desenhada para separar as duas implementações.
+  const hatchDashboard = await api('GET', `/dashboard?vehicleId=${hatchId}`);
+  check(
+    'O dashboard mostra o consumo médio com o parcial acumulado',
+    hatchDashboard.body?.usage?.fuelConsumptionL100Km === 6,
+    `obtido ${hatchDashboard.body?.usage?.fuelConsumptionL100Km} — a implementação anterior a A8 devolvia 10,00 (50 L em 500 km)`,
+  );
+
   const stats = await api('GET', `/stats?vehicleId=${bmwId}`);
   check('As estatísticas devolvem o âmbito', stats.body?.scope?.vehicleId === bmwId);
   check('O total do período é positivo', (stats.body?.totals?.totalCents ?? 0) > 0, euros(stats.body?.totals?.totalCents ?? 0));
@@ -925,7 +1005,10 @@ async function main() {
   const jsonBody = await jsonExport.json();  check('A exportação JSON responde 200', jsonExport.status === 200, `status ${jsonExport.status}`);
   check('A exportação inclui metadados com versão', jsonBody?.meta?.formatVersion === 1);
   check('A exportação explica as unidades', (jsonBody?.meta?.notes ?? []).length >= 3);
-  check('A exportação inclui veículos', (jsonBody?.vehicles ?? []).length === 2, `${jsonBody?.vehicles?.length} veículos`);
+  // O número acompanha os veículos que este script cria (§3): o Kia, o BMW e o terceiro
+  // veículo, que existe só para a série discriminante de AUD-012. É uma afirmação de
+  // **fixture**, não de produto: acrescentar um veículo acima obriga a mudar isto.
+  check('A exportação inclui veículos', (jsonBody?.vehicles ?? []).length === 3, `${jsonBody?.vehicles?.length} veículos`);
   check('A exportação inclui despesas', (jsonBody?.expenses ?? []).length > 0, `${jsonBody?.expenses?.length} despesas`);
   check('A exportação inclui abastecimentos', (jsonBody?.fuelSessions ?? []).length > 0, `${jsonBody?.fuelSessions?.length} abastecimentos`);
   check('A exportação inclui carregamentos', (jsonBody?.chargingSessions ?? []).length > 0);

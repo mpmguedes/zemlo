@@ -11,6 +11,7 @@ import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config as loadDotEnv } from 'dotenv';
+import { API_BASE_PATH } from '@zemlo/shared';
 import { assertBareAddress, assertSingleLine, envelopeAddress } from './email-address.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -176,6 +177,92 @@ function validateMailConfig(smtpFrom: string, smtpUser: string | null): void {
   }
 }
 
+/**
+ * Valida, no arranque, a configuração do login federado (`AUTH-002`).
+ *
+ * A primeira regra é a que mais importa:
+ *
+ *  1. **Meias credenciais são pior do que nenhumas.** Com `GOOGLE_CLIENT_ID` sem
+ *     `GOOGLE_CLIENT_SECRET`, a configuração "existe" para quem a lê e o botão passa a
+ *     ter destino — mas o fluxo falha sempre, e falha no fim, depois de o utilizador já
+ *     ter escolhido a conta Google e autorizado o acesso. Falhar no arranque é mais
+ *     honesto e mais barato de diagnosticar.
+ *  2. **O `redirect_uri` tem de ser absoluto e não pode ter query nem fragmento.** A
+ *     Google compara-o **literalmente**: um `?` ou um `#` a mais produz
+ *     `redirect_uri_mismatch`, que é o erro mais comum deste fluxo e o mais difícil de
+ *     diagnosticar, porque a resposta não diz o que está mal. A verificação é feita
+ *     sobre a **cadeia crua**, e não sobre o `URL` já analisado: `new URL('https://x/y?')`
+ *     devolve `search === ''`, pelo que um `?` solto passaria pela verificação do objeto
+ *     e continuaria a ser um erro para a Google.
+ *  3. **Em produção, `https`.** O `code` viaja no URL e é uma credencial de uso único.
+ *  4. **O emissor é só o emissor.** O `openid-client` compara-o exatamente com o `iss` do
+ *     `id_token`; uma barra final a mais produz uma recusa cuja mensagem fala de `iss` e
+ *     não da variável que se escreveu.
+ *
+ * Uma instalação **sem** login federado não é validada: não há fluxo, e o `redirectUri`
+ * não chega a ser lido por ninguém.
+ */
+function validateFederatedLoginConfig(
+  clientId: string | null,
+  clientSecret: string | null,
+  redirectUri: string,
+  issuer: string,
+  isProduction: boolean,
+): void {
+  if ((clientId === null) !== (clientSecret === null)) {
+    const missing = clientId === null ? 'GOOGLE_CLIENT_ID' : 'GOOGLE_CLIENT_SECRET';
+    throw new ConfigError(
+      `Login Google mal configurado: falta ${missing}. Define as duas variáveis ou nenhuma — com metade delas o botão aparece na interface e o fluxo falha sempre.`,
+    );
+  }
+
+  if (clientId === null) return;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(redirectUri);
+  } catch {
+    throw new ConfigError(`GOOGLE_REDIRECT_URI não é um endereço absoluto: ${redirectUri}`);
+  }
+
+  if (redirectUri.includes('?') || redirectUri.includes('#')) {
+    throw new ConfigError(
+      'GOOGLE_REDIRECT_URI não pode ter query nem fragmento: a Google compara-o literalmente e responde `redirect_uri_mismatch` sem dizer o que está mal.',
+    );
+  }
+
+  if (isProduction && parsed.protocol !== 'https:') {
+    throw new ConfigError(
+      `GOOGLE_REDIRECT_URI tem de ser https em produção (tem ${parsed.protocol}). O código de autorização viaja no URL e é uma credencial de uso único.`,
+    );
+  }
+
+  /*
+   * O emissor é comparado **exatamente** com o campo `iss` do `id_token`, pelo
+   * `openid-client`. Um valor com barra final a mais — `https://accounts.google.com/`
+   * contra `https://accounts.google.com` — produz uma recusa em que a mensagem fala de
+   * `iss` e não do que se escreveu na configuração. Apanhá-lo aqui poupa essa caça.
+   */
+  let issuerUrl: URL;
+  try {
+    issuerUrl = new URL(issuer);
+  } catch {
+    throw new ConfigError(`GOOGLE_ISSUER não é um endereço absoluto: ${issuer}`);
+  }
+
+  if (issuerUrl.pathname !== '/' || issuer.includes('?') || issuer.includes('#')) {
+    throw new ConfigError(
+      `GOOGLE_ISSUER tem de ser só o emissor, sem caminho, query nem fragmento: ${issuer}`,
+    );
+  }
+
+  if (isProduction && issuerUrl.protocol !== 'https:') {
+    throw new ConfigError(
+      `GOOGLE_ISSUER tem de ser https em produção (tem ${issuerUrl.protocol}). O documento de descoberta e as chaves públicas vêm de lá.`,
+    );
+  }
+}
+
 const databaseProvider: 'sqlite' | 'postgresql' = readString('DATABASE_PROVIDER', 'sqlite') as
   | 'sqlite'
   | 'postgresql';
@@ -228,15 +315,35 @@ export interface AppConfig {
     readonly emailVerificationMaxRequests: number;
   };
   /**
-   * Login federado (§29).
+   * Login federado (§29, `AUTH-002`).
    *
-   * Só o Google está implementado. O Sign in with Apple exige um identificador de app
+   * Só o Google está previsto. O Sign in with Apple exige um identificador de app
    * registado, que só existe quando houver uma app iOS publicada — e não há código que
    * leia as suas credenciais, por isso não existem variáveis para elas. Documentar
    * variáveis que nada consome sugeriria uma funcionalidade inexistente.
+   *
+   * O `redirectUri` é **configuração**, não derivação. Nunca é construído a partir do
+   * cabeçalho `Host` nem de qualquer outro valor do pedido: quem controla o pedido
+   * controlaria, nesse caso, o endereço para onde a Google devolve o `code`, e o `code`
+   * é uma credencial de uso único. Vem de `GOOGLE_REDIRECT_URI` ou, se essa variável não
+   * existir, de `PUBLIC_BASE_URL` — que também é configuração de operação.
    */
   readonly federatedLogin: {
-    readonly google: { clientId: string; clientSecret: string } | null;
+    readonly google: {
+      readonly clientId: string;
+      readonly clientSecret: string;
+      readonly redirectUri: string;
+      /**
+       * Emissor OIDC. Por omissão `https://accounts.google.com`.
+       *
+       * Configurável por duas razões concretas, e não por gosto: permite apontar a
+       * **staging** a um emissor de ensaio, e é o que torna o fluxo testável — o teste
+       * levanta um fornecedor OIDC local com JWKS própria e aponta o serviço para lá. Sem
+       * isto, o único emissor testável seria o real, e as validações de assinatura,
+       * `iss` e `aud` não seriam provadas a morder.
+       */
+      readonly issuer: string;
+    } | null;
   };
   readonly email: {
     readonly enabled: boolean;
@@ -253,6 +360,24 @@ export interface AppConfig {
     readonly password: string | null;
     readonly discoveryPrefix: string;
   };
+  /**
+   * Trabalho periódico (`PROD-004`).
+   *
+   * O Zemlo não tinha nenhum até aqui: o único trabalho que corria sozinho era o que um
+   * pedido arrastava consigo. Estes valores existem para que o operador possa **desligar**
+   * o agendador numa instalação onde outra coisa o faça (um cron, um contentor de
+   * trabalho), em vez de ter de escolher entre duas instâncias a correr o mesmo.
+   */
+  readonly jobs: {
+    /**
+     * Intervalo da sincronização de notificações, em minutos.
+     *
+     * `0` desliga o agendador — e é o valor a usar quando o mesmo trabalho é corrido por
+     * fora da API. O máximo de um dia existe para travar um `1440` mal escrito como
+     * `1440000`, que deixaria o agendador efetivamente desligado sem ninguém dar por isso.
+     */
+    readonly notificationSyncIntervalMinutes: number;
+  };
   readonly logging: {
     readonly level: 'debug' | 'info' | 'warn' | 'error';
     readonly pretty: boolean;
@@ -268,7 +393,24 @@ function build(): AppConfig {
   const smtpFrom = readString('SMTP_FROM', 'Zemlo <ola@appzemlo.com>');
   const mqttUrl = readOptionalString('HA_MQTT_URL');
 
+  /*
+   * Elevado a variável porque o `redirect_uri` do Google deriva dele: a montagem do
+   * endereço de retorno tem de acontecer antes de `validateFederatedLoginConfig()` o poder
+   * validar, e a validação tem de acontecer antes de a API escutar.
+   */
+  const publicBaseUrl = readString('PUBLIC_BASE_URL', 'http://127.0.0.1:4000').replace(/\/+$/, '');
+  const googleRedirectUri =
+    readOptionalString('GOOGLE_REDIRECT_URI') ?? `${publicBaseUrl}${API_BASE_PATH}/auth/google/callback`;
+  const googleIssuer = readString('GOOGLE_ISSUER', 'https://accounts.google.com');
+
   validateMailConfig(smtpFrom, smtpUser);
+  validateFederatedLoginConfig(
+    googleClientId,
+    googleClientSecret,
+    googleRedirectUri,
+    googleIssuer,
+    isProduction,
+  );
 
   return {
     nodeEnv,
@@ -278,7 +420,7 @@ function build(): AppConfig {
     version: readString('npm_package_version', '0.1.0'),
     port: readInt('PORT', 4000, 1, 65_535),
     host: readString('HOST', '127.0.0.1'),
-    publicBaseUrl: readString('PUBLIC_BASE_URL', 'http://127.0.0.1:4000').replace(/\/+$/, ''),
+    publicBaseUrl,
     database: {
       url: readString('DATABASE_URL', 'file:./dev.db'),
       provider: databaseProvider,
@@ -306,7 +448,12 @@ function build(): AppConfig {
     federatedLogin: {
       google:
         googleClientId && googleClientSecret
-          ? { clientId: googleClientId, clientSecret: googleClientSecret }
+          ? {
+              clientId: googleClientId,
+              clientSecret: googleClientSecret,
+              redirectUri: googleRedirectUri,
+              issuer: googleIssuer,
+            }
           : null,
     },
     email: {
@@ -323,6 +470,9 @@ function build(): AppConfig {
       username: readOptionalString('HA_MQTT_USERNAME'),
       password: readOptionalString('HA_MQTT_PASSWORD'),
       discoveryPrefix: readString('HA_DISCOVERY_PREFIX', 'homeassistant'),
+    },
+    jobs: {
+      notificationSyncIntervalMinutes: readInt('NOTIFICATIONS_SYNC_INTERVAL_MINUTES', 15, 0, 1440),
     },
     logging: {
       level: readString('LOG_LEVEL', isTest ? 'error' : 'info') as AppConfig['logging']['level'],
@@ -341,7 +491,17 @@ export function describeConfig(): string[] {
     `escuta: http://${config.host}:${config.port}`,
     `origens CORS: ${config.cors.allowAllInDevelopment ? 'todas (desenvolvimento)' : config.cors.origins.join(', ')}`,
     `segredos cifrados: ${config.crypto.secretsEnabled ? 'ativos (2FA disponível)' : 'desativados (define ENCRYPTION_KEY)'}`,
-    `login Google: ${config.federatedLogin.google ? 'ativo' : 'inativo (sem credenciais)'}`,
+    /*
+     * O endereço de retorno é mostrado de propósito: é o valor que tem de estar registado
+     * na consola da Google, e o desencontro entre os dois é a causa mais comum de o fluxo
+     * falhar — sem nada no log que o explique. Não é segredo: viaja em cada pedido de
+     * autorização, no URL do browser.
+     */
+    `login Google: ${
+      config.federatedLogin.google
+        ? `ativo (retorno para ${config.federatedLogin.google.redirectUri})`
+        : 'inativo (sem credenciais)'
+    }`,
     /*
      * Distingue "sem SMTP" de "SMTP configurado". A recuperação de password existe nos
      * dois casos, mas sem SMTP o link é registado no log em vez de entregue — e quem
@@ -356,5 +516,15 @@ export function describeConfig(): string[] {
         : 'entrega inativa (sem SMTP) — links de recuperação registados no log'
     }`,
     `Home Assistant: ${config.homeAssistant.enabled ? 'ativo' : 'inativo (sem broker MQTT)'}`,
+    /*
+     * O agendador é anunciado no arranque porque é a diferença entre "os lembretes
+     * avisam" e "os lembretes só avisam se alguém abrir o ecrã" — a única forma de saber
+     * qual dos dois está a acontecer sem ler o código. Desligado, diz porquê.
+     */
+    `agendador: ${
+      config.jobs.notificationSyncIntervalMinutes > 0
+        ? `notificações a cada ${config.jobs.notificationSyncIntervalMinutes} min`
+        : 'desligado (NOTIFICATIONS_SYNC_INTERVAL_MINUTES=0)'
+    }`,
   ];
 }

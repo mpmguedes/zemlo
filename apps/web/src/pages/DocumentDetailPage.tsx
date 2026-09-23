@@ -16,6 +16,7 @@ import {
   Chip,
   DetailList,
   DetailRow,
+  EmptyState,
   InlineError,
   LoadingBlock,
   PageHeader,
@@ -109,7 +110,27 @@ export function DocumentDetailPage() {
     );
   }
 
-  if (!data) return null;
+  /*
+   * Sem dados, sem carregamento e sem erro: a consulta está desativada porque o endereço não
+   * traz identificador. Devolver `null` deixava um ecrã em branco (`WEB-005`).
+   */
+  if (!data) {
+    return (
+      <div className="z-page">
+        <PageHeader title="Documento" back={{ to: '/documents', label: 'Documentos' }} />
+        <EmptyState
+          icon="📄"
+          title="Não encontrámos este documento"
+          body="O endereço pode estar incompleto ou o documento pode ter sido eliminado. A lista tem tudo o que guardaste."
+          action={
+            <Link to="/documents" className="z-btn z-btn--primary">
+              Ver os meus documentos
+            </Link>
+          }
+        />
+      </div>
+    );
+  }
 
   const vehicle = data.vehicleId
     ? (vehicles.data?.items ?? []).find((item) => item.id === data.vehicleId) ?? null

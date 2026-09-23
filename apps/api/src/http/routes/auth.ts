@@ -9,6 +9,12 @@
  *  - as rotas de login e registo têm limitação de abuso própria e mais apertada;
  *  - `logout`, `password` e `2fa` exigem autenticação: uma operação sobre a conta não
  *    pode ser feita por quem não a provou possuir.
+ *
+ * Nota sobre o login federado (`AUTH-002`): `GET /auth/google/start` e
+ * `GET /auth/google/callback` são os **únicos** endpoints deste ficheiro que existem para ser
+ * visitados por navegação de topo, e não chamados por código. É por isso que respondem com
+ * um `302` e com um `Set-Cookie`, e é por isso que o `state` viaja também num cookie
+ * `HttpOnly`: a marca do fluxo tem de estar no browser que o começou.
  */
 
 import { Router } from 'express';
@@ -51,8 +57,62 @@ import {
   updateProfile,
   verifyEmail,
 } from '../../services/auth.js';
+import {
+  completeGoogleLogin,
+  OAUTH_STATE_COOKIE,
+  oauthStateCookiePath,
+  startGoogleLogin,
+} from '../../services/oauth.js';
+import { config } from '../../core/config.js';
 
 export const authRouter = Router();
+
+/* -------------------------------------------------------------------------- */
+/* Apoio ao cookie do fluxo federado                                           */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Lê um cookie do cabeçalho `Cookie`.
+ *
+ * Escrito à mão de propósito: é o **único** cookie que o servidor lê. Os tokens de sessão
+ * vão no corpo da resposta, e não em cookies, por decisão de desenho (ver o cabeçalho deste
+ * ficheiro). Trazer o `cookie-parser` para ler um valor seria uma dependência a mais para
+ * uma função de cinco linhas.
+ *
+ * O corte é no **primeiro** `=`, porque um valor em base64url pode conter `=` de
+ * preenchimento no fim — cortar no último perderia parte do valor.
+ */
+function readCookie(header: string | undefined, name: string): string | null {
+  if (header === undefined) return null;
+
+  for (const part of header.split(';')) {
+    const separator = part.indexOf('=');
+    if (separator === -1) continue;
+    if (part.slice(0, separator).trim() === name) {
+      return part.slice(separator + 1).trim();
+    }
+  }
+
+  return null;
+}
+
+/** Constrói o `Set-Cookie` da marca do fluxo. `maxAgeSeconds = 0` apaga-a. */
+function stateCookie(value: string, path: string, maxAgeSeconds: number): string {
+  return [
+    `${OAUTH_STATE_COOKIE}=${value}`,
+    `Path=${path}`,
+    `Max-Age=${maxAgeSeconds}`,
+    'HttpOnly',
+    /*
+     * `Lax` e não `Strict`: o regresso da Google é uma navegação de topo vinda de outro
+     * sítio, e com `Strict` o browser não enviaria o cookie — o fluxo falharia sempre, e a
+     * causa (um atributo a mais) seria invisível. `Lax` continua a não enviar o cookie em
+     * pedidos de outro sítio que não sejam navegações, que é o que interessa aqui.
+     */
+    'SameSite=Lax',
+    ...(config.isProduction ? ['Secure'] : []),
+  ].join('; ');
+}
 
 /* -------------------------------------------------------------------------- */
 /* Registo e sessão                                                            */
@@ -96,6 +156,82 @@ authRouter.post(
       ipAddress: request.meta.ipAddress,
       userAgent: request.meta.userAgent,
     });
+    response.json(session);
+  }),
+);
+
+/* -------------------------------------------------------------------------- */
+/* Login federado com Google (`AUTH-002`)                                      */
+/* -------------------------------------------------------------------------- */
+
+authRouter.get(
+  '/auth/google/start',
+  authRateLimit(),
+  asyncHandler(async (_request, response) => {
+    const start = await startGoogleLogin();
+
+    /*
+     * A marca do fluxo vai para o browser **e** para o servidor: o `state` está no mapa do
+     * serviço, e este cookie é o que prova que quem volta ao callback é o mesmo browser que
+     * começou o fluxo. Sem ele, um atacante que começasse um fluxo próprio podia fazer a
+     * vítima terminá-lo — a vítima acabaria autenticada na conta do atacante, porque o
+     * `state` dele é um valor perfeitamente válido.
+     */
+    response.setHeader(
+      'Set-Cookie',
+      stateCookie(start.state, oauthStateCookiePath(), start.cookieMaxAgeSeconds),
+    );
+
+    /*
+     * `302` e não `200` com um JSON: quem carrega no botão é um browser a navegar, e o
+     * endereço de autorização tem de ser visitado. O `client_secret` nunca sai daqui — o
+     * que viaja no URL é o `client_id`, o `state`, o `nonce` e o desafio PKCE.
+     */
+    response.redirect(302, start.authorizationUrl);
+  }),
+);
+
+authRouter.get(
+  '/auth/google/callback',
+  authRateLimit(),
+  asyncHandler(async (request, response) => {
+    /*
+     * A query vai **crua**, e não por `request.query`.
+     *
+     * O Express analisa a query e descodifica-a, e nesse caminho um `+` passa a espaço — e o
+     * `code` é opaco, pode conter `+`. Entregar a cadeia original ao `openid-client` é
+     * entregar-lhe exatamente os bytes que a Google enviou.
+     *
+     * A **base** do URL, essa, não vem do pedido: vem da configuração (`services/oauth.ts`).
+     * O cabeçalho `Host` é controlado por quem faz o pedido, e o URL de retorno é o destino
+     * de uma credencial de uso único.
+     */
+    const questionMark = request.originalUrl.indexOf('?');
+    const rawQuery = questionMark === -1 ? '' : request.originalUrl.slice(questionMark);
+
+    const session = await completeGoogleLogin(
+      rawQuery,
+      readCookie(request.headers.cookie, OAUTH_STATE_COOKIE),
+      {
+        ipAddress: request.meta.ipAddress,
+        userAgent: request.meta.userAgent,
+      },
+    );
+
+    /*
+     * O fluxo terminou, e a marca do browser deixa de ter razão para existir. A limpeza é
+     * feita aqui e não num `catch`: o manipulador de erros da aplicação responde depois de o
+     * pedido sair daqui, e não teria como lhe acrescentar cabeçalhos.
+     */
+    response.setHeader('Set-Cookie', stateCookie('', oauthStateCookiePath(), 0));
+
+    /*
+     * Esta resposta carrega tokens e chega por navegação de topo, o que a torna mais
+     * suscetível de acabar em cache ou no histórico do que uma resposta a um `fetch`. Nada
+     * aqui pode ser guardado.
+     */
+    response.setHeader('Cache-Control', 'no-store');
+
     response.json(session);
   }),
 );

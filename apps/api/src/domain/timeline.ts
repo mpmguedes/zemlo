@@ -340,10 +340,29 @@ function kindFromEventType(type: EventType, recordType: string | null): Timeline
   }
 }
 
-/** Rota para o detalhe de um registo. Usada pelos links da timeline na app web. */
+/**
+ * Rota para o detalhe de um registo. Usada pelos links da timeline na app web.
+ *
+ * **Invariante: esta função só devolve rotas que a cadeia API+web serve de facto.** Quando não
+ * existe ecrã para o registo, devolve `null` — e o item deixa de ser uma ligação, em vez de
+ * levar o utilizador a um 404 ou a um ecrã errado. `records.tsx` só envolve o item em `<Link>`
+ * quando `href` não é nulo, pelo que `null` é uma resposta de primeira classe, não uma omissão.
+ *
+ * Isto já foi um defeito real (🔴-2, `AUD-002`): os documentos eram enviados para
+ * `/records/documents/<id>` — a web serve o detalhe do documento em `/documents/<id>` — e os
+ * lembretes para `/records/reminders/<id>` — a API expõe os lembretes em `/reminders/<id>`, e
+ * não existe ecrã de detalhe de um lembrete. Os dois davam 404.
+ *
+ * Antes de acrescentar um tipo aqui, confirme-se que existe ecrã. Os tipos que geram evento com
+ * `recordId` estão em `services/`; `vehicle` e `odometer` não têm ecrã de detalhe — o evento de
+ * odómetro é escrito com `recordId` nulo (`vehicles.ts`) e a quilometragem vive na ficha do
+ * veículo.
+ */
 export function recordHref(recordType: string | null, recordId: string | null): string | null {
   if (!recordType || !recordId) return null;
-  const routes: Record<string, string> = {
+
+  /** Tipos cujo detalhe vive sob `/records/<rota>/<id>`. */
+  const recordRoutes: Record<string, string> = {
     expense: 'expenses',
     fuel: 'fuel',
     charging: 'charging',
@@ -351,12 +370,14 @@ export function recordHref(recordType: string | null, recordId: string | null): 
     insurance: 'insurance',
     inspection: 'inspections',
     tax: 'taxes',
-    document: 'documents',
-    reminder: 'reminders',
-    odometer: 'odometer',
   };
-  const route = routes[recordType];
-  return route ? `/records/${route}/${recordId}` : null;
+  const route = recordRoutes[recordType];
+  if (route) return `/records/${route}/${recordId}`;
+
+  /** O documento tem ecrã próprio, fora de `/records/`. */
+  if (recordType === 'document') return `/documents/${recordId}`;
+
+  return null;
 }
 
 /** Data civil de um evento, normalizada para comparação. */

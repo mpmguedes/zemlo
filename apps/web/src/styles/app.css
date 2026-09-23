@@ -96,7 +96,7 @@ h4 {
 }
 
 a {
-  color: var(--z-accent);
+  color: var(--z-accent-ink);
   text-decoration: none;
 }
 
@@ -295,7 +295,7 @@ ol {
 
   .z-sidebar__link[aria-current='page'] {
     background: var(--z-accent-soft);
-    color: var(--z-accent);
+    color: var(--z-accent-ink);
     font-weight: 600;
   }
 
@@ -354,7 +354,7 @@ ol {
 }
 
 .z-tabbar__link[aria-current='page'] {
-  color: var(--z-accent);
+  color: var(--z-accent-ink);
   font-weight: 600;
 }
 
@@ -373,7 +373,7 @@ ol {
   padding: 0 4px;
   border-radius: var(--z-radius-pill);
   background: var(--z-highlight);
-  color: #fff;
+  color: var(--z-highlight-contrast);
   font-size: 10px;
   font-weight: 700;
   line-height: 16px;
@@ -633,11 +633,11 @@ ol {
    cartão (§57). Só há um por ecrã. */
 .z-btn--highlight {
   background: var(--z-highlight);
-  color: #ffffff;
+  color: var(--z-highlight-contrast);
 }
 
 .z-btn--highlight:hover:not(:disabled) {
-  background: var(--z-highlight-strong);
+  background: var(--z-highlight-hover);
 }
 
 .z-btn--secondary {
@@ -648,12 +648,12 @@ ol {
 
 .z-btn--secondary:hover:not(:disabled) {
   border-color: var(--z-accent);
-  color: var(--z-accent);
+  color: var(--z-accent-ink);
 }
 
 .z-btn--ghost {
   background: transparent;
-  color: var(--z-accent);
+  color: var(--z-accent-ink);
 }
 
 .z-btn--ghost:hover:not(:disabled) {
@@ -663,7 +663,7 @@ ol {
 .z-btn--danger {
   background: transparent;
   border-color: var(--z-border-strong);
-  color: var(--z-danger);
+  color: var(--z-danger-ink);
 }
 
 .z-btn--danger:hover:not(:disabled) {
@@ -743,7 +743,7 @@ ol {
 }
 
 .z-field__required {
-  color: var(--z-highlight-strong);
+  color: var(--z-highlight-ink);
 }
 
 .z-input,
@@ -823,7 +823,7 @@ ol {
 }
 
 .z-field__error {
-  color: var(--z-danger);
+  color: var(--z-danger-ink);
   font-size: var(--z-text-xs);
   font-weight: 500;
 }
@@ -877,7 +877,7 @@ ol {
 .z-segmented__item[aria-pressed='true'],
 .z-segmented__item[aria-selected='true'] {
   background: var(--z-bg-elevated);
-  color: var(--z-accent);
+  color: var(--z-accent-ink);
   box-shadow: var(--z-shadow-1);
 }
 
@@ -916,7 +916,7 @@ ol {
 .z-option[aria-pressed='true'] {
   border-color: var(--z-accent);
   background: var(--z-accent-soft);
-  color: var(--z-accent);
+  color: var(--z-accent-ink);
 }
 
 /* ========================================================================== */
@@ -950,12 +950,12 @@ ol {
 
 .z-banner--info {
   background: var(--z-info-soft);
-  color: var(--z-petrol-800);
+  color: var(--z-info-ink);
 }
 
 .z-banner--ok {
   background: var(--z-ok-soft);
-  color: var(--z-ok);
+  color: var(--z-ok-ink);
 }
 
 .z-banner--warn {
@@ -965,7 +965,7 @@ ol {
 
 .z-banner--danger {
   background: var(--z-danger-soft);
-  color: var(--z-danger);
+  color: var(--z-danger-ink);
 }
 
 .z-banner__actions {
@@ -1003,7 +1003,7 @@ ol {
 }
 
 .z-state-card--soon {
-  border-left-color: var(--z-highlight);
+  border-left-color: var(--z-highlight-strong);
 }
 
 .z-state-card--due {
@@ -1061,7 +1061,7 @@ ol {
 
 .z-chip--accent {
   background: var(--z-accent-soft);
-  color: var(--z-accent);
+  color: var(--z-accent-ink);
 }
 
 .z-chip--warn {
@@ -1071,12 +1071,12 @@ ol {
 
 .z-chip--danger {
   background: var(--z-danger-soft);
-  color: var(--z-danger);
+  color: var(--z-danger-ink);
 }
 
 .z-chip--ok {
   background: var(--z-ok-soft);
-  color: var(--z-ok);
+  color: var(--z-ok-ink);
 }
 
 .z-chip--button {
@@ -1378,7 +1378,7 @@ a.z-list__item:hover {
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--z-accent);
+  color: var(--z-accent-ink);
   font-family: inherit;
   font-size: var(--z-text-sm);
   font-weight: 600;
@@ -1433,13 +1433,13 @@ a.z-list__item:hover {
 }
 
 .z-toast--ok {
-  background: var(--z-ok);
-  color: #fff;
+  background: var(--z-ok-ink);
+  color: var(--z-ok-contrast);
 }
 
 .z-toast--danger {
   background: var(--z-danger);
-  color: #fff;
+  color: var(--z-danger-contrast);
 }
 
 .z-toast__close {
@@ -1827,7 +1827,7 @@ a.z-timeline__item:hover {
 .z-calendar__day--today {
   border-color: var(--z-accent);
   font-weight: 700;
-  color: var(--z-accent);
+  color: var(--z-accent-ink);
 }
 
 .z-calendar__day--selected {
@@ -1912,7 +1912,7 @@ a.z-timeline__item:hover {
 }
 
 .z-tabs__tab[aria-selected='true'] {
-  color: var(--z-accent);
+  color: var(--z-accent-ink);
   border-bottom-color: var(--z-accent);
 }
 
@@ -1999,7 +1999,7 @@ a.z-timeline__item:hover {
 
 .z-quick-action:hover {
   border-color: var(--z-accent);
-  color: var(--z-accent);
+  color: var(--z-accent-ink);
 }
 
 .z-quick-action__icon {
@@ -2138,7 +2138,7 @@ a.z-timeline__item:hover {
   gap: var(--z-space-2);
   padding: var(--z-space-3);
   border: 1px solid var(--z-border);
-  border-left: 3px solid var(--z-highlight);
+  border-left: 3px solid var(--z-highlight-strong);
   border-radius: var(--z-radius);
   background: var(--z-bg-elevated);
 }
@@ -2227,7 +2227,7 @@ a.z-timeline__item:hover {
   height: 24px;
   border-radius: 50%;
   background: var(--z-accent-soft);
-  color: var(--z-accent);
+  color: var(--z-accent-ink);
   font-size: var(--z-text-xs);
   font-weight: 700;
 }
@@ -2344,7 +2344,7 @@ a.z-timeline__item:hover {
   padding: var(--z-space-4);
   border-radius: var(--z-radius);
   background: var(--z-danger-soft);
-  color: var(--z-danger);
+  color: var(--z-danger-ink);
   font-size: var(--z-text-sm);
 }
 
@@ -2561,7 +2561,7 @@ a.z-timeline__item:hover {
 }
 
 .z-import__count--warn {
-  border-color: var(--z-warn);
+  border-color: var(--z-highlight-strong);
   background: var(--z-warn-soft);
 }
 
@@ -2613,7 +2613,7 @@ a.z-timeline__item:hover {
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--z-accent);
+  color: var(--z-accent-ink);
   font-family: inherit;
   cursor: pointer;
   text-decoration: underline;
