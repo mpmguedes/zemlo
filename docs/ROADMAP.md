@@ -316,7 +316,7 @@ Vista única. O detalhe está em §5. `—` em Dependências significa "nenhuma"
 | WEB-004  | Web          | Corrigir `/records/:kind` na interface                                 | A3     | P1         | `DONE`  | — |
 | WEB-005  | Web          | Auditoria de estados (vazio/loading/erro)                              | A3     | P2         | `DONE`     | —                       |
 | WEB-006  | Web          | Acessibilidade                                                         | A3     | P2         | `DONE`        | —                    |
-| WEB-007  | Web          | Pesquisa e filtros                                                     | A3     | P2         | `BACKLOG`  | —                       |
+| WEB-007  | Web          | Pesquisa e filtros                                                     | A3     | P2         | `READY`    | —                       |
 | WEB-008  | Web          | Consistência visual e design system                                    | A3     | P3         | `BACKLOG`  | —                       |
 | WEB-009  | Web          | `DocumentsPage`: campo «Validade» duplicado                            | A3     | P2         | `DONE`     | —                       |
 | WEB-010  | Web          | Cabeçalho do calendário mostra data em vez do mês                      | A3     | P3         | `DONE`     | —                       |
@@ -1870,9 +1870,211 @@ sempre **a minha** linha (`PC-21` → `PC-24`, com folga deliberada) e nunca as 
 **Estado:** `WEB-006` → `DONE`. **Sem commit, sem push e sem deploy** — a árvore fica como está,
 com `WEB-005` e `WEB-006` por commitar, à espera de autorização.
 
-#### WEB-007 · Pesquisa e filtros — A3 · P2 · `BACKLOG`
+#### WEB-007 · Pesquisa e filtros — A3 · P2 · `READY`
+
+- **Descrição (detalhe prévio escrito por A9 em 2026-09-24 — ver `PC-37`).** As listas do
+  produto não têm pesquisa textual nenhuma, e os filtros existentes são irregulares: **8**
+  `z-filters` em 8 ficheiros, dos quais **2** sem `role="group"`/`aria-label`
+  (`DocumentsPage.tsx:192`, `RemindersPage.tsx:141`) e **6** com eles
+  (`CalendarPage.tsx:85`, `HomeAssistantPage.tsx:50`, `RecordsPage.tsx:220`, `StatsPage.tsx:68`,
+  `TimelinePage.tsx:89`, `:112`). O `useDebounced` existe em `hooks/index.ts:13` — documentado
+  para «os campos de pesquisa» — e tem **zero consumidores**. Não existe um único
+  `type="search"` em `apps/web/src`.
+- **Objetivo:** uma pesquisa e um conjunto de filtros **consistentes** nos ecrãs de lista,
+  **limitados ao que a API já sabe filtrar**. A tarefa não é «acrescentar filtros»: é
+  uniformizar os que existem e acrescentar pesquisa **local no cliente**, sobre os resultados
+  já carregados no ecrã.
+- **Estado atual medido (2026-09-24, working tree `100dc2b`).**
+  - **O servidor não tem pesquisa textual.** Nenhum campo `q`/`search`/`term` em contrato
+    nenhum. `zListQuery` (`packages/shared/src/contracts.ts:397-404`) filtra por `from`, `to`,
+    `category`, `vehicleId`, mais paginação (`limit` 1–200, `cursor`). `zTimelineQuery`
+    (`:631-638`) por `vehicleId`, `kinds`, `from`, `to`. `zNotificationsQuery` (`:664-668`) por
+    `unreadOnly`.
+  - **Duas formas de resposta em convivência:** `{ items, total }` (conformidade, odómetro,
+    veículos) e `Page` = `{ items, nextCursor?, total? }` (financeiras, timeline) —
+    `packages/shared/src/types.ts:55-61`; já documentado em `RecordsPage.tsx:162-163` e
+    `api/queryKeys.ts:157-159`.
+  - **A paginação por cursor só está implementada na timeline** (`useTimeline.ts:67-68`,
+    `getNextPageParam`). Todas as outras listas carregam a resposta inteira.
+  - **Guarda existente a respeitar:** `apps/web/test/records-lists.test.tsx:301` —
+    «sem filtros que a API ignoraria» — já fixa que conformidade e odómetro **não** mostram
+    filtro de período e as financeiras **mostram**. Um filtro novo que contrarie isto põe um
+    teste vermelho, e é o teste que tem razão.
+  - **Nenhum teste menciona `z-filters`.**
+- **Âmbito exato.**
+  1. **Uniformizar a marcação dos filtros existentes:** dar `role="group"` e `aria-label` aos
+     dois que não têm (`DocumentsPage.tsx:192`, `RemindersPage.tsx:141`), com o rótulo
+     adequado ao que o grupo filtra.
+  2. **Pesquisa LOCAL NO CLIENTE — decidida pelo utilizador em 2026-09-24.** A pesquisa atua
+     **apenas sobre os resultados já carregados no ecrã**, nunca sobre o histórico completo.
+     **Não** se cria pesquisa no servidor, **não** se altera `packages/shared`, **não** se
+     altera a API e **não** se regenera o cliente Dart por causa desta funcionalidade. A UI
+     **tem de deixar claro** que a pesquisa atua sobre os resultados carregados — o âmbito
+     fica visível, para não prometer o que não faz.
+  3. **Não tocar** em `theme.css`/`app.css` (coordenação com `WEB-008`).
+- **Fora de âmbito (explícito).** A paginação por cursor das listas que hoje não a têm; a
+  criação de novos parâmetros no contrato partilhado; qualquer alteração à API; e a lista de
+  `logs`/`timeline` que já tem filtros próprios e paginação.
+- **Ficheiros/componentes previsivelmente envolvidos.**
+  `apps/web/src/pages/DocumentsPage.tsx` e `apps/web/src/pages/records/RemindersPage.tsx`
+  (marcação em falta); `apps/web/src/hooks/index.ts` (`useDebounced`, que passa a ter
+  consumidor); as páginas de lista que receberem a pesquisa. **Só `apps/web/src`** — a decisão
+  de 2026-09-24 exclui `packages/shared/src/contracts.ts`, `apps/api/src` e o contrato do mobile.
+- **Critérios de aceitação (verificáveis).**
+  - os **8** `z-filters` do `src` têm `role="group"` e `aria-label` — medido por contagem, não a
+    olho;
+  - a guarda de `accessibility.test.tsx:323` passa a **apanhar** estes dois grupos (hoje não os
+    vê porque não têm `role="group"`) e continua verde;
+  - nenhum filtro é mostrado onde a API o ignoraria — a guarda de
+    `records-lists.test.tsx:301` continua verde **sem ser enfraquecida**;
+  - escrever numa lista filtra **apenas** os itens carregados, e o ecrã **diz** isso de forma
+    visível quando a lista não está completa (sem prometer o que não faz);
+  - **0** alterações a `packages/shared`, a `apps/api` e a `apps/mobile/contract` — a decisão
+    de pesquisa local torna isto um critério **duro**, não condicional.
+- **Testes e prova de não-vacuidade.**
+  - guarda estática nova, no padrão de `documents-form.test.ts`: conta os `z-filters` do `src`
+    e falha se algum não tiver `role="group"` + `aria-label`;
+  - **teste anti-vacuidade obrigatório e separado:** afirmar o número real de grupos hoje
+    (**8**), e que a expressão os encontra — sem ele, uma expressão que deixasse de casar faria
+    a guarda passar para sempre (é exatamente o defeito que `PC-15` descreve noutra forma);
+  - **o teste tem de morder:** medido contra o código pré-correção tem de dar **2 falhas**
+    (os dois grupos sem nome) — se der 0, a expressão não está a olhar para os ficheiros certos;
+  - se houver pesquisa: teste de comportamento sobre a função de filtragem, com o caso
+    «lista completa» e «lista parcial» a distinguirem-se.
+- **Impacto em API / `packages/shared` / mobile.** **Nenhum** — decidido pelo utilizador em
+  2026-09-24: pesquisa local no cliente. `packages/shared` não é tocado, a API não é tocada e o
+  cliente Dart do mobile (`apps/mobile/contract/`, `MOB-001`) **não** é regenerado. O único
+  impacto é em `apps/web/src`.
+- **Dependências:** `WEB-006` **`DONE`** (a guarda de `role="group"` que esta tarefa vem
+  alargar). `WEB-004` **`DONE`** (a guarda de filtros que a API ignora saiu de lá).
+  **`WEB-008` passa a depender DESTA tarefa** — medido em 2026-09-24: as duas escrevem no mesmo
+  bloco de código em `DocumentsPage.tsx` (o contentor `z-filters` na linha 192 é desta tarefa;
+  os `<button>` que vivem dentro dele, nas linhas 194/203/214, são de `WEB-008`) e em
+  `RemindersPage.tsx` (linha 141 e 143/152/163). O conflito **não** é de estilo: é o mesmo
+  bloco. `WEB-007` primeiro; `WEB-008` herda a primitiva já no sítio.
+- **Riscos / limitações.**
+  - **O maior risco é de expectativa:** «pesquisa» sugere pesquisa sobre tudo, e sem apoio do
+    servidor só pode ser sobre o que está carregado. Rotular mal isto produz um produto que
+    mente ao utilizador. Por isso o critério obriga o ecrã a dizer o âmbito.
+  - A decisão «local vs servidor» ficou **fechada** em 2026-09-24 (local no cliente). O risco
+    que resta é de **perceção**: um campo de pesquisa num ecrã com lista parcial parece
+    procurar em tudo, e não procura. É por isso que a UI **tem** de dizer o âmbito.
+  - Os 8 `z-filters` podem não ser os únicos grupos de filtros do produto: a contagem foi feita
+    pela **classe** `z-filters`, e um filtro que não a use escaparia. **Ponto a confirmar**
+    durante a implementação.
+  - Sem `jsdom`, a interação (escrever no campo, ver a lista mudar) **não** é observável nos
+    testes — declara-se como limitação, não se simula (precedente: `WEB-009`).
+- **Agente responsável:** A3.
 
 #### WEB-008 · Consistência visual e design system — A3 · P3 · `BACKLOG`
+
+- **Descrição (detalhe prévio escrito por A9 em 2026-09-24 — ver `PC-37`).** O produto não tem um
+  design system **escrito**: tem primitivas boas e uso irregular delas. O sintoma medido mais
+  claro é o «chip-botão de filtro» — o mesmo `style` inline copiado à mão
+  (`background: 'transparent', border: 0, color: 'inherit', padding: 0, font: 'inherit',
+  cursor: 'pointer', minHeight: 'var(--z-touch)'`) em **20 ocorrências, 8 ficheiros**
+  (`TimelinePage` 4, `CalendarPage` 3, `DocumentsPage` 3, `RemindersPage` 3,
+  `HomeAssistantPage` 2, `RecordsPage` 2, `StatsPage` 2, `NotificationsPage` 1). A tarefa é
+  **extrair a primitiva que falta** e fixar as convenções — não redesenhar o produto.
+- **Objetivo:** uma fonte única para os padrões visuais repetidos (chip-filtro, ordem das
+  classes de botão, cabeçalho de página), de modo que a consistência deixe de depender de
+  alguém se lembrar da `style` exata.
+- **Estado atual medido (2026-09-24, working tree `100dc2b`).**
+  - **As primitivas já existem e já são a norma.** `apps/web/src/ui/primitives.tsx` exporta
+    `Button`, `ButtonLink`, `Card`, `Section` (`h2`), `PageHeader` (`h1`), `Metric`, `Chip`,
+    `Banner`, `EmptyState`, `Skeleton`, `LoadingBlock`, `InlineError`, `DetailList`, `DetailRow`,
+    `Disclosure`.
+  - **`PageHeader` já é usado em 18 ficheiros** e é o **único** produtor de `z-page__header`
+    (`primitives.tsx:164`) — a expressão aparece **1×** no `src` fora da primitiva. **Não há
+    cabeçalhos manuais a competir.** Este ponto estava implícito e fica medido: **não** é um
+    problema.
+  - **Duplicação real e medida:** as 20 cópias do `style` do chip-filtro (acima).
+  - **Ordem das classes de botão:** canónica `z-btn z-btn--<variante> [z-btn--sm]` — **22**
+    ocorrências corretas, **1 exceção** invertida em `ui/Toaster.tsx:102`
+    (`z-btn z-btn--sm z-btn--ghost`).
+  - **`<button>` crus: 57** em 20 ficheiros. **Não** se conclui que todos devam ser `Button` —
+    muitos são legítimos (`CalendarGrid`, os `<h1>` de auth). Serve para dimensionar, não é um
+    alvo.
+  - **`PC-45` pede explicitamente para ser dobrado aqui** (`docs/ROADMAP.md:173`):
+    `CalendarGrid.tsx:115` fixa `minWidth: '9ch'` no título; com `monthLong` (de `WEB-010`) a
+    largura deixou de ser constante (`maio de 2026` = 12 car., `fevereiro de 2026` = 17) e os
+    botões `‹`/`›` deslocam-se até 5 caracteres. O `minWidth` **já era inerte** antes
+    (`01/09/2026` = 10 car.).
+  - **`PC-47`** (aberto por `WEB-011`): continuam cores fora do `BRAND` em `app.css`
+    (`#1d4a52`, `#0c2b30`, `rgba(255,255,255,0.14)`), e a asserção do teste só cobre `color:`.
+  - **Achado de acessibilidade sem `PC-*` (FORA DE ÂMBITO — decidido pelo utilizador em
+    2026-09-24):** o painel não tem `<h1>` no estado normal — em
+    `DashboardPage.tsx` só há `Section` (= `h2`); o `<h1>` existe **apenas** no estado vazio
+    (`:238`). Saiu de `WEB-012` §5 e continua lá só como prosa. **1.3.1/2.4.6.**
+- **Âmbito exato.**
+  1. **Extrair a primitiva do chip-filtro** para `ui/primitives.tsx` (nome a decidir na
+     implementação, ex. `FilterChip` ou `ChipButton`), e **substituir as 20 cópias** por ela.
+     Único critério duro: o `minHeight: 'var(--z-touch)'` não pode desaparecer — é o alvo
+     tátil.
+  2. **Corrigir a ordem da única classe invertida** (`ui/Toaster.tsx:102`).
+  3. **Dobrar o `PC-45`** se o `minWidth` tiver correção barata e verificável; se não, registar
+     porquê em vez de forçar.
+  4. **Decidir e escrever a convenção** que hoje é tácita — ordem das classes de botão e quando
+     usar `PageHeader` — em sítio que os agentes leiam (o próprio `primitives.tsx` ou
+     `docs/`), já que `WEB-008` é isto: tornar a convenção **escrita**.
+- **Fora de âmbito (explícito).** Redesenho visual; alteração de tokens de cor
+  (`theme.css`/`app.css` — coordenação com `WEB-011`, já `DONE`, e com o seu invariante de
+  58 testes); conversão indiscriminada dos 57 `<button>`; e o `<h1>` do painel — **fora de
+  `WEB-008` por decisão do utilizador em 2026-09-24**, sem `PC-*` criado ou alterado aqui.
+- **Ficheiros/componentes previsivelmente envolvidos.**
+  `apps/web/src/ui/primitives.tsx` (a nova primitiva); os **8** ficheiros com as 20 cópias
+  (`TimelinePage`, `CalendarPage`, `DocumentsPage`, `RemindersPage`, `HomeAssistantPage`,
+  `RecordsPage`, `StatsPage`, `NotificationsPage`); `apps/web/src/ui/Toaster.tsx` (1 linha);
+  e `apps/web/src/components/CalendarGrid.tsx:115` **só** se o `PC-45` for dobrado.
+- **Critérios de aceitação (verificáveis).**
+  - a nova primitiva existe e é exportada por `ui/primitives.tsx`;
+  - **0** ocorrências do `style` inline duplicado em `apps/web/src` — medido por `grep`, de
+    **20** para **0**;
+  - os ecrãs que mostram o chip-filtro continuam a mostrar o mesmo (o `minHeight` tátil não
+    desaparece);
+  - **0** ocorrências de `z-btn--sm z-btn--ghost` (a ordem invertida);
+  - a convenção fica **escrita** e citável, não só aplicada;
+  - **0** alterações a `theme.css` e `app.css` — e o teste de contraste (58 testes) continua
+    verde **sem ser tocado**.
+- **Testes e prova de não-vacuidade.**
+  - guarda estática nova (padrão de `documents-form.test.ts`): o `style` duplicado **não** pode
+    reaparecer em `apps/web/src` — é uma guarda de convenção, e diz-se que é;
+  - **teste anti-vacuidade obrigatório:** afirmar que a expressão **encontrava** as 20
+    ocorrências antes (medido no código pré-correção) — uma guarda que devolva 0 por não casar
+    nada é um ornamento;
+  - **o teste tem de morder:** corrido contra o código pré-correção dá **20 falhas**; depois da
+    extração, **0**;
+  - guarda da ordem canónica das classes de botão, com o mesmo par de asserções;
+  - preservar: `contraste-tokens.test.ts` (58) e `accessibility.test.tsx` (18) têm de continuar
+    verdes e **intocados** — se a extração os obrigar a mudar, mudou-se comportamento e não
+    forma.
+- **Impacto em API / `packages/shared` / mobile.** **Nenhum.** A tarefa é exclusivamente
+  `apps/web/src` (componentes e marcação). O contrato partilhado não é tocado, logo o cliente
+  Dart do mobile (`MOB-001`) não é afetado. Se a nova primitiva for par de algum tipo
+  partilhado, isso seria âmbito novo — **não** previsto aqui.
+- **Dependências:** `WEB-011` **`DONE`** — era ela que exigia coordenação sobre `theme.css`/
+  `app.css` (já verificado antes de `WEB-011` começar: `WEB-008` estava `BACKLOG` e os ficheiros
+  intocados). **Dependência de `WEB-007` — medida, não estilística (2026-09-24).** `WEB-007`
+  edita o **contentor** `z-filters` em `DocumentsPage.tsx:192` e `RemindersPage.tsx:141`;
+  `WEB-008` substitui os seus **filhos** (`DocumentsPage.tsx:194/203/214`,
+  `RemindersPage.tsx:143/152/163`). É o **mesmo bloco de código**, logo o conflito é real: feito
+  em paralelo, um dos dois tem de reaplicar-se sobre o outro. Por isso `WEB-008` permanece
+  **`BACKLOG`** até `WEB-007` fechar; depois disso herda a primitiva no sítio. `WEB-010` **`DONE`**
+  (origem do `PC-45`).
+- **Riscos / limitações.**
+  - **O `<h1>` do painel fica fora de `WEB-008`** (decisão do utilizador em 2026-09-24). Saiu de
+    `WEB-012` §5 como achado **não corrigido** e **sem `PC-*`**; **não** é incluído no âmbito de
+    consistência visual desta tarefa, e **não** se abre `PC-*` nem tarefa nesta operação. Fica
+    registado para decisão futura — não silenciado.
+  - **Converter os 57 `<button>` não é o objetivo** e não tem um alvo fixo: quantos são
+    genuinamente `Button` mal usado **exige inspeção caso a caso**, que **não** foi feita.
+  - A extração de 20 cópias toca 8 ficheiros — o risco é um `style` que **não** seja idêntico
+    aos outros e que perca uma propriedade na substituição. Por isso se mede o total de
+    ocorrências (20→0) e se preserva o `minHeight`.
+  - Sem `jsdom`/`@testing-library`, os testes medem **código-fonte**, não aparência. É uma
+    limitação declarada: uma primitiva com regressão visual passaria os testes. O que os testes
+    fixam é a **convenção**, que é o que a tarefa entrega.
+- **Agente responsável:** A3.
 
 #### WEB-009 · `DocumentsPage`: campo «Validade» duplicado no formulário — A3 · P2 · `DONE`
 
@@ -3461,8 +3663,9 @@ revisão adversarial de A1 — não se começa por arrastamento de uma tarefa an
 | —     | `WEB-003` — Documentos na interface       | P0         | **`DONE`** (2026-09-22) — `PROD-001`/`PROD-002` fechadas; falta o envio na web (decisão de produto) |
 
 A3 tem **doze tarefas `DONE`** (`WEB-001`, `WEB-002`, `WEB-003`, `WEB-004`, `WEB-005`, `WEB-006`,
-`WEB-009`, `WEB-010`, `WEB-011`, `WEB-012`, `WEB-013`, `MOB-001`), uma `READY` sem dependências e as
-restantes bloqueadas por `MOB-002`. **`WEB-013` fechou a 2026-09-22** (consolidado
+`WEB-009`, `WEB-010`, `WEB-011`, `WEB-012`, `WEB-013`, `MOB-001`), **duas `READY`** — `WEB-007`
+(pesquisa local, decidida em 2026-09-24) e a `READY` do *gate* Flutter — e as restantes bloqueadas
+por `MOB-002`; `WEB-008` fica `BACKLOG` por depender de `WEB-007`. **`WEB-013` fechou a 2026-09-22** (consolidado
 por A9 a 2026-09-23, ver §5.3): o cliente web descartava o token de renovação e a sessão durava 1
 hora em vez dos 90 dias configurados — corrigido com **17 testes** e **4 mutações** mortas.
 **`MOB-007` mantém-se `READY`** como o **gate do ambiente Flutter** — `MOB-002` não deve ser
