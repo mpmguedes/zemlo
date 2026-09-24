@@ -142,7 +142,14 @@ function AppShellLayout({ unreadCount }: { unreadCount: number }) {
         </NavLink>
       </header>
 
-      <main className="z-main" id="conteudo">
+      {/*
+        `tabIndex={-1}` porque este `main` é o alvo de foco da mudança de rota (`WEB-012`) e o
+        destino do link «Saltar para o conteúdo» — um elemento sem `tabindex` aceita `.focus()`
+        sem erro e **sem efeito**, pelo que o efeito de navegação correria para nada. Sendo
+        `-1`, fica focável por programa e continua **fora** da ordem de tabulação: não aparece
+        nenhum destino novo a quem navega com `Tab`.
+      */}
+      <main className="z-main" id="conteudo" tabIndex={-1}>
         {/*
           O aviso de email por confirmar vive aqui, e não em cada ecrã: é uma condição da
           conta, não de uma página. Dentro do `main` fica acima de tudo o que o ecrã

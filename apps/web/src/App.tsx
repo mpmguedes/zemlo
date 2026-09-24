@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { AppShell } from './app/AppShell';
 import { useSession } from './app/SessionContext';
+import { useRouteAnnouncement } from './app/useRouteAnnouncement';
 import { Logo } from './components/Logo';
 import { EmptyState, LoadingBlock } from './ui/primitives';import { LoginPage } from './pages/auth/LoginPage';
 import { SignUpPage } from './pages/auth/SignUpPage';
@@ -44,6 +45,14 @@ import { SecuritySettingsPage } from './pages/settings/SecuritySettingsPage';
  * tabela seria o primeiro sítio a ficar desatualizado quando a API acrescentasse um ecrã.
  */
 export function App() {
+  /*
+   * Anúncio da mudança de página (`WEB-012`): escreve `document.title` a partir do mapa
+   * central (`app/pageTitles.ts`) e move o foco para o conteúdo principal. Vive aqui, e não no
+   * `AppShell`, porque as rotas públicas — login, recuperação, verificação de email e
+   * onboarding — **não** passam pelo shell e também são navegações.
+   */
+  useRouteAnnouncement();
+
   return (
     <Routes>
       {/* Rotas públicas. */}

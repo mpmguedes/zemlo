@@ -321,7 +321,7 @@ Vista única. O detalhe está em §5. `—` em Dependências significa "nenhuma"
 | WEB-009  | Web          | `DocumentsPage`: campo «Validade» duplicado                            | A3     | P2         | `DONE`     | —                       |
 | WEB-010  | Web          | Cabeçalho do calendário mostra data em vez do mês                      | A3     | P3         | `DONE`     | —                       |
 | WEB-011  | Web          | Contraste abaixo de WCAG AA (medido)                                   | A3     | P2         | `DONE`     | `WEB-008`               |
-| WEB-012  | Web          | Anunciar a mudança de página (título + foco)                           | A3     | P2         | `READY`    | decisão de política |
+| WEB-012  | Web          | Anunciar a mudança de página (título + foco)                           | A3     | P2         | `DONE`     | —                        |
 | WEB-013  | Web          | O cliente web nunca guarda o token de renovação                        | A3     | P1         | `DONE`     | —                       |
 | MOB-001  | Mobile       | Arquitetura Flutter + cliente do contrato partilhado                   | A3     | P1         | `DONE`     | —                       |
 | MOB-002  | Mobile       | Autenticação no mobile                                                 | A3     | P1         | `BLOCKED`  | MOB-001, AUTH-001       |
@@ -1987,7 +1987,7 @@ com `WEB-005` e `WEB-006` por commitar, à espera de autorização.
   (continuam cores fora do `BRAND` em `app.css`, e a asserção do teste só cobre `color:`).
 - **Commit:** `ef0ebf6` — publicada na release (já não aguarda autorização de publicação).
 
-#### WEB-012 · Anunciar a mudança de página (título + foco) — A3 · P2 · `READY`
+#### WEB-012 · Anunciar a mudança de página (título + foco) — A3 · P2 · `DONE`
 
 - **Descrição:** dois defeitos da mesma família — o produto é uma aplicação de página única e
   não diz a ninguém que a página mudou.
@@ -2000,7 +2000,7 @@ com `WEB-005` e `WEB-006` por commitar, à espera de autorização.
     usa leitor de ecrã não ouve nada (WCAG 2.4.3 e 4.1.3).
 - **Objetivo:** cada rota tem título próprio e a mudança é percetível sem ver o ecrã.
 - **Dependências:** —
-- **Bloqueio:** **requer decisão de política do utilizador** antes de implementar, porque há
+- **Bloqueio (levantado a 2026-09-24):** **requeria decisão de política do utilizador** antes de implementar, porque há
   escolhas de produto legítimas e irreversíveis na prática:
   1. **Fonte dos títulos** — um mapa `rota → título` num só sítio (previsível, mas acrescentar
      uma rota e esquecer o mapa deixa um título genérico), ou cada página declara o seu (mais
@@ -2010,11 +2010,75 @@ com `WEB-005` e `WEB-006` por commitar, à espera de autorização.
      título numa região `aria-live` (menos intrusivo, menos correto).
   3. **Formato do título** — `Zemlo — Veículos` ou `Veículos · Zemlo`.
 - **Critérios de aceitação:** dependem da decisão acima; em qualquer caso, o título muda com a
-  rota e a mudança é anunciada.
+  rota e a mudança é anunciada. **Cumpridos** — ver o fecho abaixo.
 - **Testes:** asserção sobre o título produzido pelo mapa/declaração, para as 32 rotas — o
   teste que interessa é o que falha quando uma rota nova não tem título.
 - **Origem:** `WEB-006`. **Não** implementado dentro dela por ser decisão de política e não
   defeito técnico (o utilizador decide política por escolha múltipla, antes da implementação).
+
+- **Fecho (A9, 2026-09-24) — `DONE`.** As **três decisões de política** foram fixadas pelo
+  utilizador e aplicadas literalmente:
+  1. **Fonte dos títulos — mapa central.** `apps/web/src/app/pageTitles.ts` (`PAGE_TITLES`) é a
+     única fonte de verdade para as 32 rotas; **nenhuma página** foi tocada.
+  2. **Foco — movido para o conteúdo principal**, com `tabIndex={-1}` **declarado** no `<main>`
+     (`AppShell.tsx`) e **garantido em execução**, e com **`preventScroll`** para não haver
+     salto visual.
+  3. **Formato — `<Título da página> · Zemlo`** (separador `·`, o mesmo que o projeto já usa).
+  Mais: não duplicar títulos por página; testes para as **32 rotas** que falham quando uma rota
+  nova não tem título; sem dependências novas.
+- **Implementação:** `pageTitles.ts` (novo, 143 L) — mapa + `matchRoutes` do **próprio** React
+  Router para escolher o padrão mais específico (uma segunda implementação da mesma regra seria
+  a origem do desvio: o título diria uma página e o ecrã mostraria outra). O alvo de foco
+  resolve-se pela cadeia `['#conteudo', 'main', '[role="main"]', 'h1']`
+  (`useRouteAnnouncement.ts`, novo, 88 L), ligado no topo do `App` — e não no `AppShell` —
+  porque as rotas públicas não passam pelo shell e também são navegações. `App.tsx` `+9/−0`;
+  `AppShell.tsx` `+8/−1`.
+- **Testes:** `apps/web/test/page-titles.test.tsx` (**novo**, **14 testes**). A cobertura é lida
+  do **routing** (`matchAll` sobre `App.tsx`), não de uma lista escrita à mão: 33 ocorrências /
+  **32 distintas**, e `missingPageTitles()` tem de devolver `[]`. Duas guardas anti-vacuidade.
+- **Prova por mutação:** **9 mortas** — M1 `/stats` fora do mapa (3/14), M2 separador (4/14),
+  M3 alvo passa ao `h1` (1/14), M4 `<main>` sem `tabIndex` (1/14), M5 chamada ao efeito
+  comentada (1/14), M6 filtro volta a excluir o `*` (4/14), M7 `SITE_NAME` (1/14), **M8 rota
+  nova sem título (2/14) — o critério da tarefa**, M9 extração deixa de casar (2/14). **M10
+  (`preventScroll`) sobrevive à suite**, e é o resultado certo: não é observável sem DOM — é a
+  validação no browser que o mata. Ficheiros repostos e conferidos por `sha256`.
+- **Validação no browser (`docs/VALIDACAO-A3-WEB-012.md`):** num **Chromium real**, com a
+  aplicação servida pelo `vite` do próprio projeto e **só a camada HTTP falsificada**, o
+  `document.activeElement` passa a `MAIN#conteudo` numa rota autenticada e ao `h1` (com
+  `tabindex="-1"` posto em execução) numa pública, com o título a mudar
+  (`Veículos · Zemlo` → `Documentos · Zemlo`) e o scroll preservado. **Prova causal do
+  `preventScroll`:** sem ele, na rota pública, o browser rola **−263 px**; com ele, **0**.
+- **`PC-15` — corrigido e re-verificado.** A revisão de A9 apanhou que o «exit 0» da 1.ª ronda
+  fora obtido com um `tsconfig` que **recopiava** as opções e deixava cair
+  `noUncheckedIndexedAccess` — que a app **liga** (`apps/web/tsconfig.json:12`): com a
+  configuração real, o teste dava **exit 2** (`TS2345` na chamada a `missingPageTitles`).
+  Corrigido com **um caractere** (`.map((m) => m[1]!)`, justificado por o grupo de captura não
+  ser opcional e pela asserção de contagem que o guarda) **e** com a correção estrutural do
+  verificador, que passa a fazer **`extends` da configuração real** em vez de recopiar opções.
+  Ver `docs/CORRECAO-A3-WEB-012-PC15.md`.
+- **Verificação (medida por A9 em 2026-09-24):** `PC-15` com a configuração real **exit 0**
+  (**90** ficheiros de `apps/web`); `page-titles` **14/14**; suíte web **13 ficheiros / 260
+  testes / exit 0** (`--no-cache --no-file-parallelism`); `typecheck` da app exit 0; e os
+  **quatro `sha256` de produção** (`pageTitles` `b93cad24…`, `useRouteAnnouncement`
+  `1a257a36…`, `App` `cbf80538…`, `AppShell` `47b68495…`) **inalterados** pela correção — só o
+  ficheiro de teste mudou (`7e872894…` → `93e87211…`).
+- **Limitações declaradas:** (a) **M10 não é observável na suite** — o `preventScroll` só está
+  provado no browser, e **causalmente só na rota pública** (na autenticada o alvo é o `<main>`,
+  sempre parcialmente à vista, pelo que o delta `0` não distingue «funcionou» de «não havia
+  nada a rolar»); (b) a validação no browser usou um **stub da camada HTTP** — a aplicação é
+  real, mas o **fluxo de autenticação real não foi exercido** (token posto em `sessionStorage`);
+  (c) **um só motor** (Chromium) — `:focus-visible` e `preventScroll` variam por motor; (d) **sem
+  leitor de ecrã real** — o anúncio (4.1.3) é inferido do título e do foco, não ouvido; (e) a
+  rota `/stats` **ficou por validar** no harness, porque o stub genérico a faz crashar; (f) os
+  títulos de rota dinâmica são **genéricos** (`/records/:kind` → «Registos»), consequência
+  aceite da decisão 1; (g) mudanças de *query string* não mudam o título; (h) as páginas
+  públicas **não têm `<main>`** — o foco cai no `h1`, com `tabindex` posto em execução.
+- **Achados que saíram daqui, não corrigidos:** o painel não tem `<h1>` no estado normal
+  (`DashboardPage`: só `Section` = `h2`; o `h1` existe apenas no estado vazio — 1.3.1/2.4.6);
+  duas importações na mesma linha em **`App.tsx:7`**; o `*` declarado duas vezes; e as páginas
+  de autenticação repetem a estrutura do cartão (um `AuthLayout` partilhado daria `<main>` às
+  rotas públicas).
+- **Commit:** **nenhum** — no working tree; aguarda autorização de publicação.
 
 #### WEB-013 · O cliente web nunca guarda o token de renovação — A3 · P1 · `DONE`
 
@@ -3389,16 +3453,16 @@ revisão adversarial de A1 — não se começa por arrastamento de uma tarefa an
 | —     | `MOB-001` — Arquitetura Flutter           | P1         | **`DONE`** (2026-09-22) — `apps/mobile` criado, contrato gerado, 3 mutações |
 | —     | `WEB-011` — Contraste WCAG (medido)       | P2         | **`DONE`** (2026-09-22) — 0 falhas nos 2 temas, 58 testes, 15 mutações |
 | —     | `WEB-004` — Ecrãs de registos por tipo    | P1         | **`DONE`** (2026-09-23) — 4 ecrãs (inspeções, impostos, seguros, odómetro), 22 testes, 12 mutações |
-| 3     | `WEB-012` — Anunciar mudança de página    | P2         | `READY` — **bloqueada por decisão de política** (3 escolhas em aberto) |
+| —     | `WEB-012` — Anunciar mudança de página    | P2         | **`DONE`** (2026-09-24) — 32 rotas com título, 14 testes, 9 mutações mortas |
 | —     | `WEB-009` — «Validade» duplicado          | P2         | **`DONE`** (2026-09-23) — 1 campo duplicado removido, 3 testes, 2 mutações |
 | —     | `WEB-013` — Ciclo de sessão da web         | P1        | **`DONE`** (2026-09-22, consolidado por A9 em 2026-09-23) — `setTokens` com uma só fonte, rotação preservada, renovação única, 17 testes, 4 mutações |
 | —     | `WEB-010` — Mês no cabeçalho do calendário | P3        | **`DONE`** (2026-09-23) — 2 linhas, 19 testes, 6 mutações |
 | —     | `WEB-001` — Ecrã "Esqueci-me da password" | P0         | **`DONE`** (2026-09-22) — desbloqueada por `AUTH-001`; sem teste automático do ecrã |
 | —     | `WEB-003` — Documentos na interface       | P0         | **`DONE`** (2026-09-22) — `PROD-001`/`PROD-002` fechadas; falta o envio na web (decisão de produto) |
 
-A3 tem **onze tarefas `DONE`** (`WEB-001`, `WEB-002`, `WEB-003`, `WEB-004`, `WEB-005`, `WEB-006`,
-`WEB-009`, `WEB-010`, `WEB-011`, `WEB-013`, `MOB-001`), duas `READY` sem dependências (uma delas à espera de decisão de
-política) e as restantes bloqueadas por `MOB-002`. **`WEB-013` fechou a 2026-09-22** (consolidado
+A3 tem **doze tarefas `DONE`** (`WEB-001`, `WEB-002`, `WEB-003`, `WEB-004`, `WEB-005`, `WEB-006`,
+`WEB-009`, `WEB-010`, `WEB-011`, `WEB-012`, `WEB-013`, `MOB-001`), uma `READY` sem dependências e as
+restantes bloqueadas por `MOB-002`. **`WEB-013` fechou a 2026-09-22** (consolidado
 por A9 a 2026-09-23, ver §5.3): o cliente web descartava o token de renovação e a sessão durava 1
 hora em vez dos 90 dias configurados — corrigido com **17 testes** e **4 mutações** mortas.
 **`MOB-007` mantém-se `READY`** como o **gate do ambiente Flutter** — `MOB-002` não deve ser
