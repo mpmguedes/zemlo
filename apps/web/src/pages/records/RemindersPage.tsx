@@ -15,7 +15,9 @@ import { errorMessage, errorRequestId } from '../../api/errors';
 import { ApiError } from '../../api/client';
 import { Button, Card, Chip, DetailList, DetailRow, InlineError, LoadingBlock, PageHeader } from '../../ui/primitives';
 import { CheckboxField, DateField, NumberField, SelectField, TextAreaField, TextField, useFormState } from '../../ui/form';
+import { LocalSearch } from '../../ui/LocalSearch';
 import { useToast } from '../../ui/Toaster';
+import { filterByQuery, searchScopeNote } from '../../lib/localSearch';
 import { dateLong, km, relativeDate, today } from '../../lib/format';
 import { integerOrUndefined, textOrUndefined } from '../../lib/formPayload';
 
@@ -41,6 +43,7 @@ export function RemindersPage() {
   const { vehicleId, vehicles } = useSelectedVehicle();
   const [state, setState] = useState<string>('');
   const [includeCompleted, setIncludeCompleted] = useState(false);
+  const [query, setQuery] = useState('');
 
   const selectedVehicleId = vehicleId === 'all' ? vehicles[0]?.id : vehicleId;
   const reminders = useReminders({
@@ -74,7 +77,23 @@ export function RemindersPage() {
   });
 
   const latestOdometer = odometer.data?.items[0]?.odometerKm ?? null;
-  const items = reminders.data?.items ?? [];
+
+  /*
+   * Pesquisa local (`WEB-007`) sobre os lembretes já carregados. O `state` e o
+   * `includeCompleted` são filtros **de servidor** (vivem na chave da consulta, ver acima) —
+   * a pesquisa é o único filtro local deste ecrã, e por isso conta sobre o que o servidor já
+   * devolveu.
+   *
+   * `loadedItems` é o universo real: o que a consulta atualmente carregou, já filtrado por
+   * estado no servidor. A nota de âmbito diz «todos», porque este ecrã carrega a resposta
+   * inteira (não pagina por cursor).
+   */
+  const loadedItems = reminders.data?.items ?? [];
+  const items = filterByQuery(loadedItems, query, (reminder) => [
+    reminder.title,
+    optionLabel(REMINDER_TRIGGERS, reminder.trigger),
+    reminder.notes,
+  ]);
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -138,7 +157,13 @@ export function RemindersPage() {
       />
 
       {reminders.data ? (
-        <div className="z-filters">
+        /*
+         * `role="group"` + `aria-label` (uniformização de `WEB-007`): sem nome, um leitor de
+         * ecrã anuncia sete botões de filtro soltos. A guarda de `WEB-006` em
+         * `accessibility.test.tsx` passa a apanhar este grupo — antes não o via porque não
+         * tinha `role="group"`.
+         */
+        <div className="z-filters" role="group" aria-label="Filtrar lembretes por estado">
           <Chip tone={state === '' ? 'accent' : 'neutral'}>
             <button type="button" onClick={() => setState('')} style={{ background: 'transparent', border: 0, color: 'inherit', padding: 0, font: 'inherit', cursor: 'pointer', minHeight: 'var(--z-touch)' }}>
               Todos ({formatNumber(reminders.data.total, 0)})
@@ -166,6 +191,24 @@ export function RemindersPage() {
             </button>
           </Chip>
         </div>
+      ) : null}
+
+      {/*
+        A pesquisa é local e vive **fora** do `z-filters`: o filtro de estado é do servidor
+        (muda a consulta), a pesquisa é do cliente (filtra o que já veio). Aparece sempre que
+        há lembretes carregados, para continuar visível mesmo quando a pesquisa esvazia a lista
+        — é o único caminho de volta.
+      */}
+      {reminders.data && loadedItems.length > 0 ? (
+        <LocalSearch
+          value={query}
+          onChange={setQuery}
+          label="Pesquisar lembretes"
+          placeholder="Título, gatilho, notas…"
+          scopeNote={searchScopeNote(loadedItems.length, reminders.data.total)}
+          matched={items.length}
+          loaded={loadedItems.length}
+        />
       ) : null}
 
       {showForm ? (
@@ -249,14 +292,20 @@ export function RemindersPage() {
           <div className="z-empty">
             <span className="z-empty__icon" aria-hidden="true">🔔</span>
             <p className="z-empty__title">
-              {state || includeCompleted ? 'Nada neste filtro' : 'Sem lembretes ativos'}
+              {query.trim() !== ''
+                ? 'Nada corresponde à pesquisa'
+                : state || includeCompleted
+                  ? 'Nada neste filtro'
+                  : 'Sem lembretes ativos'}
             </p>
             <p className="z-empty__body">
-              {state || includeCompleted
-                ? 'Nenhum lembrete corresponde ao filtro escolhido. Limpa o filtro para ver todos.'
-                : 'Os lembretes são o que faz o Zemlo avisar-te em vez de esperar que te lembres. Uma revisão a cada 10 000 km ou um ano é o exemplo mais comum.'}
+              {query.trim() !== ''
+                ? `A pesquisa por «${query.trim()}» não encontrou lembretes nesta lista. A pesquisa atua apenas sobre os ${loadedItems.length} lembretes já carregados.`
+                : state || includeCompleted
+                  ? 'Nenhum lembrete corresponde ao filtro escolhido. Limpa o filtro para ver todos.'
+                  : 'Os lembretes são o que faz o Zemlo avisar-te em vez de esperar que te lembres. Uma revisão a cada 10 000 km ou um ano é o exemplo mais comum.'}
             </p>
-            {!state && !includeCompleted ? (
+            {!state && !includeCompleted && query.trim() === '' ? (
               <Button variant="primary" onClick={() => setShowForm(true)}>
                 Criar o primeiro lembrete
               </Button>

@@ -66,8 +66,8 @@ título, desde que o estado seja honesto quanto ao que falta:
   primeiro passo ao pegá-la é **escrever o corpo**, e não implementar.
 
 **A ausência de corpo nunca é uma implementação implícita.** Uma tarefa sem descrição não está
-meio-feita: está por especificar. `PC-37` regista a medição (14 de 65 tarefas da §5 sem corpo) e a
-razão por que 12 delas são legítimas como estão e 2 (`OPS-002`, `OPS-003`) passaram a `BLOCKED`.
+meio-feita: está por especificar. `PC-37` regista a medição (**9 de 67** tarefas da §5 sem corpo, recontagem 2026-09-24) e a
+razão por que **todas** as 9 são legítimas como estão (todas em `BACKLOG`/`BLOCKED`/`DEFERRED`).
 
 ### 1.3 Durante o desenvolvimento
 
@@ -160,7 +160,7 @@ IDs estáveis por área: `AUD-` `AUTH-` `WEB-` `MOB-` `PROD-` `INT-` `OPS-` `DOC
 | PC-34 | **`test/oauth-google.test.ts` falha por `Hook timed out in 60000ms` numa maquina carregada, com os 28 testes `skipped` e zero assercoes falhadas.** Medido por A1 em 2026-09-22: a suite completa pelo classificador deu `exit 1` com `1 ficheiro(s) falharam por algo que nao e ambiente: test/oauth-google.test.ts`; corrido isolado, o ficheiro devolveu `Hook timed out in 60000ms` e `28 skipped (28)` — o hook de preparacao da base excede os 60 s porque neste ambiente cada arranque de processo custa ~23 s (`PC-32`). **Nao e o `EBUSY` de `PC-26`** e **nao** foi tratado como ambiente: o classificador recusou-se a chama-lo verde, que e o comportamento correto. Num runner de CI rapido nao ocorre, mas o limite de 60 s de um hook que cria uma base e uma fragilidade real do harness sob carga. **Deteccao: A1, 2026-09-22.** | `apps/api/test/oauth-google.test.ts` | Baixa | Aberto — informativo. **Não se reproduziu na corrida completa de 2026-09-22 16:10** (medida por A1 em `AUD-010`): `oauth-google.test.ts` → 28 passados, `numPendingTests: 0`, `numFailedTests: 0`. **Não** é fechado — «não se reproduziu uma vez» não é «está resolvido» |
 | PC-35 | **Oito de doze mensagens de validação chegam ao cliente em inglês.** `translateMessage` (`apps/api/src/http/handlers.ts:114-125`) é um mapa de **igualdade exata de cadeia** com seis entradas; as mensagens de comprimento e de intervalo do Zod são **parametrizadas**, pelo que só coincidem por acaso (`at least 1 character(s)` está no mapa — é o que faz `title: ''` sair em português; `at least 2` não). Medido por A1 em 2026-09-22, em `TEST-002`: **8 de 12** casos devolvem inglês — `String must contain at least 2 character(s)`, `Number must be greater than or equal to 1886`, `Number must be less than or equal to 3000000`, entre outros. A §59 exige mensagens em português prontas a apresentar, e «String must contain at least 2 character(s)» não é uma instrução. **Deteção: A1, 2026-09-22, durante `TEST-002`.** | `apps/api/src/http/handlers.ts:114-125`, `packages/shared/src/contracts.ts` | Média | Aberto — precisa de tarefa própria e de **decisão** (dicionário por código de issue do Zod vs. mensagens próprias em cada campo dos esquemas; toca `handlers.ts` e possivelmente o contrato — §6) |
 | PC-36 | **Dois dos três envelopes de lista divergem de `Page<T>` — e nenhum está no contrato.** `Page<T>` (`packages/shared/src/types.ts:55`) declara `nextCursor` **obrigatório** e o docblock de `contracts.ts` diz que as listas são «paginadas por cursor». Medido por A1 em 2026-09-22: `GET /records/expenses` → `{items, nextCursor, total}` (cumpre); `GET /vehicles` → `{items, total}` (`routes/vehicles.ts:88`); `GET /reminders` → `{counts, items, total}` (`routes/reminders.ts:85`). O que **não** é defensável é **onde** estão declarados: **não estão em `packages/shared`** — estão escritos à mão **no cliente web** (`apps/web/src/api/queryKeys.ts:162,167,172`, com um comentário que explica a decisão) — e o contrato gerado para o mobile só tem `Page<T>`, com `nextCursor` `required` (`apps/mobile/lib/contract/generated/contract_models.dart:148,151`). Consequência: a afirmação da §6 de que o contrato é «a única definição» **não vale para os envelopes de lista**; a API e a web têm duas cópias que nada verifica, e o mobile tem uma terceira que discorda. **Deteção: A1, 2026-09-22, durante `TEST-002`.** | `apps/api/src/http/routes/vehicles.ts:88`, `apps/api/src/http/routes/reminders.ts:85`, `apps/web/src/api/queryKeys.ts:162-184`, `packages/shared/src/types.ts:55` | Média | Aberto — é alteração ao **contrato partilhado** (§6): exige tarefa e decisão **antes** de implementar, com impacto API/Web/Mobile declarado. Três desfechos possíveis, nenhum de teste: (a) declarar os envelopes reais em `types.ts`; (b) fazer a API cumprir `Page<T>`; (c) aceitar a divergência e documentá-la |
-| PC-37 | **14 de 65 tarefas da §5 não têm corpo.** Medido por A1 em 2026-09-22 (`awk` sobre `## 5.`→`## 6.`), na sequência do diagnóstico de `OPS-002`: A1 — `OPS-002`, `OPS-003` (P2/P3, `BACKLOG`); A2 — `AUTH-004`, `AUTH-005`, `AUTH-006` (P2, `BACKLOG`); A3 — `WEB-007`, `WEB-008`, `MOB-003`, `MOB-004`, `MOB-005` (P2/P3, `BACKLOG`/`BLOCKED`); A4 — `PROD-005`, `INT-002`, `INT-003`, `INT-004` (P4, `DEFERRED`). A §1.2 exige descrição/objetivo/dependências/critérios/testes mas **não distinguia** por estado — o que deixava 21,5% da §5 num limbo: não era claro se são tarefas ou marcadores. **Política adotada (A9, 2026-09-22):** esses campos são obrigatórios **antes de a tarefa ser pegada** (`READY`/`IN_PROGRESS`), não desde a criação — ver a nota acrescentada à §1.2. Consequência: **12 das 14** (todas em `BACKLOG`/`BLOCKED`/`DEFERRED`) são legítimas como estão e **não foram alteradas**; as **2** de prioridade ativa (`OPS-002`, `OPS-003`) passaram a `BLOCKED` com o que lhes falta escrito. **Nenhum corpo foi inventado.** **Deteção: A1, 2026-09-22, durante `OPS-002`.** | `docs/ROADMAP.md` §5, §1.2 | Média | **Política decidida** (A9, 2026-09-22) — §1.2 clarificada; as 12 tarefas ficam como estão; ver `OPS-002`/`OPS-003` |
+| PC-37 | **9 de 67 tarefas da §5 sem corpo** (recontagem A9, 2026-09-24; A1 medira **14 de 65** em 2026-09-22; a recontagem, com `awk` sobre `## 5.`→`## 6.`), na sequência do diagnóstico de `OPS-002`: A1 — `OPS-002`, `OPS-003` (P2/P3, `BACKLOG`); A2 — `AUTH-004`, `AUTH-005`, `AUTH-006` (P2, `BACKLOG`); A3 — `WEB-007`, `WEB-008`, `MOB-003`, `MOB-004`, `MOB-005` (P2/P3, `BACKLOG`/`BLOCKED`); A4 — `PROD-005`, `INT-002`, `INT-003`, `INT-004` (P4, `DEFERRED`). A §1.2 exige descrição/objetivo/dependências/critérios/testes mas **não distinguia** por estado — o que deixava 21,5% da §5 num limbo: não era claro se são tarefas ou marcadores. **Política adotada (A9, 2026-09-22):** esses campos são obrigatórios **antes de a tarefa ser pegada** (`READY`/`IN_PROGRESS`), não desde a criação — ver a nota acrescentada à §1.2. **Nenhum corpo foi inventado.** **Recontagem (A9, 2026-09-24, nesta reconciliação):** a §5 tem agora **67** tarefas (não 65 — a `WEB-012`/`WEB-013` e o crescimento posterior) e **9 sem corpo** — `AUTH-007`, `MOB-003`, `MOB-004`, `MOB-005`, `MOB-006`, `PROD-005`, `INT-002`, `INT-003`, `INT-004`. A descida de 14→9 deve-se a corpos **escritos** (não a renumerar): `AUTH-004`, `AUTH-005`, `AUTH-006` ganharam corpo nesta operação, e `OPS-002`/`OPS-003`/`WEB-007`/`WEB-008` já o tinham. **Todas as 9 restantes estão em `BACKLOG`/`BLOCKED`/`DEFERRED`** — nenhuma é `READY`/`IN_PROGRESS` — pelo que a política de 2026-09-22 se mantém: **legítimas como estão, não alteradas.** Medido por leitura byte-exata das linhas (CRLF), não por `grep -c`. **Deteção: A1, 2026-09-22, durante `OPS-002`; recontagem: A9, 2026-09-24.** | `docs/ROADMAP.md` §5, §1.2 | Média | **Política decidida** (A9, 2026-09-22) — §1.2 clarificada; as 9 tarefas ficam como estão; ver `OPS-002`/`OPS-003` |
 | PC-38 | **Este ambiente não tem motor de contentores.** Medido por A1 em 2026-09-22, durante `OPS-002`: `docker --version` → `command not found` (exit **127**); `docker info` idem; `/c/Program Files/Docker`, `/c/ProgramData/DockerDesktop` e `…/AppData/Local/Docker` **não existem**; `podman`/`nerdctl` ausentes do `PATH`; `wsl --list --quiet` **bloqueado por política de segurança**. **Formulação factual:** o ambiente atual não dispõe de motor de contentores; **qualquer tarefa cuja validação dependa de construir ou correr um contentor não pode ser provada localmente aqui**. É uma **limitação de validação/dependência**, não uma impossibilidade permanente do projeto — o projeto pode vir a usar contentores; o que não pode é **afirmar que os validou** neste ambiente. É a mesma limitação que o `OPS-006` já tinha encontrado por outra via (falta de PostgreSQL), agora medida explicitamente para contentores. **Deteção: A1, 2026-09-22, durante `OPS-002`.** | harness local | Média | Aberto — informativo. Bloqueia a **prova** de `OPS-002`; ver `OPS-002` e `OPS-006` |
 | PC-39 | **A edição de um registo de manutenção grava `null` sobre a condição do lembrete ligado.** `apps/api/src/services/records-compliance.ts:286-298`, em `updateMaintenance`: `reminderData.dueDate = updated.nextDueDate` e `reminderData.dueOdometerKm = updated.nextDueOdometerKm` são **incondicionais** — escrevem `null` sobre o alvo do lembrete sempre que o registo de manutenção não tenha esse alvo. Um `PATCH /maintenance/:id` que deixe o registo sem `nextDueDate` (ou um registo que só tenha data e cujo lembrete só tenha quilometragem) deixa o lembrete ligado no **mesmo estado** que o `PC-31`, por um caminho que **não** passa por `updateReminder` e que, por isso, a correção de `AUD-015` não cobre. **Estado: por leitura, não medido** — a confirmação (um teste de rota que morda) pertence à tarefa própria. **Deteção: A1, 2026-09-22, durante `AUD-015`** (corroborado por A1 em `TEST-002`). | `apps/api/src/services/records-compliance.ts:286-298` | Média | Aberto — precisa de tarefa própria (não medida; a medição é o primeiro passo) |
 | PC-40 | **O formulário de lembretes da web produz pedidos que a API passou a recusar.** `apps/web/src/pages/records/RemindersPage.tsx`: o `trigger` por omissão é `'both'` (`:67`), a data vem pré-preenchida com `today()` (`:68`) e o `intervalKm` é enviado **sempre que preenchido**, sem exigir uma quilometragem alvo (`:94-95`); o campo «Quilometragem limite» mostra `Sem leitura registada.` sem impedir o envio (`:207-215`). Medido contra o código atual (por A1, 2026-09-22): o pedido que o formulário produz por omissão devolve **422** — «Um lembrete por quilometragem precisa de uma quilometragem alvo…». Parte do caso é **anterior** ao `AUD-015` (a guarda antiga tinha a mesma condição); o que é novo é o caminho estreito em que o utilizador preenche `intervalKm` num veículo **sem** quilometragem registada — antes devolvia 201 com um lembrete morto, agora devolve 422. O cliente devia **prevenir** em vez de deixar falhar. **Deteção: A1, 2026-09-22, durante `AUD-015`** (por leitura do formulário + medição do lado do servidor; **o formulário não foi corrido num browser**). | `apps/web/src/pages/records/RemindersPage.tsx:67-97,207-215` | Baixa | Aberto — frente da web (A3); precisa de tarefa própria |
@@ -269,13 +269,14 @@ verificado. Contagens de handlers são do número de `Router.<verbo>(` por fiche
 | timeline               | **Parcial**      | `http/routes/insights.ts:234` (`GET /timeline`); `domain/timeline.ts`; `services/timeline.ts`                                    | `AUD-002` **DONE**; coberto por `test/timeline.test.ts` (30) |
 | import/export          | Implementado     | `http/routes/import.ts` — 4; `exportRouter` em `integrations.ts:548,619`; `services/export-bundle.ts`; `domain/import/*`         | Cobertura já é a mais densa (20 de 34 ficheiros de teste)               |
 | costs/TCO              | Implementado     | `domain/analysis.ts:402-469` (`totalCostOfOwnershipCents`); exposto em `services/analytics.ts:423`                              | —                                                                       |
-| integrations           | **Parcial**      | `http/routes/integrations.ts:85-245` — CRUD + `GET /integrations/home-assistant/spec`; especificação calculada em tempo real     | **Publicação MQTT ausente** → `INT-001`                                 |
+| integrations           | Implementado     | `http/routes/integrations.ts:85-245` — CRUD + `GET /integrations/home-assistant/spec`; especificação calculada em tempo real; **publicação MQTT implementada** (`services/mqtt-*.ts`, `jobs/mqtt-sync.ts`, `composeMqtt` em `server.ts:105`) | `INT-001` **`DONE`** (2026-09-23) |
 
-**Leitura honesta (atualizada após `PROD-001`):** **13 dos 15 domínios** estão implementados e
-funcionais — o upload de documentos fechou a terceira lacuna. As lacunas reais que restam são a
-**publicação MQTT** (`INT-001`), a **higiene de armazenamento** (`PROD-007` + substituição,
-`PROD-008`). O que falta nos restantes não é código de produto — é **cobertura de testes de rota**
-(`TEST-001`) e o **agendador** (`PROD-004`).
+**Leitura honesta (atualizada após `PROD-001` e `INT-001`):** **14 dos 15 domínios** estão implementados e
+funcionais — o upload de documentos (`PROD-001`) e a publicação MQTT (`INT-001`) fecharam duas lacunas.
+**A única lacuna real que resta é a `timeline`** (`AUD-006` — omissão de itens medida em
+`services/timeline.ts:316`). O que falta nos restantes não é código de produto — é **cobertura de
+testes de rota** (`TEST-001`, já `DONE`) e o **agendador** (`PROD-004`, já `DONE`). **Contagem:
+14 de 15** — alinhada com o §5 desta tarefa (`PROD-003`).
 
 ---
 
@@ -304,9 +305,9 @@ Vista única. O detalhe está em §5. `—` em Dependências significa "nenhuma"
 | AUTH-001 | Identidade   | Transporte de email real + `setEmailSender`                            | A2     | P0         | `DONE`     | —                       |
 | AUTH-002 | Identidade   | Login Google (OAuth)                                                   | A2     | P1         | `DONE`     | AUTH-001                |
 | AUTH-003 | Identidade   | Associação de conta Google a conta existente                           | A2     | P1         | `BACKLOG`  | `AUTH-002` (satisfeita) |
-| AUTH-004 | Identidade   | Gestão de sessões na conta                                             | A2     | P2         | `BACKLOG`  | —                       |
-| AUTH-005 | Identidade   | Revisão do 2FA e dos códigos de recuperação                            | A2     | P2         | `BACKLOG`  | —                       |
-| AUTH-006 | Identidade   | Perfil e preferências de conta                                         | A2     | P2         | `BACKLOG`  | —                       |
+| AUTH-004 | Identidade   | Gestão de sessões na conta                                             | A2     | P2         | `READY`    | —                       |
+| AUTH-005 | Identidade   | Revisão do 2FA e dos códigos de recuperação                            | A2     | P2         | `BLOCKED`  | —                       |
+| AUTH-006 | Identidade   | Perfil e preferências de conta                                         | A2     | P2         | `READY`    | —                       |
 | AUTH-007 | Identidade   | Alteração de email com reverificação                                   | A2     | P3         | `BACKLOG`  | AUTH-001                |
 | AUTH-008 | Identidade   | Cobrir a recusa de arranque em produção sem entrega (PC-14)            | A2     | P2         | `DONE`     | —                       |
 | AUTH-009 | Identidade   | Documentação da entrega de email (PC-19)                               | A2     | P3         | `DONE`     | —                       |
@@ -316,8 +317,8 @@ Vista única. O detalhe está em §5. `—` em Dependências significa "nenhuma"
 | WEB-004  | Web          | Corrigir `/records/:kind` na interface                                 | A3     | P1         | `DONE`  | — |
 | WEB-005  | Web          | Auditoria de estados (vazio/loading/erro)                              | A3     | P2         | `DONE`     | —                       |
 | WEB-006  | Web          | Acessibilidade                                                         | A3     | P2         | `DONE`        | —                    |
-| WEB-007  | Web          | Pesquisa e filtros                                                     | A3     | P2         | `READY`    | —                       |
-| WEB-008  | Web          | Consistência visual e design system                                    | A3     | P3         | `BACKLOG`  | —                       |
+| WEB-007  | Web          | Pesquisa e filtros                                                     | A3     | P2         | `DONE`     | —                       |
+| WEB-008  | Web          | Consistência visual e design system                                    | A3     | P3         | `READY`    | `WEB-007` (DONE)        |
 | WEB-009  | Web          | `DocumentsPage`: campo «Validade» duplicado                            | A3     | P2         | `DONE`     | —                       |
 | WEB-010  | Web          | Cabeçalho do calendário mostra data em vez do mês                      | A3     | P3         | `DONE`     | —                       |
 | WEB-011  | Web          | Contraste abaixo de WCAG AA (medido)                                   | A3     | P2         | `DONE`     | `WEB-008`               |
@@ -474,6 +475,10 @@ de validação.
   briefing. Para desbloquear é preciso o relatório original (ou autorização para reinvestigar
   a exportação de odómetros de raiz, o que seria tarefa nova, não esta).
 
+- **Nota de reconciliação (A9, 2026-09-24).** Sem matéria nova desde a última medição; **continua
+  `BACKLOG`** e **não** fecha. O único progresso registável é negativo (o relatório 🔴-3 continua
+  não recuperável do repositório). **Nenhum estado foi promovido por existir código.**
+
 #### AUD-004 · Teste do `ConsoleEmailSender` é falso verde (🔴-4) — A1 · P0 · `DONE`
 
 > **Desbloqueada em 2026-09-22.** O bloqueio era o `PC-16`: o `email.ts` estava a ser mutado por
@@ -624,6 +629,18 @@ de validação.
   `AUD-003` (docs, diários, `grep` por *"timeline omission"* e *"auditoria funcional"*) não
   encontrou o relatório. **Conclusão: o diagnóstico de 🔴-6 não é recuperável a partir do
   repositório**; a tarefa fica `BACKLOG` e o defeito **não** é reconstruído por inferência.
+- **Mecanismo medido (A9, 2026-09-24 — reconciliação A1).** O diagnóstico «não recuperável do
+  repositório» **continua verdadeiro** quanto ao relatório, mas o **mecanismo** de omissão foi agora
+  medido no código, independentemente do relatório: `apps/api/src/services/timeline.ts:316` —
+  `const fromRecords = events.length === 0 ? await buildRecordTimeline(...) : []`. Ou seja, os
+  registos (`buildRecordTimeline`) só entram na timeline quando o veículo **não tem evento nenhum**;
+  um veículo que tenha **pelo menos um** evento fica com a sua porção derivada de **registos**
+  silenciosamente omitida. É uma omissão **de itens**, e casa com o título 🔴-6 («timeline
+  omission»). **Continua `BACKLOG`** — o mecanismo medido **não** substitui a decisão de produto
+  sobre o que a timeline deve mostrar; dá-lhe, isso sim, um alvo concreto e verificável.
+- **Ação recomendada para quem pegar nisto:** decidir primeiro a **política** (registos e eventos
+  fundem-se sempre, ou só quando não há evento?) — é pergunta de produto, não de código — e só
+  depois fixá-la por teste que morda com um veículo que tenha evento **e** registo.
 - **Evidência indireta (não conclusiva, registada para não se perder):** durante `AUD-002`
   varreu-se `recordHref` e `buildTimelineFromRecords` sem encontrar omissão de itens — os
   tipos que geram evento com `recordId` ou resolvem ou devolvem `null` deliberadamente. Isso
@@ -898,6 +915,13 @@ de validação.
 - **Testes:** unitário sobre `dataGaps` (o `href` de cada dica) e verificação da tabela de
   aliases da web.
 - **Estado:** `BACKLOG` — depende da decisão de produto acima, tal como `AUD-011`.
+
+- **Confirmação medida (A9, 2026-09-24 — reconciliação A1).** O defeito **subsiste** e a contagem
+  fecha: em `apps/web/src/pages/VehicleDetailPage.tsx` o mapa `TAB_ALIASES` vive em `:108-135` e
+  cobre **3 de 7** aliases (`?sheet=`); os **4** em falta — medidos por leitura do produtor dos
+  links, não por inferência — abrem o separador errado. **Continua `BACKLOG`** (decisão de produto
+  sobre a forma do link, não um mero erro de digitação): o estado do ROADMAP já refletia a dica
+  correta, e este registo fixa-o contra o código para não se perder.
 
 #### AUD-014 · Um lembrete sem condição é aceite e nunca dispara — A1 · P1 · `DONE`
 
@@ -1304,11 +1328,86 @@ tarefa, §6.1). `PC-25` fica **fechado** por esta tarefa (§7.1).
 - **Risco de segurança:** esta é a tarefa com maior potencial de tomada de conta. Exige  
   revisão de A1 (`TEST-` / revisão adversarial) antes de fechar.
 
-#### AUTH-004 · Gestão de sessões na conta — A2 · P2 · `BACKLOG`
+#### AUTH-004 · Gestão de sessões na conta — A2 · P2 · `READY`
 
-#### AUTH-005 · Revisão do 2FA e dos códigos de recuperação — A2 · P2 · `BACKLOG`
+- **Descrição (detalhe prévio escrito por A9 em 2026-09-24 — reconciliação A2, ver `PC-37`).** A
+  gestão de sessões **já existe, de ponta a ponta, na API** e **não tem um único teste** — medido,
+  não inferido: `apps/api/src/http/routes/auth.ts` serve `POST /auth/logout-all` (`:369`),
+  `GET /me/sessions` (`:419`) e `DELETE /me/sessions/:sessionId` (`:431`); um `grep` de
+  `me/sessions`/`logout-all` sobre **todo** o `apps/api/test/` devolve **zero** ocorrências
+  (A9, 2026-09-24). O mesmo vale para preferências (`GET`/`PATCH /me/preferences`, `:401`/`:409`) e
+  o 2FA (`/me/2fa/setup` `:469`, `/confirm` `:478`, `/disable` `:488`). **Código sem prova não é
+  tarefa fechada:** esta tarefa passa a `READY` como tarefa de **verificação + cobertura**, não
+  como «já está feito».
+- **Objetivo:** fixar, por testes que **mordam**, o comportamento de gestão de sessões (listar,
+  terminar uma, terminar todas) — incluindo que terminar todas **invalida** os tokens de renovação
+  das outras sessões, e que um utilizador **não** consegue terminar a sessão de outro.
+- **Âmbito:** testes em `apps/api/test/` e, se a medição revelar um defeito, a correção mínima em
+  `routes/auth.ts`. **Não** se toca em `packages/shared` (a rota já existe) nem no cliente Dart.
+- **Critérios de aceitação (verificáveis).** Cada rota acima tem teste próprio; o isolamento entre
+  contas (403/404 na sessão alheia) é afirmado por um caso negativo; e a suíte da API fecha com os
+  mesmos ficheiros que antes **mais** os novos, sem regressão.
+- **Prova de não-vacuidade:** cada teste novo tem de **morder** — mutação (ex.: `logout-all` deixa de
+  revogar os *refresh tokens*) tem de produzir **vermelho**, provado por recomeço de cópia imutável
+  e reposição por `sha256`.
+- **Ficheiros previsivelmente envolvidos:** `apps/api/test/` (novo ficheiro);
+  `apps/api/src/http/routes/auth.ts` só se um defeito medido o exigir.
+- **Dependências:** `AUTH-001`/`AUTH-002` **`DONE`** (o formato de sessão/token é o que estes testes
+  vão fixar). Sem dependência externa.
+- **Estado:** `READY` — verificável sem decisão de produto. **Não** é `DONE`: existe código, **não**
+  existe prova.
+- **Agente responsável:** A2.
 
-#### AUTH-006 · Perfil e preferências de conta — A2 · P2 · `BACKLOG`
+#### AUTH-005 · Revisão do 2FA e dos códigos de recuperação — A2 · P2 · `BLOCKED`
+
+- **Descrição (detalhe prévio escrito por A9 em 2026-09-24 — reconciliação A2, ver `PC-37`).** O 2FA
+  existe na API (`/me/2fa/setup` `:469`, `/confirm` `:478`, `/disable` `:488` em
+  `routes/auth.ts`) mas há **duas perguntas de produto em aberto** e **zero testes**. Uma é de
+  segurança (o que acontece aos **códigos de recuperação** quando o segundo fator é dispensado ou
+  reconfigurado). Enquanto não houver decisão, esta tarefa **não** pode ser implementada sem
+  inventar política — fica `BLOCKED` **por decisão**, não por dependência técnica.
+- **Objetivo:** rever o 2FA e a gestão de códigos de recuperação, com política **decidida**, e
+  cobri-la por testes.
+- **Bloqueio (explícito):** pendente de **decisão de produto** — (i) o destino dos códigos de
+  recuperação ao **desativar** o segundo fator (invalidar vs. manter vs. exigir confirmação) e
+  (ii) o que a **reconfiguração** (novo *setup* sobre um 2FA já ativo) faz aos códigos antigos.
+  Ambas exigem resposta do utilizador antes de qualquer implementação.
+- **Critérios de aceitação (a completar após a decisão).** Comportamento dos códigos de recuperação
+  fixado por teste; rota de *setup* idempotente/segundo-fator-existente coberta; um caso negativo
+  (código inválido não passa).
+- **Ficheiros previsivelmente envolvidos:** `apps/api/src/http/routes/auth.ts`;
+  `apps/api/test/` (novo ficheiro); eventualmente o serviço de 2FA.
+- **Dependências:** nenhuma técnica; **bloqueada por decisão de política de produto**.
+- **Estado:** `BLOCKED` — a razão do bloqueio é **decisão em aberto**, e está escrita para não
+  parecer inércia. Independente de `AUTH-004`/`AUTH-006` (que passam a `READY`).
+- **Agente responsável:** A2.
+
+#### AUTH-006 · Perfil e preferências de conta — A2 · P2 · `READY`
+
+- **Descrição (detalhe prévio escrito por A9 em 2026-09-24 — reconciliação A2, ver `PC-37`).** As
+  preferências e o perfil existem na API (`GET`/`PATCH /me/preferences`, `auth.ts:401`/`:409`) e,
+  ao contrário do que uma leitura rápida sugeriria, **não há cobertura do contrato** — o `grep` de
+  `me/preferences` sobre `apps/api/test/` encontra **duas** chamadas (`jobs-notification-sync.test.ts:485,506`),
+  mas são *setup* de outro teste (escrevem uma preferência e confirmam `200`), **não** cobertura do
+  contrato de perfil/preferências (defaults, validação, isolamento entre contas). O que **não**
+  existe é a alteração de **email**:
+  `changeEmail`/`updateEmail` têm **zero** ocorrências no código — essa é `AUTH-007`, e fica lá
+  (esta tarefa **não** a absorve).
+- **Objetivo:** fixar por testes o contrato de perfil e preferências (ler, alterar, validar), e
+  garantir que uma preferência inválida é recusada e uma preferência alheia não é acessível.
+- **Âmbito:** testes em `apps/api/test/` e correção mínima só se a medição revelar defeito.
+  **Não** inclui alteração de email (é `AUTH-007`). **Não** toca em `packages/shared`.
+- **Critérios de aceitação (verificáveis).** Leitura devolve o default correto para uma conta nova;
+  escrita persistente é observável numa leitura seguinte; entrada inválida → 400; conta alheia →
+  403/404.
+- **Prova de não-vacuidade:** cada teste tem de morder por mutação (ex.: `PATCH` deixa de gravar) →
+  vermelho, com reposição por `sha256`.
+- **Ficheiros previsivelmente envolvidos:** `apps/api/test/` (novo ficheiro);
+  `apps/api/src/http/routes/auth.ts` só se um defeito medido o exigir.
+- **Dependências:** `AUTH-001` **`DONE`**. Sem dependência externa.
+- **Estado:** `READY` — verificável sem decisão de produto. **Não** é `DONE`: código existe, prova
+  não.
+- **Agente responsável:** A2.
 
 #### AUTH-007 · Alteração de email com reverificação — A2 · P3 · `BACKLOG`
 
@@ -1870,7 +1969,7 @@ sempre **a minha** linha (`PC-21` → `PC-24`, com folga deliberada) e nunca as 
 **Estado:** `WEB-006` → `DONE`. **Sem commit, sem push e sem deploy** — a árvore fica como está,
 com `WEB-005` e `WEB-006` por commitar, à espera de autorização.
 
-#### WEB-007 · Pesquisa e filtros — A3 · P2 · `READY`
+#### WEB-007 · Pesquisa e filtros — A3 · P2 · `DONE`
 
 - **Descrição (detalhe prévio escrito por A9 em 2026-09-24 — ver `PC-37`).** As listas do
   produto não têm pesquisa textual nenhuma, e os filtros existentes são irregulares: **8**
@@ -1964,9 +2063,33 @@ com `WEB-005` e `WEB-006` por commitar, à espera de autorização.
     durante a implementação.
   - Sem `jsdom`, a interação (escrever no campo, ver a lista mudar) **não** é observável nos
     testes — declara-se como limitação, não se simula (precedente: `WEB-009`).
+- **Fecho (2026-09-24, A9 — reconciliação medida contra o código, não por afirmação).** Implementada
+  por A3 (`docs/PROPOSAL-A3-WEB-007.md`); A9 re-medil, independentemente, cada critério de aceitação
+  da linha 1923:
+  - **8** `z-filters` no `apps/web/src`, **todos os 8** com `role="group"` **e** `aria-label` — os
+    dois sem nome (`DocumentsPage.tsx:192`, `RemindersPage.tsx:141`) passaram a `:221`/`:166` com
+    rótulo próprio («Filtrar documentos por veículo» / «Filtrar lembretes por estado»);
+  - **pesquisa local no cliente** em `Documents` e `Reminders` — `apps/web/src/lib/localSearch.ts`
+    (lógica pura, sem React) + `apps/web/src/ui/LocalSearch.tsx`; `type="search"` em
+    `LocalSearch.tsx:81`; o `useDebounced` deixou de ter zero consumidores (`LocalSearch.tsx:57`);
+  - **o âmbito é dito no ecrã:** `scopeNote` é **obrigatório no tipo** (`LocalSearch.tsx:41`) e
+    renderizado (`:100`) — o critério «sem prometer o que não faz» fica fixado por tipo, não por
+    disciplina;
+  - **requisito duro cumprido:** `git diff --name-only` (mais `-- apps/api packages apps/mobile`)
+    dá **0** alterações fora de `apps/web/`; `q` **não** existe em `packages/shared/src/contracts.ts`
+    (grep = 0);
+  - **testes:** suíte web **15 ficheiros / 276 testes** exit 0 (`--no-file-parallelism`); `typecheck`
+    web exit 0; `git diff --check` limpo; `sha256` dos 4 ficheiros novos confere com o relatório de A3
+    (`b945525d…`, `942bc43f…`, `c26c810b…`, `441165f2…`).
+  Limitações declaradas (mantidas, não apagadas): sem `jsdom`, a interação escrever→ver a lista mudar
+  **não** é observável — o que os testes fixam é a marcação e a função de filtragem, não o comportamento
+  no browser. O `PROPOSAL-A3-WEB-007.md` §6.4 regista `.mut-int001-backup/` dentro do repo como achado
+  fora de âmbito (ver `PC-51`-vizinho: **não** é `PC-51`; ver §13 do ROADMAP e a nota em `PROD-003`).
+- **Impacto declarado aos outros agentes:** **nenhum** — `apps/web/src` apenas; sem tocar
+  `packages/shared`, `apps/api`, `apps/mobile` nem `prisma`.
 - **Agente responsável:** A3.
 
-#### WEB-008 · Consistência visual e design system — A3 · P3 · `BACKLOG`
+#### WEB-008 · Consistência visual e design system — A3 · P3 · `READY`
 
 - **Descrição (detalhe prévio escrito por A9 em 2026-09-24 — ver `PC-37`).** O produto não tem um
   design system **escrito**: tem primitivas boas e uso irregular delas. O sintoma medido mais
@@ -2054,12 +2177,14 @@ com `WEB-005` e `WEB-006` por commitar, à espera de autorização.
   partilhado, isso seria âmbito novo — **não** previsto aqui.
 - **Dependências:** `WEB-011` **`DONE`** — era ela que exigia coordenação sobre `theme.css`/
   `app.css` (já verificado antes de `WEB-011` começar: `WEB-008` estava `BACKLOG` e os ficheiros
-  intocados). **Dependência de `WEB-007` — medida, não estilística (2026-09-24).** `WEB-007`
-  edita o **contentor** `z-filters` em `DocumentsPage.tsx:192` e `RemindersPage.tsx:141`;
-  `WEB-008` substitui os seus **filhos** (`DocumentsPage.tsx:194/203/214`,
-  `RemindersPage.tsx:143/152/163`). É o **mesmo bloco de código**, logo o conflito é real: feito
-  em paralelo, um dos dois tem de reaplicar-se sobre o outro. Por isso `WEB-008` permanece
-  **`BACKLOG`** até `WEB-007` fechar; depois disso herda a primitiva no sítio. `WEB-010` **`DONE`**
+  intocados). **Dependência de `WEB-007` — RESOLVIDA (2026-09-24).**
+  `WEB-007` editava o **contentor** `z-filters` em `DocumentsPage.tsx` (era `:192`, agora `:221`)
+  e `RemindersPage.tsx` (era `:141`, agora `:166`); `WEB-008` substitui os seus **filhos**
+  (`DocumentsPage.tsx:194/203/214` → hoje `+3`, `RemindersPage.tsx:143/152/163` → hoje `+3`). Era
+  o **mesmo bloco de código**: feito em paralelo, um dos dois teria de reaplicar-se sobre o outro.
+  **`WEB-007` fechou** (A9, 2026-09-24) e a primitiva já está no sítio — os `<button>` canónicos
+  que `WEB-008` vem substituir continuam lá, dentro de um contentor já nomeado. **`WEB-008`
+  desbloqueia e passa a `READY`.** `WEB-010` **`DONE`** (origem do `PC-45`).
   (origem do `PC-45`).
 - **Riscos / limitações.**
   - **O `<h1>` do painel fica fora de `WEB-008`** (decisão do utilizador em 2026-09-24). Saiu de
@@ -2719,8 +2844,19 @@ arquitetural:** proposta `A32` em `docs/DECISIONS.md` (abaixo).
   evidência `ficheiro:linha` e tarefa associada em **§3.7**.
 - **Testes:** não aplicável — é levantamento. O produto é a atualização de §3 deste documento  
   (§3.2 corrigida + §3.7 nova).
-- **Resultado:** **12 dos 15 domínios implementados e funcionais.** As três lacunas reais são o  
-  upload de documentos (`PROD-001`), a publicação MQTT (`INT-001`) e a higiene de armazenamento  
+- **Resultado (corrigido por A9 em 2026-09-24 — a contagem anterior estava desatualizada):**
+  **14 dos 15 domínios implementados e funcionais.** A única lacuna real que resta é a
+  **timeline** (`AUD-006` — a omissão de itens medida em `services/timeline.ts:316`). As lacunas
+  que a revisão original listava como abertas **fecharam depois**:
+  - **upload de documentos** → `PROD-001` **`DONE`** (a §3.7 já o registava: «Implementado»);
+  - **publicação MQTT** → `INT-001` **`DONE`** (medido: `services/mqtt-bootstrap.ts`,
+    `mqtt-client.ts`, `mqtt-publisher.ts`, `mqtt-topics.ts`, `jobs/mqtt-sync.ts`;
+    `composeMqtt` em `server.ts:105`) — logo `integrations` deixa de ser «Parcial»;
+  - **estatísticas / import-export / custos-TCO** → todos **Implementado** na §3.7;
+  - **higiene de armazenamento** → não é lacuna de **domínio**, é `PROD-007`/`PROD-008`
+    (transversais).
+  O que falta nos restantes não é código de produto — é **cobertura de testes de rota**
+  (`TEST-001`, já `DONE`) e o **agendador** (`PROD-004`, já `DONE`).
   (`PROD-007`, criada por esta revisão). O que falta nos restantes não é código de produto: é  
   cobertura de testes de rota (`TEST-001`) e o agendador (`PROD-004`).
 - **Problemas registados:** `PC-12` (o inventário de §3 e o estado de `PROD-002`/`AUTH-001`/  
@@ -2728,6 +2864,17 @@ arquitetural:** proposta `A32` em `docs/DECISIONS.md` (abaixo).
   apagados).
 - **Validação executada:** 80 testes verdes (`documents-http`, `document-storage`); typecheck  
   API exit 0.
+- **Defeito medido, registado aqui e NÃO convertido em tarefa nova (A9, 2026-09-24).**
+  `apps/web/src/api/queries.ts:196` — `createMaintenance(payload, vehicleId)` envia o `POST` para
+  `/vehicles/${vehicleId}/maintenance` quando há `vehicleId`, mas a API **não serve essa rota**:
+  o handler de criação é `POST /records/maintenance` (`http/routes/compliance.ts:110`) e um `grep`
+  de `vehicles/.*maintenance` sobre `apps/api/src/` devolve **zero**. Consequência: criar manutenção
+  **com** veículo selecionado aponta para um endpoint inexistente (404), enquanto o mesmo ecrã sem
+  veículo funciona. **Por decisão do utilizador, isto NÃO vira um `PROD-*` nem um `PC-*` inventado**
+  nesta operação — fica **registado como defeito medido dentro de `PROD-003`**, para quem o for
+  corrigir encontrar o `ficheiro:linha` exato e não o procurar de novo. A correção (apontar o cliente
+  a `/records/maintenance` com `vehicleId` na query, ou criar a rota no servidor) é **decisão de
+  contrato** e não é tomada aqui.
 - **Estado:** `REVIEW` — levantamento feito e registado; aguarda validação do utilizador antes  
   de `DONE` (§1.4).
 - **Nota:** esta tarefa existe para impedir que A4 comece a construir o que já existe — e foi  
@@ -3174,7 +3321,20 @@ penduram), `PC-33` (`GET /api` anuncia `/api/v1/health`, que devolve 404) e `PC-
 - **Testes/validação previstos:** por definir com a decisão. O que já se sabe: o ramo é inalcançável
   com a versão de formato atual, pelo que qualquer teste terá de **construir** um bundle com versão
   diferente para exercitar o caminho — e isso depende de o motor ficar ou sair (`AUD-011`).
-- **Nota:** `OPS-003` foi um dos **14 de 65** corpos vazios medidos por A1 (`PC-37`). Passa a
+- **Material novo e decisivo (A9, 2026-09-24 — reconciliação A1): O alerta que esta tarefa pede JÁ
+  EXISTE e está testado.** Medido no código, não inferido: `domain/import/migrate.ts:78` exporta
+  `checkCompatibility({format, formatVersion})` e `domain/import/bundle.ts:567`
+  (`switchCompatibility`) **traduz o veredicto em recusa com mensagem própria** —
+  `bundle.version_too_new`, `bundle.version_too_old`, `bundle.format_unknown`,
+  `bundle.manifest_invalid` (`:581-598`) — em vez do silêncio que o `PC-8` descrevia. A cobertura
+  existe e é adversa: `apps/api/test/import-plan-migrate.test.ts:1563-1635` exercita `current`,
+  `too-new`, `too-old`, `wrong-format` e `malformed` (incl. `formatVersion` não-inteiro/0/-1).
+  **Consequência:** o que resta de `OPS-003` **não** é «construir o alerta» (feito) — é
+  **decidir** se o veredicto `migrate` de um bundle antigo deve também **avisar** explicitamente,
+  e o que fazer ao motor de migração (é a mesma decisão de `AUD-011`). **Continua `BLOCKED`** por
+  decisão de produto, mas o bloqueio passa a ser **mais estreito** e está escrito: a parte mecânica
+  não falta.
+- **Nota:** `OPS-003` era um dos corpos vazios medidos por A1 (14 de 65 em 2026-09-22; `PC-37` recontou **9 de 67** em 2026-09-24). Passa a
   `BLOCKED` ao abrigo da política registada na §1.2: uma tarefa em `BACKLOG` **sem corpo** e **sem
   condição externa conhecida** é uma tarefa que ainda não foi especificada; esta tem condição externa
   conhecida (`AUD-011`) **e** falta de corpo, pelo que `BLOCKED` é o estado honesto.
@@ -3425,6 +3585,13 @@ como dona e marcar `DOC-001` como `CANCELLED` ao fechar.)*
 - **Descrição:** §10 deste documento existe para ser copiada. Falta garantir que um agente novo  
   a encontra sem ler 900 linhas — provavelmente uma ligação no `README.md` e em  
   `docs/ARCHITECTURE.md`.
+- **Material novo (A9, 2026-09-24 — reconciliação A1).** O *fluxo* que esta tarefa quer documentar
+  **já existe escrito** em `docs/AGENT-PROMPTS.md` (o documento dos *prompts* de coordenação entre
+  agentes está no repositório); o que falta é o **ponto de entrada** — uma ligação a partir do
+  `README.md` e de `docs/ARCHITECTURE.md`. Isto **reduz o âmbito** de «documentar o fluxo»
+  (feito) para «ligar ao que já está escrito» (por fazer) — mas a tarefa **não** fecha por isso:
+  uma ligação que ninguém verifica pode continuar partida. **Continua `BACKLOG`**, com o âmbito
+  agora mais honesto: é uma tarefa de **ligação + verificação**, não de redação de raiz.
 - **Critérios:** o README aponta para o ROADMAP; a regra dos dois momentos é encontrável em  
   menos de um minuto.
 
@@ -3610,6 +3777,16 @@ Para que os quatro possam começar **sem nova sessão de planeamento**.
 | 6     | `OPS-001` — CI                                                | P1         |
 
 > **Estado a 2026-09-22 (A9):** as **seis** tarefas desta fila estão **`DONE`** — a fila de A1 está
+>
+> **Reconciliação A9 (2026-09-24):** a fila continua vazia, mas o **estado factual** foi medido
+> contra o código nesta operação: `AUD-006` tem agora o **mecanismo** de omissão registado
+> (`services/timeline.ts:316` — registos só entram quando não há evento); `AUD-013` foi
+> **confirmado** (4 de 7 aliases em falta em `VehicleDetailPage.tsx:108-135`); `OPS-003` tem uma
+> descoberta que **estreita** o bloqueio (o alerta de `formatVersion` **já existe e está testado**
+> — `checkCompatibility`/`switchCompatibility`); `DOC-002` teve o âmbito **reduzido** (o fluxo já
+> está em `docs/AGENT-PROMPTS.md`; falta a ligação). `AUD-003`, `AUD-007`, `AUD-011`, `OPS-002`,
+> `OPS-006` **mantêm o estado**. **Nenhuma tarefa da fila de A1 foi promovida a `DONE`** — a
+> matéria nova é documental/diagnóstica, não implementação.
 > vazia e aguarda atribuição. O que resta de A1 é o que continua **aberto** na §4: `AUD-003`,
 > `AUD-006`, `AUD-007`, `AUD-011`, `AUD-013` (`BACKLOG`), `OPS-002` e `OPS-003` (`BLOCKED`) e
 > `DOC-002` (`BACKLOG`). `DOC-001` está `CANCELLED`.
@@ -3627,7 +3804,9 @@ pelo que está diagnosticado e recuperar o resto em paralelo.
 | —     | `AUTH-009` — Documentação da entrega de email            | P3         | **`DONE`** (2026-09-22) — fecha `PC-19` |
 | —     | `AUTH-002` — Login Google                                | P1         | **`DONE`** (2026-09-22) — fecha `PC-25` e `PC-27`; abre `PC-28`/`PC-29` |
 | 1     | `AUTH-003` — Associação de conta Google                  | P1         | dependência `AUTH-002` **satisfeita**; falta o detalhe prévio (§1.2) e a revisão adversarial de A1 |
-| 3     | `AUTH-004` — Gestão de sessões                           | P2         | —                                     |
+| 1     | `AUTH-004` — Gestão de sessões                           | P2         | **`READY`** (2026-09-24) — API existe ponta a ponta **sem nenhum teste** (`me/sessions`/`logout-all` = 0 no `test/`); verificação+cobertura |
+| —     | `AUTH-005` — Revisão do 2FA e códigos de recuperação     | P2         | **`BLOCKED`** (2026-09-24) — pendente de **decisão de produto** (destino dos códigos de recuperação) |
+| 2     | `AUTH-006` — Perfil e preferências de conta              | P2         | **`READY`** (2026-09-24) — rota existe; há *setup* em testes (`jobs-notification-sync`), mas **sem cobertura do contrato** — verificação+cobertura |
 
 **A fila de email de A2 está fechada:** `AUTH-001`, `AUTH-008` e `AUTH-009` estão `DONE`, e com
 elas os problemas `PC-14` e `PC-19`. `WEB-001`/`WEB-002` (A3) e `MOB-002` ficam desbloqueadas
@@ -3662,18 +3841,19 @@ revisão adversarial de A1 — não se começa por arrastamento de uma tarefa an
 | —     | `WEB-001` — Ecrã "Esqueci-me da password" | P0         | **`DONE`** (2026-09-22) — desbloqueada por `AUTH-001`; sem teste automático do ecrã |
 | —     | `WEB-003` — Documentos na interface       | P0         | **`DONE`** (2026-09-22) — `PROD-001`/`PROD-002` fechadas; falta o envio na web (decisão de produto) |
 
-A3 tem **doze tarefas `DONE`** (`WEB-001`, `WEB-002`, `WEB-003`, `WEB-004`, `WEB-005`, `WEB-006`,
-`WEB-009`, `WEB-010`, `WEB-011`, `WEB-012`, `WEB-013`, `MOB-001`), **duas `READY`** — `WEB-007`
-(pesquisa local, decidida em 2026-09-24) e a `READY` do *gate* Flutter — e as restantes bloqueadas
-por `MOB-002`; `WEB-008` fica `BACKLOG` por depender de `WEB-007`. **`WEB-013` fechou a 2026-09-22** (consolidado
-por A9 a 2026-09-23, ver §5.3): o cliente web descartava o token de renovação e a sessão durava 1
-hora em vez dos 90 dias configurados — corrigido com **17 testes** e **4 mutações** mortas.
-**`MOB-007` mantém-se `READY`** como o **gate do ambiente Flutter** — `MOB-002` não deve ser
-considerada operacionalmente concluída enquanto não passar. **`WEB-010` fechou a 2026-09-23** (ver §5.3): o
-título do mês passou a `monthLong`, com **19 testes** que mordem (**9 vermelhos** no código
-pré-correção) e **6 mutações** mortas. *(Correção de A9, 2026-09-23: a contagem anterior dizia
-«cinco» e omitia `WEB-002`, que §4 já declarava `DONE`; esta tabela continua a **não** listar
-`WEB-002` — lacuna registada, não corrigida aqui.)*
+A3 tem **treze tarefas `DONE`** (`WEB-001`, `WEB-002`, `WEB-003`, `WEB-004`, `WEB-005`, `WEB-006`,
+`WEB-007`, `WEB-009`, `WEB-010`, `WEB-011`, `WEB-012`, `WEB-013`, `MOB-001`), **duas `READY`** —
+`WEB-008` (**desbloqueada** por `WEB-007`) e a `READY` do *gate* Flutter (`MOB-007`) — e as
+restantes bloqueadas por `MOB-002`. **`WEB-007` fechou a 2026-09-24** (reconciliado por A9): os
+8 `z-filters` com `role="group"`+`aria-label`, pesquisa local no cliente em `Documents`/`Reminders`
+com o âmbito declarado no ecrã, **276 testes** verdes e **0** alterações fora de `apps/web`.
+**`WEB-013` fechou a 2026-09-22** (consolidado por A9 a 2026-09-23, ver §5.3): o cliente web
+descartava o token de renovação e a sessão durava 1 hora em vez dos 90 dias configurados —
+corrigido com **17 testes** e **4 mutações** mortas. **`MOB-007` mantém-se `READY`** como o
+**gate do ambiente Flutter** — `MOB-002` não deve ser considerada operacionalmente concluída
+enquanto não passar. **`WEB-010` fechou a 2026-09-23** (ver §5.3): o título do mês passou a
+`monthLong`, com **19 testes** que mordem (**9 vermelhos** no código pré-correção) e **6 mutações**
+mortas.
 
 ### A4 — Produto e backend funcional
 
@@ -3828,3 +4008,4 @@ quando falta infraestrutura.
 | 2026-09-23 | A4 · `PROD-007` e `PROD-008` **concluídas** — a eliminação devolve os bytes e a substituição deixou de obrigar a recriar o documento. `PROD-007`: `deleteDocument` passa a ler a chave **antes** do `delete` e a remover os bytes **depois**, com contagem de referências (necessária por `PC-21`) — 11 testes, 4 mutações todas mortas (M2, a ordem invertida, mata apenas o teste da falha de base de dados, que é o que a prova). `PROD-008`: decisão do utilizador por escolha múltipla — **`PUT /documents/:documentId/content`** substitui e o `POST` continua a ser só o upload inicial, recusando `409`; ordem guardar → apontar → remover, com remoção compensatória — 17 testes, 8 mutações todas mortas, onde M8 nasceu de M1 e M2 produzirem o **mesmo** conjunto de falhas (regra que ficou: comparar conjuntos, não contagens). Registados o **desvio** do ficheiro de teste (novo em vez da §10 de `documents-http.test.ts`, por recusa de leitura) e a **limitação**: a web ainda não usa o `PUT`. Fecha **`PC-13`**. Abre **`PC-51`**: `deleteAccount` apaga por cascata do esquema e deixa os bytes órfãos. Sem commit, sem push, sem deploy. |
 | 2026-09-23 | **A9 · consolidação do fecho de `WEB-013`.** `WEB-013` → **`DONE`**, com a proposta de A3 (`docs/PROPOSAL-A3-WEB-013.md`) **verificada contra o disco antes de escrever**: `client.ts` `sha256` `1f3802cb…` igual ao declarado; `session-refresh` **17/17 exit 0**; suíte web **228/228 em 10 ficheiros exit 0**; `typecheck` web exit 0; `tsconfig` da web a excluir `test/` confirmado (**0** ficheiros, `PC-15`), com o template de verificação restrito provado **sensível** por mutação (`TS2724`, exit 2 → reposto, `sha256` `ac4b19f8…` idêntico); contrato partilhado `contracts.ts`/`types.ts` com os `sha256` declarados. **Critérios de aceitação verificados um a um no código:** `setTokens` com uma só fonte (`:167`), `AuthResponse` ausente, `login`/`signup` a devolver `UserProfile` (`:504`,`:515`). **Nenhum `PC-*` criado** (os dois achados — `skipRefresh` morto e o ciclo de 401 — ficam declarados como limitações da tarefa, sem número). `WEB-013` sai dos `READY`; §4, §5.3, §9 (fila e contagem) atualizados. **Sem commit, sem push, sem deploy.** |
 | 2026-09-23 | **A9 · consolidação do fecho de `PROD-007` e `PROD-008`.** `PROD-007` → **`DONE`**, `PROD-008` → **`DONE`** e **`PC-13`** → **Resolvido**, com prova corrida por A9 **antes** de escrever: suíte de documentos **130 testes em 4 ficheiros, exit 0** (`document-storage` 33, `documents-delete` 11, `documents-replace` 17, `documents-http` 69) e `typecheck` da API **exit 0**; `discardDocumentBytes` confirmado com chamadores em `documents.ts:247,581`; a rota `PUT` confirmada em `routes/documents.ts:268,352` com `isDocumentUpload` a aceitar `POST || PUT` (`:181-182`). **Inversão de premissa registada no próprio fecho:** o critério de `PROD-008` dizia `POST` e a decisão do utilizador foi `PUT` — a tarefa **mantém-se**, não se cria tarefa nova. Aberto **`PC-51`** (`deleteAccount`, `auth.ts:1332-1365`, apaga por cascata em `:1363` e não passa pela remoção — achado de A4 que estava por alocar desde 2026-09-22, verificado por A9 no disco). **Nenhum `PC-*` foi renumerado**; `PC-51` é o primeiro livre a seguir a `PC-50`. **Não tocado de propósito:** o parágrafo «Resultado de `PROD-003` (2026-09-22)», registo datado e atribuído, que afirma no presente uma fila de A4 já ultrapassada — decisão separada, que o utilizador não autorizou nesta ronda. **Sem commit, sem push, sem deploy.** |
+| 2026-09-24 | **A9 · reconciliação documental (só o ROADMAP).** `WEB-007` → **`DONE`** (reconciliado por medição: 8/8 `z-filters` com `role="group"`+`aria-label`; pesquisa local no cliente em `Documents`/`Reminders`; âmbito declarado no ecrã por `scopeNote` obrigatório no tipo; `type="search"`; `useDebounced` com consumidor; **276 testes** verdes; `typecheck` exit 0; **0** alterações fora de `apps/web/`; `sha256` dos ficheiros novos conformes). `WEB-008` → **`READY`** (dependência de `WEB-007` medida e **resolvida**). Bloco de A2 reconciliado: `AUTH-004`/`AUTH-006` → **`READY`** e `AUTH-005` → **`BLOCKED`** — todos por **decisão de política**, nenhum promovido a `DONE` por existir código: as três rotas (`me/sessions`, `me/preferences`, `me/2fa`) existem ponta a ponta e têm **zero** testes (medido por `grep` sobre `apps/api/test/`). Corpos escritos para `AUTH-004`/`AUTH-005`/`AUTH-006` (eram vazios). Bloco de A1: mecanismo de `AUD-006` **medido** (`services/timeline.ts:316`), `AUD-013` **confirmado** (4 de 7 aliases), `OPS-003` **estreitado** (o alerta de `formatVersion` já existe e está testado), `DOC-002` com âmbito **reduzido** (fluxo já em `docs/AGENT-PROMPTS.md`). `PROD-003` corrigido de **12/15** para **14/15** domínios (MQTT/documents/statistics/import-export/integrations fechados; só a `timeline` resta) e o defeito **medido** `/vehicles/:vehicleId/maintenance` (rota que a API não serve, `queries.ts:196`) registado **dentro** de `PROD-003` — **sem** `PC-*` nem `PROD-*` inventado. `PC-37` **recontado** (14 de 65 → **9 de 67**, todas em `BACKLOG`/`BLOCKED`/`DEFERRED`). Preservados intactos: `PC-39`, `PC-51`, `.mut-int001-backup/` (não removido), a duplicação de `docs/LEVANTAMENTO-NAO-IMPLEMENTADAS.md` (registada, não resolvida). **Nenhum outro estado alterado. Sem commit, sem push, sem deploy; nenhum ficheiro de código/teste/migração tocado.** |
