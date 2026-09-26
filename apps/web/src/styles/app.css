@@ -287,6 +287,10 @@ ol {
     border-radius: var(--z-radius);
     color: var(--z-text);
     font-weight: 500;
+    /* A transição cobre a cor E o fundo: o item ativo muda os dois (UX-02). */
+    transition:
+      background-color var(--z-duration) var(--z-ease),
+      color var(--z-duration) var(--z-ease);
   }
 
   .z-sidebar__link:hover {
@@ -294,16 +298,47 @@ ol {
     text-decoration: none;
   }
 
+  /* Retorno de toque: em telemóvel não há `:hover`, mas a barra lateral é `display: none`
+     até aos 900 px — este `:active` só se vê em ecrãs táteis largos (tablet em paisagem,
+     portátil com touch). Mantém a mesma convenção do resto do produto. */
+  .z-sidebar__link:active {
+    background: var(--z-border);
+  }
+
+  /*
+   * Item ativo: fundo de acento suave e tinta de acento. É a direção decidida para o UX-02
+   * («item ativo: fundo petrol suave») e já era a convenção do produto — o que muda é o
+   * `font-weight` e a cor do ícone, que passa a acompanhar por `currentColor`.
+   */
   .z-sidebar__link[aria-current='page'] {
     background: var(--z-accent-soft);
     color: var(--z-accent-ink);
     font-weight: 600;
   }
 
+  .z-sidebar__link[aria-current='page']:hover {
+    background: var(--z-accent-soft);
+  }
+
+  /*
+   * O ícone da navegação. É um `<svg>` de 20 px assente numa coluna de largura fixa para que
+   * todos os rótulos comecem na mesma vertical — sem isto, ícones de larguras óticas
+   * diferentes desalinhariam a coluna de texto (`flex: none` impede que encolham).
+   */
   .z-sidebar__icon {
+    flex: none;
     width: 20px;
-    text-align: center;
-    font-size: 1rem;
+    height: 20px;
+    color: var(--z-text-muted);
+    transition: color var(--z-duration) var(--z-ease);
+  }
+
+  .z-sidebar__link:hover .z-sidebar__icon {
+    color: var(--z-text);
+  }
+
+  .z-sidebar__link[aria-current='page'] .z-sidebar__icon {
+    color: var(--z-accent-ink);
   }
 
   .z-sidebar__badge {
@@ -319,6 +354,21 @@ ol {
 
 /* --- Barra de separadores (telemóvel) ------------------------------------- */
 
+/*
+ * Barra inferior em petróleo escuro (direção decidida no UX-02).
+ *
+ * É o único elemento do produto que inverte a superfície: no telemóvel, a barra é o chão
+ * da aplicação, e o petróleo escuro dá-lhe peso sem competir com o conteúdo claro por
+ * cima. A tinta passa a ser a da família inversa — os `--z-text-on-inverse*` já existentes,
+ * medidos para superfície em petróleo — em vez de `--z-text-muted`, que sobre petróleo-900
+ * não tem contraste.
+ *
+ * **Não há `border-top`.** Houve uma linha de âmbar contínua a 100 % da largura, e estava
+ * errada: o âmbar é a cor da AÇÃO e do estado ativo, não um remate da barra. A barra tem
+ * exatamente UMA marca de âmbar, e é a da célula ativa (ver
+ * `.z-tabbar__link[aria-current='page']::before`). Uma linha global, além de duplicar o
+ * sinal, não dizia qual dos cinco destinos estava escolhido.
+ */
 .z-tabbar {
   position: fixed;
   inset: auto 0 0 0;
@@ -326,8 +376,7 @@ ol {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
   align-items: stretch;
-  background: var(--z-bg-elevated);
-  border-top: 1px solid var(--z-border);
+  background: var(--z-petrol-900);
   padding-bottom: env(safe-area-inset-bottom, 0);
 }
 
@@ -337,32 +386,164 @@ ol {
   }
 }
 
+/*
+ * Estrutura alinhada das cinco colunas (medido, não inferido).
+ *
+ * A coluna é uma grelha de duas linhas: a do ícone e a do rótulo. Cada linha tem altura
+ * FIXA, pelo que o rótulo assenta sempre na mesma baseline quer o ícone acima meça 24 px
+ * (um separador) quer 34 px (o círculo do «Registar») — e quer o item esteja ativo (com o
+ * traço de âmbar) quer não.
+ *
+ * Antes disto, o rótulo era posicionado pelo fluxo e a baseline das cinco colunas divergia
+ * 3 px: o círculo do centro empurrava o seu rótulo para baixo e os outros não. Medido em
+ * Chromium, a 390 e 430 px, nos dois temas.
+ */
 .z-tabbar__link {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  display: grid;
+  grid-template-rows: 34px auto;
+  justify-items: center;
+  align-content: center;
   gap: 2px;
-  /* 56 px de altura, acima do alvo mínimo de 44 px (§53). */
-  min-height: 56px;
-  color: var(--z-text-muted);
+  /* 60 px de altura, acima do alvo mínimo de 44 px (§53). */
+  min-height: 60px;
+  padding-top: var(--z-space-1);
+  color: var(--z-text-on-inverse-muted);
   font-size: var(--z-text-xs);
   font-weight: 500;
+  line-height: 1.2;
+  transition: color var(--z-duration) var(--z-ease);
+  /*
+   * A célula é o contexto de posicionamento do indicador de âmbar (§ UX-02). Sem isto, o
+   * `::before` do item ativo — que é `absolute` — resolver-se-ia contra a `.z-tabbar`
+   * (que é `fixed`) e a linha sairia no topo da BARRA, não no topo da célula.
+   */
+  position: relative;
 }
 
 .z-tabbar__link:hover {
   text-decoration: none;
+  color: var(--z-text-on-inverse);
 }
 
+/*
+ * Item ativo: maior intensidade visual (direção UX-02).
+ *
+ * Não basta mudar a cor: sobre petróleo escuro, a diferença entre a tinta esbatida e o
+ * branco é fina, e quem tem baixa visão não a distingue. Acrescenta-se peso (`font-weight`),
+ * tinta cheia **e** a linha de âmbar no topo da célula — um indicador que não depende só da
+ * cor, ao estilo do que o produto já usa no cartão de veículo.
+ */
 .z-tabbar__link[aria-current='page'] {
-  color: var(--z-accent-ink);
+  color: var(--z-text-on-inverse);
   font-weight: 600;
 }
 
+/*
+ * A marca de âmbar da barra: UMA linha, no TOPO da célula ativa.
+ *
+ * ## Porque é que o indicador vive na célula e não no ícone
+ *
+ * O indicador esteve na caixa do ícone (um `::after` de 18×2 px centrado sob o glifo), e
+ * estava errado por três razões:
+ *
+ *  1. **largura** — 18 px não é a largura da célula. A célula é 20 % da barra; um traço
+ *     curto e centrado não delimita o destino, apenas o sublinha;
+ *  2. **posição** — ficava *entre* o ícone e o rótulo, empurrando a leitura para duas
+ *     marcas de âmbar (esta mais a `border-top` global, entretanto removida) e criando uma
+ *     faixa de âmbar que competia com o próprio ícone;
+ *  3. **semântica** — pertencia ao ícone, mas o estado (`aria-current='page'`) pertence à
+ *     CÉLULA. Um indicador que não cobra a largura do que indica não diz qual é o destino.
+ *
+ * Fica no topo da célula, com a largura toda dela (20 % da barra), em 2 px — o mesmo peso
+ * da linha que substitui. Como a célula é o alvo de toque, o indicador passa a ser
+ * exatamente do tamanho do que se toca.
+ *
+ * A âncora é o `position: relative` da própria `.z-tabbar__link` (ver acima): é o único
+ * contexto de posicionamento que faz a linha cair no topo da CÉLULA.
+ */
+.z-tabbar__link[aria-current='page']::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--z-highlight);
+}
+
+/*
+ * A caixa do ícone, alinhada ao fundo da sua linha de 34 px: um ícone de 24 px e um círculo
+ * de 34 px ficam assim centrados no mesmo eixo, e os rótulos abaixo partem do mesmo sítio.
+ */
 .z-tabbar__icon {
   position: relative;
-  font-size: 1.25rem;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: end;
+  width: 24px;
+  height: 24px;
+  color: inherit;
+}
+
+/* O círculo do centro tem 34 px e é a exceção à caixa de 24 px — não se recorta. */
+.z-tabbar__link--action .z-tabbar__icon {
+  width: 34px;
+  height: 34px;
+}
+
+/*
+ * O botão «Registar» do centro.
+ *
+ * É uma ação, não um destino: nunca tem `[aria-current]` e por isso nunca ganha o traço de
+ * âmbar do item ativo. O que o distingue é o círculo de âmbar — 34 px, com o mesmo ícone de
+ * 20 px dos vizinhos. Deliberadamente **não** maior do que a barra: um botão sobressalente
+ * desequilibraria os cinco alvos e, como não é um separador, o destaque tem de vir da cor,
+ * não do tamanho.
+ *
+ * O `--z-highlight-contrast` (âmbar-900) sobre `--z-highlight` é o par já medido e fixado em
+ * `contraste-tokens.test.ts` — não se inventa um novo aqui.
+ *
+ * **O `all: unset`-equivalente é obrigatório.** Os vizinhos são `<a>` (via `TabLink`); este é
+ * o único `<button>`, e um `<button>` traz o fundo `#f0f0f0` e a tinta `ButtonText` do agente
+ * de utilizador. Sem os repor, ficava uma caixa cinzenta clara atrás do item e o rótulo
+ * «Registar» herdava a tinta esbatida da barra (`--z-text-on-inverse-muted`, branco a 78 %)
+ * — invisível sobre `#f0f0f0`. Medido em Chromium/Edge a 390 px, tema claro: fundo
+ * `rgb(240, 240, 240)` e contraste do rótulo ~1,06:1.
+ */
+.z-tabbar__link--action {
+  appearance: none;
+  background: none;
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.z-tabbar__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--z-radius-pill);
+  background: var(--z-highlight);
+  color: var(--z-highlight-contrast);
+  transition: background-color var(--z-duration) var(--z-ease);
+}
+
+.z-tabbar__link--action:hover .z-tabbar__action {
+  background: var(--z-highlight-hover);
+}
+
+/* Premido: âmbar-400 (`--z-highlight-hover`), o mesmo tom do hover.
+ *
+ * Não é âmbar-600 (`--z-highlight-strong`): a tinta âmbar-900 sobre âmbar-600 dá **3,22:1**,
+ * abaixo dos 4,5:1 exigidos a texto — o `theme.css` já registava essa medição e foi por isso
+ * que criou `--z-highlight-hover` em vez de reusar `--z-highlight-strong`. Sobre âmbar-400 a
+ * tinta sobe a **6,18:1**. A pressão continua a ser sentida pela transição de cor e pelo
+ * retorno dos vizinhos; o que não se faz é escurecer a tinta até deixar de ser legível. */
+.z-tabbar__link--action:active .z-tabbar__action {
+  background: var(--z-highlight-hover);
 }
 
 .z-tabbar__badge {
@@ -755,6 +936,16 @@ ol {
   color: var(--z-text-subtle);
   font-size: 1.1rem;
   cursor: pointer;
+}
+
+/* Envolvente do ícone quando este leva um badge encostado ao canto. Sem `relative` aqui, o
+   `.z-tabbar__badge` (absoluto) procuraria o `.z-icon-btn`, que é maior, e o número
+   afastar-se-ia do glifo. */
+.z-icon-btn__glyph {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .z-icon-btn:hover {

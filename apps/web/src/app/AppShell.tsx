@@ -8,6 +8,7 @@ import { Logo } from '../components/Logo';
 import { EmailVerificationBanner } from '../components/EmailVerificationBanner';
 import { VehicleSwitcher } from '../components/VehicleSwitcher';
 import { Button } from '../ui/primitives';
+import { Icon, type IconName } from '../ui/Icon';
 import { useQuickLog, QuickLogProvider } from '../components/QuickLogContext';
 
 /**
@@ -17,20 +18,35 @@ import { useQuickLog, QuickLogProvider } from '../components/QuickLogContext';
  * apenas uma questão de largura:
  *
  *  - **telemóvel** — barra de separadores fixa em baixo, com os quatro destinos que se
- *    usam em movimento (painel, veículos, registos, estatísticas) e um quinto para o
- *    resto. Tudo o que se faz de pé, com uma mão, está a um toque;
+ *    usam em movimento (painel, veículos, registos, avisos) e, ao centro, a ação de
+ *    registar. Tudo o que se faz de pé, com uma mão, está a um toque;
  *  - **ambiente de trabalho** — barra lateral com a navegação completa, porque aí há
  *    espaço para tudo estar visível e o utilizador está a gerir, não a consultar.
  *
  * A barra de separadores tem **cinco** destinos e não mais: seis ícones numa barra de
  * telemóvel ficam abaixo do alvo de toque mínimo, e a alternativa — ícones mais pequenos —
  * transforma uma navegação num exercício de pontaria.
+ *
+ * ## Iconografia (UX-02)
+ *
+ * Os ícones da navegação vinham do contrato partilhado como `icon: string` e chegavam ao
+ * ecrã como emoji (`🏠 🚗 💶 ⛽ 🔌 🔧 🔔 📄 📊 🕒 …`). O emoji mede-se mal: o mesmo código
+ * desenha glifos diferentes em Windows, Android e iOS, é multicolorido (ignora o tema e o
+ * contraste) e não aceita `stroke-width` nem tamanho — só `font-size`. Numa barra lateral ao
+ * lado de um logótipo geométrico, é o que dava a leitura «parece funcional, não desenhado»,
+ * que as auditorias UX/UI registaram.
+ *
+ * Aqui a navegação passa a usar a **mesma família SVG local** (`ui/Icon.tsx`) que o menu de
+ * registo, o seletor de novo registo e a folha de registo já usavam. Não há uma segunda
+ * família nem uma biblioteca externa: os nomes novos (`home`, `car`, `list`, `bell`, …)
+ * vivem no `IconName` e seguem a mesma grelha 24×24 e o mesmo peso 1,75. A cor vem sempre do
+ * contexto por `currentColor`, que é o que faz o item ativo acompanhar o tema.
  */
 
 interface NavItem {
   to: string;
   label: string;
-  icon: string;
+  icon: IconName;
   /** Igualdade exata do caminho, para o item "Início" não ficar ativo em todas as rotas. */
   end?: boolean;
   badge?: number;
@@ -52,37 +68,37 @@ function navGroups(unreadCount: number): NavGroup[] {
   return [
     {
       items: [
-        { to: '/', label: 'Painel', icon: '🏠', end: true },
-        { to: '/vehicles', label: 'Veículos', icon: '🚗' },
+        { to: '/', label: 'Painel', icon: 'home', end: true },
+        { to: '/vehicles', label: 'Veículos', icon: 'car' },
       ],
     },
     {
       title: 'Registos',
       items: [
-        { to: '/records/expenses', label: 'Despesas', icon: '💶' },
-        { to: '/records/fuel', label: 'Abastecimentos', icon: '⛽' },
-        { to: '/records/charging', label: 'Carregamentos', icon: '🔌' },
-        { to: '/records/maintenance', label: 'Manutenção', icon: '🔧' },
-        { to: '/records/reminders', label: 'Lembretes', icon: '🔔' },
-        { to: '/documents', label: 'Documentos', icon: '📄' },
+        { to: '/records/expenses', label: 'Despesas', icon: 'receipt' },
+        { to: '/records/fuel', label: 'Abastecimentos', icon: 'fuel' },
+        { to: '/records/charging', label: 'Carregamentos', icon: 'bolt' },
+        { to: '/records/maintenance', label: 'Manutenção', icon: 'wrench' },
+        { to: '/records/reminders', label: 'Lembretes', icon: 'bell' },
+        { to: '/documents', label: 'Documentos', icon: 'document' },
       ],
     },
     {
       title: 'Análise',
       items: [
-        { to: '/stats', label: 'Estatísticas', icon: '📊' },
-        { to: '/timeline', label: 'Histórico', icon: '🕒' },
-        { to: '/calendar', label: 'Calendário', icon: '🗓️' },
+        { to: '/stats', label: 'Estatísticas', icon: 'chart' },
+        { to: '/timeline', label: 'Histórico', icon: 'clock' },
+        { to: '/calendar', label: 'Calendário', icon: 'calendar' },
       ],
     },
     {
       title: 'Conta',
       items: [
-        { to: '/notifications', label: 'Notificações', icon: '🔔', badge: unreadCount },
-        { to: '/integrations', label: 'Integrações', icon: '🔗' },
-        { to: '/export', label: 'Exportar dados', icon: '📤' },
-        { to: '/import', label: 'Importar dados', icon: '📥' },
-        { to: '/settings', label: 'Definições', icon: '⚙️' },
+        { to: '/notifications', label: 'Notificações', icon: 'bell', badge: unreadCount },
+        { to: '/integrations', label: 'Integrações', icon: 'link' },
+        { to: '/export', label: 'Exportar dados', icon: 'upload' },
+        { to: '/import', label: 'Importar dados', icon: 'download' },
+        { to: '/settings', label: 'Definições', icon: 'settings' },
       ],
     },
   ];
@@ -135,8 +151,8 @@ function AppShellLayout({ unreadCount }: { unreadCount: number }) {
         <span className="z-topbar__spacer" />
         <VehicleSwitcher />
         <NavLink to="/notifications" className="z-icon-btn" aria-label={`Notificações${unreadCount > 0 ? ` (${formatNumber(unreadCount, 0)} por ler)` : ''}`}>
-          <span style={{ position: 'relative' }}>
-            🔔
+          <span className="z-icon-btn__glyph">
+            <Icon name="bell" size={22} />
             {unreadCount > 0 ? <span className="z-tabbar__badge">{unreadCount > 9 ? '9+' : unreadCount}</span> : null}
           </span>
         </NavLink>
@@ -188,7 +204,7 @@ function Sidebar({
       <Button
         variant="highlight"
         block
-        icon="＋"
+        icon={<Icon name="plus" size={20} />}
         onClick={() => quickLog.openMenu()}
         className="z-sidebar__action"
       >
@@ -200,9 +216,7 @@ function Sidebar({
           {group.title ? <div className="z-sidebar__group-title">{group.title}</div> : null}
           {group.items.map((item) => (
             <NavLink key={item.to} to={item.to} end={item.end} className="z-sidebar__link">
-              <span className="z-sidebar__icon" aria-hidden="true">
-                {item.icon}
-              </span>
+              <Icon name={item.icon} size={20} className="z-sidebar__icon" />
               {item.label}
               {item.badge && item.badge > 0 ? (
                 <span className="z-chip z-chip--warn z-sidebar__badge">{formatNumber(item.badge, 0)}</span>
@@ -217,9 +231,7 @@ function Sidebar({
           Sessão de {name}
         </div>
         <button type="button" className="z-sidebar__link" onClick={onSignOut} disabled={signingOut} style={{ width: '100%', border: 0, background: 'transparent', cursor: 'pointer', font: 'inherit' }}>
-          <span className="z-sidebar__icon" aria-hidden="true">
-            ⎋
-          </span>
+          <Icon name="logout" size={20} className="z-sidebar__icon" />
           Terminar sessão
         </button>
       </div>
@@ -230,58 +242,42 @@ function Sidebar({
 /**
  * Barra de separadores do telemóvel.
  *
- * O quinto destino ("Mais") não é uma rota: abre o menu lateral em telemóvel? Não — a
- * aplicação não tem menu lateral em telemóvel, de propósito. O quinto item leva às
- * Definições, que é o destino com mais subpáginas, e a partir daí chega-se a tudo. Os
- * ecrãs secundários (calendário, histórico, exportar) são alcançáveis a partir do painel e
- * das definições, o que evita um menu "hambúrguer" que esconde metade do produto.
+ * O quinto destino leva às Definições, que é o destino com mais subpáginas, e a partir daí
+ * chega-se a tudo. Os ecrãs secundários (calendário, histórico, exportar) são alcançáveis a
+ * partir do painel e das definições, o que evita um menu "hambúrguer" que esconde metade do
+ * produto.
+ *
+ * ## O centro é uma AÇÃO, não um separador (UX-02)
+ *
+ * Ao centro fica «Registar». Não é um destino: abre o menu de tipos (decisão 46) e nunca
+ * fica ativo em rota nenhuma — por isso é um `<button>` e não um `NavLink`. O círculo âmbar
+ * é o que o distingue da navegação à volta; o ícone é o mesmo `plus` da barra lateral e
+ * **não** é aumentado («Registar central sem ser oversized»): 34 px de círculo para um ícone
+ * de 20 px, dentro de um alvo de 56 px. Um botão maior do que os vizinhos desequilibraria a
+ * barra — o destaque vem da cor, não do tamanho.
  */
 function TabBar({ unreadCount }: { unreadCount: number }) {
   const quickLog = useQuickLog();
 
   return (
-    <>
-      {/*
-        O botão de registo rápido é destacado a âmbar — é a ação que o produto quer
-        promover, e o âmbar existe precisamente para isto (§57). Não é um separador: é um
-        botão, e por isso não fica ativo em nenhuma rota.
-
-        Abre o **menu de tipos** (decisão 46) e não um formulário concreto. Antes abria
-        sempre a despesa: quem queria um abastecimento tinha de abrir uma despesa, fechar e
-        procurar o ecrã certo — três passos para chegar a um formulário que já existia.
-      */}
-      <div className="z-tabbar" role="navigation" aria-label="Navegação principal">
-        <TabLink to="/" label="Painel" icon="🏠" end />
-        <TabLink to="/vehicles" label="Veículos" icon="🚗" />
-        <button
-          type="button"
-          className="z-tabbar__link"
-          onClick={() => quickLog.openMenu()}
-          style={{ border: 0, background: 'transparent', cursor: 'pointer' }}
-        >
-          <span
-            className="z-tabbar__icon"
-            aria-hidden="true"
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: 34,
-              height: 34,
-              borderRadius: '50%',
-              background: 'var(--z-highlight)',
-              color: 'var(--z-highlight-contrast)',
-              fontSize: '1.2rem',
-            }}
-          >
-            ＋
+    <nav className="z-tabbar" aria-label="Navegação principal">
+      <TabLink to="/" label="Painel" icon="home" end />
+      <TabLink to="/vehicles" label="Veículos" icon="car" />
+      <button
+        type="button"
+        className="z-tabbar__link z-tabbar__link--action"
+        onClick={() => quickLog.openMenu()}
+      >
+        <span className="z-tabbar__icon">
+          <span className="z-tabbar__action" aria-hidden="true">
+            <Icon name="plus" size={20} />
           </span>
-          <span>Registar</span>
-        </button>
-        <TabLink to="/records/expenses" label="Registos" icon="📋" />
-        <TabLink to="/notifications" label="Avisos" icon="🔔" badge={unreadCount} />
-      </div>
-    </>
+        </span>
+        <span>Registar</span>
+      </button>
+      <TabLink to="/records/expenses" label="Registos" icon="list" />
+      <TabLink to="/notifications" label="Avisos" icon="bell" badge={unreadCount} />
+    </nav>
   );
 }
 
@@ -294,14 +290,14 @@ function TabLink({
 }: {
   to: string;
   label: string;
-  icon: string;
+  icon: IconName;
   end?: boolean;
   badge?: number;
 }) {
   return (
     <NavLink to={to} end={end} className="z-tabbar__link">
       <span className="z-tabbar__icon" aria-hidden="true">
-        {icon}
+        <Icon name={icon} size={22} />
         {badge && badge > 0 ? <span className="z-tabbar__badge">{badge > 9 ? '9+' : badge}</span> : null}
       </span>
       <span>{label}</span>

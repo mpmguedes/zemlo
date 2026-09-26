@@ -313,8 +313,20 @@ describe('a correção está nos tokens, não em cores escritas nos componentes'
   });
 
   it('o `＋` da barra inferior usa o token de tinta sobre âmbar', () => {
+    /*
+     * UX-02: a tinta do «Registar» deixou de estar num `style` inline no `AppShell` e passou
+     * para a classe `.z-tabbar__action` em `app.css` — que é onde as regras da barra vivem
+     * agora, a par do resto do bloco. A asserção continua a medir o que interessa («a tinta
+     * de âmbar vem do token, não de um `#fff` escrito à mão»), no sítio onde a regra está.
+     */
+    const css = readFileSync(APP, 'utf8');
+    const regra = /\.z-tabbar__action\s*\{[^}]*\}/.exec(css);
+    expect(regra, 'regra .z-tabbar__action não encontrada em app.css').not.toBeNull();
+    expect(regra?.[0]).toContain('var(--z-highlight-contrast)');
+    expect(regra?.[0]).toContain('background: var(--z-highlight)');
+
+    // O `AppShell` já não escreve cor nenhuma à mão — nem em `style`, nem em token solto.
     const shell = readFileSync(SHELL, 'utf8');
-    expect(shell).toContain('var(--z-highlight-contrast)');
     expect(shell).not.toMatch(/color:[ \t]*'#/);
   });
 
@@ -555,5 +567,270 @@ describe('toda a superfície pintada com texto por cima passa o limiar', () => {
       }
     }
     expect(falhas, falhas.join(' | ')).toEqual([]);
+  });
+});
+
+/*
+ * Barra inferior e barra lateral — UX-02.
+ *
+ * ## Porque é que esta frente precisava de guardas
+ *
+ * O UX-02 acrescentou à `app.css` uma superfície nova (a barra inferior em petróleo escuro),
+ * três classes novas (`.z-tabbar__action`, `.z-tabbar__link--action`, `.z-icon-btn__glyph`) e
+ * um indicador que **não depende só da cor** (o traço de âmbar sob o rótulo ativo). Medido
+ * antes destas guardas: apagar a regra `.z-tabbar__action` ou o `::after` do item ativo não
+ * fazia cair teste nenhum — a suite ficava verde sobre uma barra sem círculo e sem indicador.
+ * As asserções de texto que já existiam (`expect(css).toContain('.x')`) casam por SUBSTRING e
+ * por isso não bastam: é preciso medir a regra.
+ *
+ * ## O que se mede
+ *
+ *  1. O círculo do «Registar»: 34 px, **deliberadamente menor** que o alvo de 56 px da barra
+ *     (o pedido diz «sem dimensão exagerada»), com tinta de âmbar-900 sobre âmbar — medida
+ *     nos dois temas.
+ *  2. Os cinco alvos da barra: `min-height` ≥ `--z-touch` (44 px).
+ *  3. A grelha de 5 colunas iguais (a barra tem de ter cinco itens, não quatro nem seis).
+ *  4. A marca de âmbar é UMA só: um `::before` de 2 px, no topo da CÉLULA ativa, com a
+ *     largura toda dela (20 % da barra). Não há `border-top` global de 100 % nem traço de
+ *     18 px junto ao ícone — as duas marcas que a UX-02 tinha e que eram defeito. A cor lê
+ *     o token, não se escreve à mão.
+ *  5. O conteúdo nunca por baixo da barra: `.z-main` reserva `--z-tabbar-height` no `padding`.
+ *  6. O `:active` do círculo mantém a tinta legível (a razão pela qual a correção desta frente
+ *     trocou `--z-highlight-strong` por `--z-highlight-hover`).
+ */
+describe('a navegação (UX-02) mede o que afirma', () => {
+  const css = (): string => readFileSync(APP, 'utf8');
+  const shell = (): string => readFileSync(SHELL, 'utf8');
+
+  /** Declarações da regra cujo seletor começa exatamente por `seletor` + `{`. */
+  function regra(cssTexto: string, seletor: string): string {
+    const re = new RegExp(
+      `${seletor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]*)\\}`,
+    );
+    const achado = re.exec(cssTexto);
+    if (!achado) throw new Error(`app.css: regra "${seletor}" não encontrada`);
+    return achado[1] ?? '';
+  }
+
+  it('o círculo do «Registar» é 34 px — pequeno, não um botão sobressalente', () => {
+    const decls = regra(css(), '.z-tabbar__action');
+    expect(decls, 'largura do círculo').toMatch(/width:[ \t]*34px;/);
+    expect(decls, 'altura do círculo').toMatch(/height:[ \t]*34px;/);
+    /*
+     * Anti-vacuidade e contra-pedido: o círculo NÃO pode ser maior que o alvo dos vizinhos.
+     * Se alguém o «melhorar» para 48/56 px (o que o pedido proíbe — «sem dimensão exagerada»),
+     * esta contagem pega-o. O alvo da barra tem de cobrir os 44 px do `--z-touch`, e o círculo
+     * tem de ficar ABAIXO disso — é isso que o mantém «sem dimensão exagerada».
+     */
+    const alvo = regra(css(), '.z-tabbar__link');
+    const m = /min-height:[ \t]*(\d+)px;/.exec(alvo);
+    expect(m, 'min-height do alvo da barra').not.toBeNull();
+    expect(Number.parseInt(m?.[1] ?? '0', 10), 'alvo da barra cobre os 44 px').toBeGreaterThanOrEqual(44);
+    expect(34).toBeLessThan(44);
+  });
+
+  it('a barra tem cinco colunas iguais e cinco itens no componente', () => {
+    expect(regra(css(), '.z-tabbar'), 'grelha da barra').toMatch(
+      /grid-template-columns:[ \t]*repeat\(5,[ \t]*1fr\);/,
+    );
+    /*
+     * O componente tem de ter exatamente 5 filhos diretos de navegação. Contam-se as tags de
+     * topo do `<nav className="z-tabbar">`: dois `<TabLink>` de texto, o botão de ação e mais
+     * dois `<TabLink>` — 4 componentes + 1 `<button>`. Fixar o número prova o «5 itens», que é
+     * um requisito explícito; se alguém acrescentar um destino, isto cai.
+     */
+    const nav = /<nav className="z-tabbar"[\s\S]*?<\/nav>/.exec(shell());
+    expect(nav, 'bloco <nav class="z-tabbar"> não encontrado em AppShell.tsx').not.toBeNull();
+    const corpo = nav?.[0] ?? '';
+    const etiquetas = [...corpo.matchAll(/<(TabLink|button)\b/g)].map((m) => m[1]);
+    expect(etiquetas, `itens de topo da barra: ${etiquetas.join(', ')}`).toHaveLength(5);
+    expect(etiquetas.filter((t) => t === 'button'), 'o «Registar» é o único botão').toHaveLength(1);
+  });
+
+  it('o alvo de toque de cada item da barra cobre os 44 px do desenho', () => {
+    // 56 px declarados; acima do mínimo de 44 px. O número está fixado, não derivado, para
+    // que baixá-lo para 40 px (abaixo do mínimo tátil) faça cair o teste.
+    const decls = regra(css(), '.z-tabbar__link');
+    const m = /min-height:[ \t]*(\d+)px;/.exec(decls);
+    expect(m, 'min-height do item da barra').not.toBeNull();
+    const altura = Number.parseInt(m?.[1] ?? '0', 10);
+    expect(altura, 'altura do alvo').toBeGreaterThanOrEqual(44);
+    // O token do desenho (`--z-touch`) continua a prometer os 44 px. Não é uma cor, por isso
+    // não passa pelo `resolver` — lê-se do texto do tema, com o número fixado.
+    const toque = /--z-touch:[ \t]*(\d+)px;/.exec(readFileSync(TEMA, 'utf8'));
+    expect(toque?.[1], '--z-touch em theme.css').toBe('44');
+  });
+
+  it('a barra NÃO tem linha de âmbar global no topo (a marca é uma só, na célula ativa)', () => {
+    /*
+     * A UX-02 tinha DUAS marcas de âmbar: uma `border-top` contínua de 100 % no `.z-tabbar` e
+     * um traço de 18 px junto ao ícone. As duas estavam erradas e foram removidas — a marca
+     * é UMA, de 2 px, com a largura da CÉLULA ativa.
+     *
+     * A guarda é uma AUSÊNCIA, e é deliberadamente **global ao ficheiro**: procura um
+     * `border-top` com a tinta de destaque em QUALQUER regra cujo seletor seja `.z-tabbar` ou
+     * comece por `.z-tabbar` (as variantes `:hover`, `[aria-current]` incluídas).
+     *
+     * Porque não basta ler só a regra `.z-tabbar`: uma regra *acrescentada antes* dela (por
+     * exemplo `.z-tabbar { border-top: … }` inserida no topo do ficheiro) perde a cascata
+     * para a regra original que se segue, e um leitor da primeira regra dava falso verde.
+     * Provar o ABSENTE obriga a olhar para todas as ocorrências.
+     */
+    const regrasBarra = [...css().matchAll(/\.z-tabbar(?:\b[\s:.\[][^\n{]*?)?\s*\{([^}]*)\}/g)];
+    expect(regrasBarra.length, 'regras `.z-tabbar*` encontradas').toBeGreaterThanOrEqual(2);
+    const comLinha = regrasBarra
+      .filter(([, decls]) => /border-top:[^;]*(?:--z-highlight|#[0-9a-fA-F]{3,8})/.test(decls))
+      .map(([sel]) => sel.trim().split('{')[0].trim());
+    expect(comLinha, `regras com border-top de âmbar: ${comLinha.join(' | ') || '(nenhuma)'}`).toEqual([]);
+
+    /*
+     * E o traço de 18 px junto ao ícone também não pode voltar: era um `::after` na caixa do
+     * ícone. A regra não existe; se reaparecer, cai.
+     */
+    expect(
+      () => regra(css(), ".z-tabbar__link[aria-current='page'] .z-tabbar__icon::after"),
+      'o `::after` do ícone não pode voltar',
+    ).toThrow(/não encontrada/);
+  });
+
+  it('o indicador do destino ativo ocupa a CÉLULA inteira, no topo dela, e lê o token', () => {
+    /*
+     * O indicador vive na célula (`[aria-current='page']`), não no ícone: a célula é 20 % da
+     * barra e é o que se toca, por isso o indicador tem de ter exatamente essa largura.
+     *
+     * `left: 0; right: 0` (em vez de `width: 18px`) é o que garante que ele cobra a largura da
+     * célula seja ela qual for — com `grid-template-columns: repeat(5, 1fr)` são 20 % da barra,
+     * e nenhuma medida fixa em px o conseguiria acompanhar.
+     */
+    const indicador = regra(css(), ".z-tabbar__link[aria-current='page']::before");
+    expect(indicador, 'o indicador lê o token, não um hexadecimal').toContain(
+      'background: var(--z-highlight);',
+    );
+    expect(indicador, 'o indicador não pode ser uma cor escrita à mão').not.toMatch(
+      /#[0-9a-fA-F]{3,8}/,
+    );
+    // Está no TOPO da célula (não em baixo, não entre o ícone e o rótulo).
+    expect(indicador, 'o indicador está no topo').toMatch(/top:[ \t]*0;/);
+    // Ocupa a largura TODA da célula: as duas âncoras, não uma medida em px.
+    expect(indicador, 'o indicador começa no bordo esquerdo da célula').toMatch(/left:[ \t]*0;/);
+    expect(indicador, 'o indicador acaba no bordo direito da célula').toMatch(/right:[ \t]*0;/);
+    expect(indicador, 'o indicador não tem uma largura fixa (perderia a célula)').not.toMatch(
+      /width:[ \t]*\d+px;/,
+    );
+    // Espessura de 2 px — o mesmo peso da linha que substitui.
+    expect(indicador, 'o indicador tem 2 px').toMatch(/height:[ \t]*2px;/);
+
+    /*
+     * A âncora é a CÉLULA. Sem `position: relative` na `.z-tabbar__link`, um `absolute`
+     * resolver-se-ia contra a `.z-tabbar` (que é `fixed`) e a linha sairia no topo da BARRA —
+     * o defeito exato que esta correção remove. A guarda fixa a âncora.
+     *
+     * Lê a ÚLTIMA declaração `position:` do bloco, e não a presença da string: dentro do mesmo
+     * bloco, um `position: static;` acrescentado depois vence o `relative` na cascata e um
+     * `toMatch(/relative/)` continuaria verde — um falso verde que a mutação M6 expôs.
+     */
+    const posicoes = [...regra(css(), '.z-tabbar__link').matchAll(/position:[ \t]*([a-z-]+);/g)].map(
+      (m) => m[1],
+    );
+    expect(posicoes.length, 'declarações `position` na célula').toBeGreaterThanOrEqual(1);
+    expect(posicoes.at(-1), 'a célula é o contexto de posicionamento (última `position`)').toBe(
+      'relative',
+    );
+  });
+
+  it('o `:active` do círculo mantém a tinta acima de 4,5:1 (âmbar-400, não âmbar-600)', () => {
+    /*
+     * Esta é a guarda do defeito que o UX-02 corrigiu. O `:active` usava `--z-highlight-strong`
+     * (âmbar-600): âmbar-900 sobre âmbar-600 dá 3,22:1 no tema claro — abaixo dos 4,5:1. A
+     * correção lê `--z-highlight-hover` (âmbar-400), que sobe a tinta a 6,18:1.
+     *
+     * A asserção é dupla de propósito: (a) a regra lê o token certo — se voltar a
+     * `--z-highlight-strong`, cai; (b) a tinta sobre esse token PASSA o limiar — se um dia o
+     * token for redefinido para um tom escuro, cai também.
+     */
+    const decls = regra(css(), '.z-tabbar__link--action:active .z-tabbar__action');
+    expect(decls, 'o `:active` do círculo').toContain('background: var(--z-highlight-hover);');
+    expect(decls, 'o `:active` não usa o tom que reprovava').not.toContain('--z-highlight-strong');
+
+    const tinta = corClaro('--z-highlight-contrast');
+    const fundoClaro = corClaro('--z-highlight-hover');
+    const fundoEscuro = corEscuro('--z-highlight-hover');
+    expect(
+      razao(tinta, fundoClaro),
+      `tinta ${tinta} sobre o preenchimento premido (claro) ${fundoClaro}`,
+    ).toBeGreaterThanOrEqual(TEXTO);
+    expect(
+      razao(corEscuro('--z-highlight-contrast'), fundoEscuro),
+      `tinta sobre o preenchimento premido (escuro) ${fundoEscuro}`,
+    ).toBeGreaterThanOrEqual(TEXTO);
+
+    // Contra-prova: o tom antigo NÃO passava. Se alguém o repuser, os números explicam-no.
+    expect(razao(tinta, corClaro('--z-highlight-strong'))).toBeLessThan(TEXTO);
+  });
+
+  it('o círculo e o traço distinguem-se do chão em petróleo (objeto gráfico ≥3:1)', () => {
+    // A barra é a única superfície que inverte: petróleo-900. Como objeto gráfico, o âmbar
+    // tem de se destacar dela — nos dois temas, já que `--z-highlight` muda (500→400).
+    const chao = corClaro('--z-petrol-900');
+    expect(chao).toBe(resolver('--z-petrol-900', escuro, claro));
+    expect(razao(corClaro('--z-highlight'), chao), 'âmbar sobre petróleo (claro)').toBeGreaterThanOrEqual(GRAFICO);
+    expect(razao(corEscuro('--z-highlight'), chao), 'âmbar sobre petróleo (escuro)').toBeGreaterThanOrEqual(GRAFICO);
+  });
+
+  it('o conteúdo nunca fica atrás da barra: `.z-main` reserva a altura dela', () => {
+    const decls = regra(css(), '.z-main');
+    expect(decls, 'o `padding-block-end` de `.z-main`').toMatch(
+      /padding:[^;]*calc\(var\(--z-tabbar-height\) \+ var\(--z-space-6\)\)/,
+    );
+  });
+
+  it('a barra lateral tem `aria-current` com fundo de acento e ícone a acompanhar', () => {
+    const ativo = regra(css(), ".z-sidebar__link[aria-current='page']");
+    expect(ativo, 'item ativo da barra lateral').toContain('background: var(--z-accent-soft);');
+    expect(ativo).toContain('color: var(--z-accent-ink);');
+    // O ícone acompanha por `currentColor` — sem uma regra própria ficaria com a tinta muted
+    // e a linha «ativa» teria um ícone desalinhado da cor do rótulo.
+    const iconeAtivo = regra(css(), ".z-sidebar__link[aria-current='page'] .z-sidebar__icon");
+    expect(iconeAtivo, 'ícone do item ativo').toContain('color: var(--z-accent-ink);');
+  });
+
+  it('o estado premido da barra lateral e do botão de ícone devolve retorno', () => {
+    // Em ecrãs táteis largos não há `:hover`: sem `:active` o toque não devolve nada (§43).
+    expect(regra(css(), '.z-sidebar__link:active')).toContain('background: var(--z-border);');
+    expect(regra(css(), '.z-icon-btn:active')).toContain('background: var(--z-border);');
+  });
+
+  it('a envolvente do ícone com badge é `relative`, ou o número foge do glifo', () => {
+    // `.z-icon-btn__glyph` existe para ancorar o `.z-tabbar__badge` absoluto no glifo e não no
+    // botão (que é maior). Sem `position: relative`, o badge afasta-se do ícone.
+    const glyph = regra(css(), '.z-icon-btn__glyph');
+    expect(glyph, 'posicionamento da envolvente').toContain('position: relative;');
+    expect(shell(), 'o Topbar usa a envolvente').toContain('z-icon-btn__glyph');
+  });
+
+  it('a transição da barra e da lateral usam os tokens de movimento da UX-01', () => {
+    // Nenhuma duração nova: as três (`0.14`/`0.16`/`0.18`) já existem; a barra usa a do meio.
+    for (const seletor of ['.z-tabbar__link', '.z-tabbar__action', '.z-sidebar__link', '.z-sidebar__icon']) {
+      expect(regra(css(), seletor), seletor).toMatch(/transition(-property)?:[^;]*var\(--z-duration\)/);
+    }
+  });
+
+  /*
+   * O «Registar» é um `<button>` e os vizinhos são `<a>`. Medido no browser (UX-02):
+   * sem `appearance: none` + `border: 0` + `background: none`, o `<button>` herda o estilo
+   * padrão do motor — `background: rgb(240, 240, 240)` e `border: 2px outset rgb(0,0,0)` —
+   * e o centro da barra aparece como um retângulo cinzento com moldura preta. Nenhuma
+   * asserção de cor apanhava isto (é cromo, não cor de tinta), e por isso fica aqui: o
+   * reset do cromo do botão é medido por leitura do CSS.
+   */
+  it('o «Registar» repõe o cromo padrão do `<button>` antes de se pintar', () => {
+    const decls = regra(css(), '.z-tabbar__link--action');
+    for (const prop of ['appearance: none;', 'border: 0;', 'background: none;']) {
+      expect(decls, `o reset do botão precisa de \`${prop}\``).toContain(prop);
+    }
+    // O botão é o único item com o reset; os outros são `<a>` e não têm cromo para repor.
+    expect(css(), 'o reset não pode ir para o item genérico').not.toMatch(
+      /\.z-tabbar__link \{[^}]*appearance: none;/,
+    );
   });
 });
