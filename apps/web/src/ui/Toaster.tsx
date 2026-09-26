@@ -20,23 +20,86 @@ import {
 
 export type ToastVariant = 'info' | 'ok' | 'danger';
 
+/** Uma ação do aviso: um rótulo curto e o que fazer quando é escolhida. */
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
 export interface Toast {
   id: number;
   message: string;
   variant: ToastVariant;
-  /** Ação opcional, ex.: "Anular" depois de marcar uma notificação como lida. */
-  action?: { label: string; onClick: () => void };
+  /**
+   * Ações opcionais — ex.: «Ver registo» · «Novo registo» depois de guardar (§52), ou «Anular»
+   * depois de marcar uma notificação como lida.
+   *
+   * É uma **lista** e não uma ação única: a decisão 52 pede duas escolhas na mesma confirmação,
+   * e forçar um formato de uma só ação obrigaria o segundo sítio a inventar o seu próprio aviso
+   * — que é precisamente a duplicação que se quer evitar. A ordem é a da lista.
+   */
+  actions?: ToastAction[];
 }
 
 interface ToastContextValue {
   toasts: Toast[];
-  show: (message: string, options?: { variant?: ToastVariant; action?: Toast['action']; durationMs?: number }) => void;
+  show: (message: string, options?: { variant?: ToastVariant; actions?: ToastAction[]; durationMs?: number }) => void;
   dismiss: (id: number) => void;
 }
 
 const ToastContext = createContext<ToastContextValue | null>(null);
 
 const DEFAULT_DURATION = 4500;
+/** Com ações, o aviso fica mais tempo: escolher leva mais do que ler. */
+const ACTION_DURATION = 7000;
+
+/**
+ * Cartão de um aviso.
+ *
+ * Extraído do provedor para poder ser **renderizado num teste** (`renderToStaticMarkup`) sem um
+ * DOM e sem disparar eventos: é a única forma de afirmar que as duas ações da decisão 52
+ * aparecem de facto no aviso, e não apenas que o código as constrói.
+ */
+export function ToastView({ toast, onDismiss }: { toast: Toast; onDismiss: (id: number) => void }) {
+  const temAcoes = (toast.actions?.length ?? 0) > 0;
+
+  return (
+    /*
+     * `z-toast--acoes` muda só a arrumação: com ações, a mensagem ocupa a linha inteira e as
+     * ações descem para a sua própria linha. Dois alvos de 44 px (`--z-touch`) mais o fechar
+     * não cabem ao lado de um texto num aviso de 360 px — e espremer a mensagem numa coluna
+     * de duas letras seria pior do que acrescentar uma linha (ver `app.css`).
+     */
+    <div className={`z-toast z-toast--${toast.variant}${temAcoes ? ' z-toast--acoes' : ''}`}>
+      <span className="z-toast__message">{toast.message}</span>
+      {toast.actions?.map((action) => (
+        <button
+          key={action.label}
+          type="button"
+          /*
+           * Sem `z-btn--sm`: essa variante fixa 36 px de altura, abaixo dos 44 px da política
+           * de toque. Sem `style` inline: o tamanho e a tinta vivem em `.z-toast__action`.
+           */
+          className="z-btn z-btn--ghost z-toast__action"
+          onClick={() => {
+            action.onClick();
+            onDismiss(toast.id);
+          }}
+        >
+          {action.label}
+        </button>
+      ))}
+      <button
+        type="button"
+        className="z-toast__close"
+        aria-label="Fechar aviso"
+        onClick={() => onDismiss(toast.id)}
+      >
+        ×
+      </button>
+    </div>
+  );
+}
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -62,10 +125,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         id,
         message,
         variant: options.variant ?? 'info',
-        ...(options.action ? { action: options.action } : {}),
+        ...(options.actions && options.actions.length > 0 ? { actions: options.actions } : {}),
       };
       setToasts((current) => [...current, toast]);
-      const duration = options.durationMs ?? (options.action ? 7000 : DEFAULT_DURATION);
+      const duration = options.durationMs ?? (toast.actions ? ACTION_DURATION : DEFAULT_DURATION);
       timers.current.set(
         id,
         setTimeout(() => dismiss(id), duration),
@@ -94,30 +157,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       */}
       <div className="z-toasts" role="status" aria-live="polite">
         {toasts.map((toast) => (
-          <div key={toast.id} className={`z-toast z-toast--${toast.variant}`}>
-            <span className="z-toast__message">{toast.message}</span>
-            {toast.action && (
-              <button
-                type="button"
-                className="z-btn z-btn--sm z-btn--ghost"
-                style={{ color: 'inherit', minHeight: 28 }}
-                onClick={() => {
-                  toast.action?.onClick();
-                  dismiss(toast.id);
-                }}
-              >
-                {toast.action.label}
-              </button>
-            )}
-            <button
-              type="button"
-              className="z-toast__close"
-              aria-label="Fechar aviso"
-              onClick={() => dismiss(toast.id)}
-            >
-              ×
-            </button>
-          </div>
+          <ToastView key={toast.id} toast={toast} onDismiss={dismiss} />
         ))}
       </div>
     </ToastContext.Provider>

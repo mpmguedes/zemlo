@@ -1421,8 +1421,13 @@ a.z-list__item:hover {
 
 .z-toast {
   display: flex;
-  align-items: flex-start;
-  gap: var(--z-space-3);
+  /*
+   * `wrap` e não `nowrap`: com ações, os controlos descem para a sua própria linha em vez de
+   * espremerem a mensagem (ver `.z-toast--acoes`). Sem ações, nada muda.
+   */
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--z-space-2) var(--z-space-3);
   padding: var(--z-space-3) var(--z-space-4);
   border-radius: var(--z-radius);
   background: var(--z-bg-inverse);
@@ -1430,6 +1435,95 @@ a.z-list__item:hover {
   box-shadow: var(--z-shadow-3);
   font-size: var(--z-text-sm);
   pointer-events: auto;
+}
+
+.z-toast__message {
+  flex: 1 1 auto;
+  /* Deixa o texto encolher e quebrar em vez de empurrar os controlos para fora do aviso. */
+  min-width: 0;
+}
+
+/*
+ * Aviso com ações: a mensagem ocupa a linha inteira e as ações descem.
+ *
+ * É o preço medido de cumprir a política de toque: dois alvos de 44 px (`--z-touch`) mais o
+ * fechar ocupam ~290 px, e o aviso tem 328 px de largura útil em ambiente de trabalho e ~296 px
+ * em telemóvel. Ao lado da mensagem não cabem; espremer o texto numa coluna de duas letras
+ * seria pior do que acrescentar uma linha. Sem ações — a maioria dos avisos — a linha é única,
+ * como sempre foi.
+ */
+.z-toast--acoes .z-toast__message {
+  flex: 1 1 100%;
+}
+
+/*
+ * Área de toque das ações e do fechar.
+ *
+ * A política do produto é 44 px (`--z-touch`, `theme.css`). As duas formas anteriores não a
+ * cumpriam: `.z-btn--sm` fixa 36 px de altura e um `style` inline forçava 28 px; o fechar não
+ * tinha caixa nenhuma (só o glifo). O botão de ação é «ghost» — fundo transparente — pelo que
+ * crescer a caixa não acrescenta peso visual nenhum: acrescenta área clicável.
+ *
+ * Para o aviso não engordar, a caixa de 44 px transborda para dentro do `padding` em vez de o
+ * esticar. As margens verticais negativas valem metade da diferença entre a caixa (44 px) e a
+ * linha que o texto ocupa (~28 px), pelo que a altura da linha fica como estava e os 44 px
+ * cabem nos 12 px de `padding` sem tocar na borda.
+ */
+.z-toast__action,
+.z-toast__close {
+  min-height: var(--z-touch);
+  margin-block: calc(var(--z-space-2) * -1);
+}
+
+.z-toast__action {
+  /*
+   * A tinta vem do aviso (`--z-ok-contrast`), não do botão: sobre a superfície verde do aviso,
+   * a tinta de acento do `.z-btn--ghost` perderia contraste. Era um `style` inline no JSX;
+   * passa para aqui, onde as regras do aviso vivem juntas.
+   */
+  color: inherit;
+  /* O mesmo `padding` horizontal que o `.z-btn--sm` dava — a largura visível não muda. */
+  padding: 0 var(--z-space-3);
+}
+
+/*
+ * Hover das ações.
+ *
+ * O `.z-btn--ghost` da casa clareia o fundo com `--z-accent-soft` e muda a tinta para sinalizar
+ * o hover. Aqui não serve: sobre a superfície do aviso (petróleo-700, ou o verde/laranja sólidos
+ * do `ok`/`danger`) o `--z-accent-soft` é um verde-claro que **apaga** a tinta do aviso — medido
+ * em 1,27:1, branco sobre `#cdeae8`. O aviso é uma superfície sólida de estado; o hover tem de
+ * ser um véu da sua própria cor, não a superfície de acento da casa.
+ *
+ * O véu é uma tinta NEUTRA, e como tinta neutra serve os três fundos sem saber qual deles está
+ * por baixo: sobre petróleo-700 fica mais claro, sobre o `--z-ok` do tema escuro (#4bbd8a) fica
+ * mais escuro. Escurecer nesse verde é o que conserva o `--z-ok-contrast` (#06232a) — o mesmo
+ * `--z-accent-soft`, ali, daria 2,59:1.
+ *
+ * As opacidades NÃO são iguais nos dois temas, e têm de não ser. As superfícies do tema claro
+ * (#1b784f, #c2410c) são MAIS ESCURAS do que as do tema escuro (#4bbd8a, #ef8a63), pelo que um
+ * véu branco de 16 % no claro sobe o fundo até o branco deixar de ter 4,5:1 — medido em 3,97:1
+ * (ok) e 4,00:1 (danger). Com 8 % o claro fica em 4,65:1 e 4,57:1; o escuro fica em 6,97:1 e
+ * 6,01:1. Tudo medido em Chromium, sobre a marcação do componente verdadeiro
+ * (`docs/PROPOSAL-A3-UX-TOAST-TOUCH.md`).
+ *
+ * Só o hover muda. O `:focus-visible` continua a ser o contorno de acento da casa (§32), que já
+ * tem 2 px e contraste próprio; o `:active` continua a ser a escala do `.z-btn`.
+ *
+ * O seletor repete `:not(:disabled)` de propósito: o `:hover` do `.z-btn--ghost` é
+ * `.z-btn--ghost:hover:not(:disabled)` — especificidade (0,3,0), porque o `:not()` conta o
+ * argumento —, e um `.z-toast__action:hover` simples (0,2,0) perderia a cascata. Com a mesma
+ * especificidade, a regra que vem depois ganha. Medido: sem isto, o fundo continuava a ser o
+ * `--z-accent-soft` e o contraste ficava em 2,57:1.
+ */
+.z-toast__action:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+@media (prefers-color-scheme: dark) {
+  .z-toast__action:hover:not(:disabled) {
+    background: rgba(0, 0, 0, 0.1);
+  }
 }
 
 .z-toast--ok {
@@ -1443,6 +1537,11 @@ a.z-list__item:hover {
 }
 
 .z-toast__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 44 × 44 px: a mesma política das ações, mesmo com um glifo de 16 px. */
+  min-width: var(--z-touch);
   margin-left: auto;
   border: 0;
   background: transparent;
@@ -1914,6 +2013,335 @@ a.z-timeline__item:hover {
 .z-tabs__tab[aria-selected='true'] {
   color: var(--z-accent-ink);
   border-bottom-color: var(--z-accent);
+}
+
+/* ========================================================================== */
+/* 18b. Cartão de veículo (decisão UX/UI 43)                                  */
+/* ========================================================================== */
+
+/*
+ * O cartão de veículo é a superfície de marca da página de veículos: fundo em gradiente
+ * de petróleo, texto inverso, e um glifo do tipo de veículo. A referência visual é o
+ * `hero` do protótipo `A1_3` (`outputs/zemlo-ux-ui-prototipo.html`), adaptada à grelha.
+ *
+ * Porque é que o cartão é escuro nos DOIS temas: o gradiente assenta em `--z-petrol-900`
+ * e `--z-petrol-700`, que o tema escuro NÃO altera (as escalas de marca são as mesmas).
+ * Logo o texto é sempre `--z-text-on-inverse` e as tintas de estado são as
+ * `--z-*-on-inverse` de `theme.css` — nunca as do tema claro, que dão 1,99:1 e 1,67:1
+ * sobre petróleo-700.
+ */
+
+.z-vehicle-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--z-space-4);
+  margin-top: var(--z-space-4);
+}
+
+@media (min-width: 760px) {
+  .z-vehicle-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.z-vehicle-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-3);
+  /* A largura útil é a do `.z-main`, que já reserva `--z-space-4` de margem lateral em
+     telemóvel. O cartão não acrescenta margem própria: quem controla a margem da página
+     é a página, não o cartão. */
+  padding: var(--z-space-5);
+  border-radius: var(--z-radius-lg);
+  background: linear-gradient(120deg, var(--z-petrol-900), var(--z-petrol-700));
+  color: var(--z-text-on-inverse);
+  box-shadow: var(--z-shadow-2);
+  overflow: hidden;
+  text-decoration: none;
+  transition: box-shadow 140ms ease, transform 140ms ease;
+}
+
+/* O círculo decorativo do protótipo A1_3. É ornamento puro: não transporta informação,
+   não tem nome acessível e não capta o ponteiro. */
+.z-vehicle-card::after {
+  content: '';
+  position: absolute;
+  width: 220px;
+  height: 220px;
+  right: -70px;
+  top: -92px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 50%;
+  box-shadow: 0 0 0 24px rgba(255, 255, 255, 0.04), 0 0 0 48px rgba(255, 255, 255, 0.03);
+  pointer-events: none;
+}
+
+/* O conteúdo fica por cima do círculo. */
+.z-vehicle-card > * {
+  position: relative;
+  z-index: 1;
+}
+
+a.z-vehicle-card:hover {
+  box-shadow: var(--z-shadow-3);
+  transform: translateY(-2px);
+}
+
+/* Retorno de toque (A1_4 `A11Y-08`): sem isto, tocar num cartão em telemóvel não produz
+   retorno nenhum — o `:hover` não existe em ecrã tátil. */
+a.z-vehicle-card:active {
+  transform: translateY(0);
+  box-shadow: var(--z-shadow-1);
+}
+
+.z-vehicle-card:focus-visible {
+  outline: 3px solid var(--z-border-focus);
+  outline-offset: 3px;
+}
+
+.z-vehicle-card__head {
+  display: flex;
+  align-items: center;
+  gap: var(--z-space-4);
+}
+
+.z-vehicle-card__glyph {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 52px;
+  height: 52px;
+  border-radius: var(--z-radius);
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--z-text-on-inverse);
+}
+
+.z-vehicle-card__glyph svg {
+  width: 28px;
+  height: 28px;
+}
+
+.z-vehicle-card__id {
+  min-width: 0;
+}
+
+.z-vehicle-card__title {
+  font-size: var(--z-text-lg);
+  font-weight: 650;
+  line-height: var(--z-leading-tight);
+  color: var(--z-text-on-inverse);
+  /* Marca + modelo podem ser longos («Mercedes-Benz Classe C 220 d AMG Line»): duas
+     linhas chegam para identificar, e a terceira seria o cartão a crescer sozinho. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.z-vehicle-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--z-space-2);
+  margin-top: var(--z-space-2);
+  font-size: var(--z-text-xs);
+  color: var(--z-text-on-inverse-muted);
+}
+
+.z-vehicle-card__meta > span + span::before {
+  content: '·';
+  margin-right: var(--z-space-2);
+}
+
+.z-vehicle-card__plate {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  color: var(--z-text-on-inverse);
+  font-weight: 600;
+}
+
+.z-vehicle-card__status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--z-space-2);
+  align-self: flex-start;
+  padding: var(--z-space-2) var(--z-space-3);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--z-radius-pill);
+  background: rgba(255, 255, 255, 0.1);
+  font-size: var(--z-text-xs);
+  font-weight: 600;
+  color: var(--z-text-on-inverse);
+}
+
+.z-vehicle-card__dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--z-ok-on-inverse);
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.12);
+}
+
+.z-vehicle-card__dot--warn {
+  background: var(--z-warn-on-inverse);
+}
+
+.z-vehicle-card__dot--danger {
+  background: var(--z-danger-on-inverse);
+}
+
+.z-vehicle-card__foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--z-space-3);
+  /* Empurra o rodapé para o fundo, para que dois cartões lado a lado com títulos de
+     alturas diferentes alinhem os números. */
+  margin-top: auto;
+  padding-top: var(--z-space-3);
+  border-top: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.z-vehicle-card__odometer {
+  /*
+   * 18 px, o mesmo passo do título — e não `--z-text-xl` (22 px), como estava.
+   *
+   * A decisão 43 põe «marca + modelo em destaque» e tudo o resto abaixo. Com o número a
+   * 22 px e o nome a 18 px, o cartão lia-se pela quilometragem: o elemento mais visível
+   * era o secundário, e a hierarquia pedida estava invertida. Baixar o número é a
+   * correção segura; subir o nome não é — medido em Chromium, a 360 px de largura, um
+   * nome real («Mercedes-Benz Classe C 220 d AMG Line») precisa de 3 linhas a 22 px e é
+   * cortado pela limitação de 2, enquanto a 18 px cabe em 2 sem corte. Truncar o nome para
+   * o destacar seria trocar um defeito por outro pior.
+   */
+  font-size: var(--z-text-lg);
+  font-weight: 700;
+  line-height: var(--z-leading-tight);
+  font-variant-numeric: tabular-nums;
+  color: var(--z-text-on-inverse);
+}
+
+.z-vehicle-card__foot-label {
+  display: block;
+  font-size: var(--z-text-xs);
+  font-weight: 400;
+  color: var(--z-text-on-inverse-muted);
+}
+
+.z-vehicle-card__reading {
+  text-align: right;
+  font-size: var(--z-text-xs);
+  color: var(--z-text-on-inverse-muted);
+}
+
+/* ========================================================================== */
+/* 18c. Seletor de veículo (decisões UX/UI 55 e 56)                          */
+/* ========================================================================== */
+
+/*
+ * A `56` pede o cartão da `43` numa densidade menor, não um cartão novo. Por isso aqui **não
+ * há uma segunda família de cartões**: há um modificador de densidade sobre a família que já
+ * existe, e duas peças de layout próprias do seletor (o campo e a lista de escolha).
+ *
+ * A identidade — gradiente de petróleo, texto inverso, glifo SVG, nome, matrícula — é a mesma,
+ * porque vem toda das regras acima. O que muda é só o que ocupa espaço.
+ */
+
+/* Menos preenchimento e sem o círculo decorativo: numa lista de escolha, a altura é o que
+   decide quantos veículos cabem no ecrã sem deslocamento. */
+.z-vehicle-card--compact {
+  gap: var(--z-space-2);
+  padding: var(--z-space-3) var(--z-space-4);
+}
+
+.z-vehicle-card--compact::after {
+  display: none;
+}
+
+.z-vehicle-card--compact .z-vehicle-card__glyph {
+  width: 40px;
+  height: 40px;
+}
+
+.z-vehicle-card--compact .z-vehicle-card__glyph svg {
+  width: 22px;
+  height: 22px;
+}
+
+.z-vehicle-card--compact .z-vehicle-card__title {
+  font-size: var(--z-text-base);
+}
+
+.z-vehicle-card--compact .z-vehicle-card__meta {
+  margin-top: var(--z-space-1);
+}
+
+/*
+ * Retorno de toque e foco no botão. O cartão grande já tem estas regras, mas escreveu-as para
+ * `a` (é uma ligação na lista). O seletor usa `<button>`, que não as herda — e sem isto o cartão
+ * do seletor ficaria sem retorno visual nenhum ao toque, que é precisamente o defeito `A11Y-08`
+ * que a `43` corrigiu do outro lado.
+ */
+button.z-vehicle-card {
+  width: 100%;
+  border: 0;
+  font-family: inherit;
+  font-size: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+button.z-vehicle-card:hover {
+  box-shadow: var(--z-shadow-3);
+}
+
+button.z-vehicle-card:active {
+  box-shadow: var(--z-shadow-1);
+}
+
+/* O campo do formulário: rótulo, cartão compacto clicável e o `▾` que anuncia a folha. */
+.z-vehicle-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-2);
+}
+
+.z-vehicle-field__button {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: var(--z-space-3);
+}
+
+.z-vehicle-field__chevron {
+  color: var(--z-text-on-inverse-muted);
+  font-size: var(--z-text-lg);
+  line-height: 1;
+}
+
+/* A lista de escolha. */
+.z-vehicle-choice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-3);
+}
+
+/*
+ * A seleção é dita por `aria-pressed` **e** por um anel visível. Não há `✓` nem emoji: o
+ * indicador tem de sobreviver a quem não vê a cor, e o anel é o mesmo mecanismo de foco que o
+ * produto já usa em todo o lado (`--z-border-focus`).
+ */
+.z-vehicle-choice__option--selected {
+  outline: 3px solid var(--z-border-focus);
+  outline-offset: 2px;
+}
+
+/* O glifo dentro do estado vazio, para que a página não misture emoji com traço SVG. */
+.z-empty__icon svg {
+  width: 40px;
+  height: 40px;
 }
 
 /* ========================================================================== */
@@ -2621,4 +3049,148 @@ a.z-timeline__item:hover {
 
 .z-import__entry-toggle:hover {
   color: var(--z-accent-hover);
+}
+
+/* ========================================================================== */
+/* Menu de registo — decisões 46 a 50                                         */
+/* ========================================================================== */
+
+/*
+ * Ação discreta «Repetir último» (decisão 50).
+ *
+ * É uma linha de texto com contorno tracejado e não um botão sólido: a ação primária do menu
+ * é escolher um tipo, e um segundo botão de peso igual competiria com ela. O tracejado diz
+ * «atalho», que é o que ela é. Só é desenhada quando existe um tipo gravado anteriormente.
+ */
+.z-register-menu__repeat {
+  display: flex;
+  align-items: center;
+  gap: var(--z-space-2);
+  width: 100%;
+  min-height: var(--z-touch);
+  padding: var(--z-space-2) var(--z-space-3);
+  border: 1px dashed var(--z-border-strong);
+  border-radius: var(--z-radius);
+  background: transparent;
+  color: var(--z-accent-ink);
+  font-family: inherit;
+  font-size: var(--z-text-sm);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* O tipo repetido fica em tom secundário: o verbo é o que a ação faz, o substantivo é o alvo. */
+.z-register-menu__repeat-kind {
+  color: var(--z-text-muted);
+  font-weight: 500;
+}
+
+.z-register-menu__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-2);
+}
+
+/* Mesma convenção dos títulos de grupo da barra lateral — um segundo estilo de cabeçalho
+   secundário no mesmo produto seria uma inconsistência a mais. */
+.z-register-menu__title {
+  margin: 0;
+  color: var(--z-text-muted);
+  font-size: var(--z-text-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/*
+ * Grelha adaptativa (decisão 46): normalmente duas colunas.
+ *
+ * O `minmax` com `min(100%, 150px)` faz a grelha descer a **uma** coluna quando dois cartões
+ * deixariam de ser confortáveis para o polegar (a partir de ~300 px de largura útil) — em vez
+ * de os espremer. O número de linhas segue o número de opções: não há célula vazia.
+ *
+ * A partir de 700 px o painel da folha tem largura fixa de 520 px (`ui/Sheet.tsx`), pelo que
+ * a contagem é fixada em **dois**: três colunas de ~150 px num painel estreito dariam cartões
+ * mais apertados do que os do telemóvel, que é o contrário do que se quer num ecrã maior.
+ */
+.z-register-menu__grid {
+  display: grid;
+  gap: var(--z-space-3);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+}
+
+@media (min-width: 700px) {
+  .z-register-menu__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/*
+ * Cartão híbrido (decisão 47): superfície clara, borda subtil, cantos suaves e uma pequena
+ * área em petróleo — que é do **ícone** e não do cartão. Nenhum cartão é pintado de petróleo:
+ * a marca aparece em pontos de orientação, não como fundo, que é a regra que a auditoria A1.3
+ * fixa («o petróleo não deve pintar todos os cartões»).
+ */
+.z-register-card {
+  display: flex;
+  align-items: center;
+  gap: var(--z-space-3);
+  min-height: 64px;
+  padding: var(--z-space-3);
+  border: 1px solid var(--z-border);
+  border-radius: var(--z-radius-lg);
+  background: var(--z-bg-elevated);
+  box-shadow: var(--z-shadow-1);
+  color: var(--z-text);
+  font-family: inherit;
+  font-size: var(--z-text-base);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* A «pequena área petrol» da decisão 47. A tinta de acento sobre o petróleo suave mantém-se
+   acima dos 3:1 exigidos a um objeto gráfico, nos dois temas — porque ambos os tokens mudam
+   com o tema e o ícone herda `currentColor`. */
+.z-register-card__icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--z-radius);
+  background: var(--z-accent-soft);
+  color: var(--z-accent-ink);
+}
+
+.z-register-card__label {
+  min-width: 0;
+}
+
+.z-register-card:hover {
+  border-color: var(--z-accent);
+}
+
+/*
+ * Retorno de toque (decisão 47: «feedback de pressão perceptível»).
+ *
+ * Em telemóvel não existe `:hover`, pelo que sem `:active` tocar num cartão não devolvia
+ * nada — o mesmo defeito que a auditoria A1.4 registou nos itens de lista. O `scale` fica
+ * atrás de `prefers-reduced-motion`: quem pediu menos movimento continua a ter a mudança de
+ * fundo, que é o sinal que transporta a informação.
+ */
+.z-register-card:active,
+.z-register-menu__repeat:active {
+  background: var(--z-bg-sunken);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .z-register-card {
+    transition: transform 0.12s ease, border-color 0.12s ease;
+  }
+
+  .z-register-card:active {
+    transform: scale(0.985);
+  }
 }

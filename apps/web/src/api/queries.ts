@@ -48,6 +48,7 @@ import {
   type TwoFactorConfirmResponse,
   type VehicleListResponse,
 } from './queryKeys';
+import { RECORD_LIST_SEGMENT } from '../lib/recordKinds';
 
 /**
  * Funções de acesso à API, uma por endpoint.
@@ -217,12 +218,15 @@ export const createTax = (payload: Record<string, unknown>): Promise<Record<stri
 
 /** Detalhe de um registo, por tipo. As rotas de detalhe partilham o prefixo `/records`. */
 export async function fetchRecordDetail(kind: string, id: string): Promise<unknown> {
+  /*
+   * Os cinco tipos do registo rápido vêm do mapa partilhado (`lib/recordKinds.ts`), que é a
+   * fonte única de `expense → expenses`. Aqui ficam apenas os **aliases** que só a API conhece
+   * (o singular e o plural de tipos que não passam pela folha de registo rápido) — repetir o
+   * mapa completo seria uma segunda implementação da mesma regra.
+   */
   const segment: Record<string, string> = {
+    ...RECORD_LIST_SEGMENT,
     expenses: 'expenses',
-    expense: 'expenses',
-    fuel: 'fuel',
-    charging: 'charging',
-    maintenance: 'maintenance',
     insurance: 'insurance',
     inspections: 'inspections',
     inspection: 'inspections',

@@ -1,5 +1,5 @@
-import { useMemo, type FormEvent, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   formatCents,
   formatNumber,
@@ -7,6 +7,7 @@ import {
   supportsRefuelling,
   type DashboardResponse,
   type RecordKind,
+  type VehicleSummary,
 } from '@zemlo/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -34,7 +35,11 @@ import {
   useFormState,
 } from '../ui/form';
 import { useToast } from '../ui/Toaster';
+import { postSaveActions } from '../lib/postSave';
+import { rememberLastKind } from '../lib/registerMenu';
 import { CategoryPicker, MaintenanceTypePicker } from './formParts';
+import { VehicleChoice } from './VehiclePicker';
+import { resolveVehicle, vehicleOdometerInput } from '../lib/vehicleChoice';
 import {
   amountOrUndefined,
   decimalOrUndefined,
@@ -58,7 +63,14 @@ import { km } from '../lib/format';
  *     preenchidos a partir do estado real do veículo (data de hoje, quilometragem atual);
  *  2. **"Adicionar detalhes"** — o resto, incluindo tudo o que é enriquecimento;
  *  3. **guardar** — e a folha fecha, com um aviso que diz o que aconteceu e, quando a API
- *     devolve métricas derivadas (consumo, custo por 100 km), mostra-as de imediato.
+ *     devolve métricas derivadas (consumo, custo por 100 km), mostra-as de imediato. O aviso
+ *     traz as duas ações da §52 — **Ver registo** e **Novo registo** — construídas por
+ *     `lib/postSave.ts`.
+ *
+ * A folha **não navega** ao guardar (§54): fecha-se sobre o ecrã onde o utilizador estava, e a
+ * lista por baixo já foi invalidada pelo React Query. Só «Ver registo», uma escolha explícita,
+ * muda de ecrã. É por isso que não há um `navigate` solto neste ficheiro — a navegação é uma
+ * consequência de escolher uma ação, não do facto de gravar.
  *
  * Um veículo obrigatório: não existe registo sem veículo no Zemlo, e criar um "registo sem
  * veículo" seria inventar um conceito que a API não tem. Quando a conta ainda não tem
@@ -69,6 +81,12 @@ import { km } from '../lib/format';
 export interface QuickLogSheetProps {
   kind: RecordKind | null;
   onClose: () => void;
+  /**
+   * Abre o seletor de novo registo (§53) com o tipo acabado de gravar. Vem por prop, e não de
+   * `useQuickLog()`, para não criar um ciclo de importação: o provedor importa esta folha, e a
+   * folha importar o provedor fecharia o ciclo.
+   */
+  onNovoRegisto: (kind: RecordKind) => void;
 }
 
 const TITLES: Record<RecordKind, string> = {
@@ -98,13 +116,13 @@ function titleFor(kind: RecordKind): string {
  * viver dentro da área que faz deslocamento, e o botão deixaria de estar fixo no fundo:
  * invisível enquanto o utilizador preenchesse os detalhes opcionais.
  */
-export function QuickLogSheet({ kind, onClose }: QuickLogSheetProps) {
+export function QuickLogSheet({ kind, onClose, onNovoRegisto }: QuickLogSheetProps) {
   if (!kind) return null;
-  if (kind === 'expense') return <ExpenseForm onClose={onClose} />;
-  if (kind === 'fuel') return <FuelForm onClose={onClose} />;
-  if (kind === 'charging') return <ChargingForm onClose={onClose} />;
-  if (kind === 'maintenance') return <MaintenanceForm onClose={onClose} />;
-  return <OdometerForm onClose={onClose} />;
+  if (kind === 'expense') return <ExpenseForm onClose={onClose} onNovoRegisto={onNovoRegisto} />;
+  if (kind === 'fuel') return <FuelForm onClose={onClose} onNovoRegisto={onNovoRegisto} />;
+  if (kind === 'charging') return <ChargingForm onClose={onClose} onNovoRegisto={onNovoRegisto} />;
+  if (kind === 'maintenance') return <MaintenanceForm onClose={onClose} onNovoRegisto={onNovoRegisto} />;
+  return <OdometerForm onClose={onClose} onNovoRegisto={onNovoRegisto} />;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -120,8 +138,16 @@ interface SmartDefaults {
    * género de valor que passa por um `??` sem ninguém reparar. `null` é explícito: "não há".
    */
   vehicleId: string | null;
-  /** Descrição do veículo para o subtítulo da folha. Sempre preenchida. */
-  vehicleLabel: string;
+  /**
+   * O veículo resolvido — o mesmo objeto que o cartão da `43` desenha.
+   *
+   * Passou a existir com a `55`: o formulário precisa do veículo inteiro (glifo, marca, modelo,
+   * matrícula, tipo, energia) para desenhar o campo, e não só do identificador e de uma etiqueta
+   * de texto. `null` quando a conta não tem veículos — o mesmo caso de `vehicleId`.
+   */
+  vehicle: VehicleSummary | null;
+  /** Todos os veículos da conta, para a folha de escolha (`56`). */
+  vehicles: VehicleSummary[];
   odometerKm: number | null;
   odometerInput: string;
   today: string;
@@ -144,15 +170,23 @@ interface SmartDefaults {
  * consulta ao servidor deixa de ser rápido — e é por isso que este hook lê a cache em vez
  * de usar `useQuery`.
  */
-function useSmartDefaults(): SmartDefaults {
+function useSmartDefaults(overrideVehicleId: string | null = null): SmartDefaults {
   const queryClient = useQueryClient();
   const { vehicle, vehicles } = useSelectedVehicle();
   const { data: preferences } = usePreferences();
   const { data: profile } = useProfile();
 
-  // O veículo em foco, ou — quando a seleção é a conta inteira — o primeiro da lista, que a
-  // API ordena por atividade recente.
-  const resolved = vehicle ?? vehicles[0] ?? null;
+  /*
+   * O veículo escolhido no próprio formulário (`55`) tem prioridade sobre o contexto; sem
+   * escolha, vale o veículo em foco e, quando a seleção é a conta inteira, o primeiro da lista —
+   * que a API ordena por atividade recente.
+   *
+   * A ordem desta resolução é o que faz a pré-seleção automática: o formulário abre já no
+   * veículo em foco (o comportamento que a `55` pede para preservar) e só muda se o utilizador
+   * escolher outro. A regra vive em `lib/vehicleChoice.ts` para poder ser provada sem DOM — o
+   * projeto não usa `jsdom` —, e aqui fica apenas a ligação ao estado da aplicação.
+   */
+  const resolved = resolveVehicle(vehicles, overrideVehicleId ?? vehicle?.id ?? null);
   const resolvedId = resolved?.id;
   const dashboard = resolvedId
     ? queryClient.getQueryData<DashboardResponse>(queryKeys.dashboard(resolvedId))
@@ -190,16 +224,15 @@ function useSmartDefaults(): SmartDefaults {
     }
   }, []);
 
-  const label = resolved
-    ? `${resolved.emoji} ${[resolved.make, resolved.model].filter(Boolean).join(' ') || resolved.plateDisplay} · ${resolved.plateDisplay}`
-    // Nunca é mostrado: os formulários já não chegam a desenhar-se sem veículo. Existe para
-    // que `vehicleLabel` seja sempre uma cadeia — um subtítulo opcional que aparece como
-    // "undefined" no cabeçalho de uma folha é o tipo de defeito que ninguém dá por ele.
-    : 'o teu veículo';
-
+  /*
+   * A etiqueta de texto do veículo (`vehicleLabel`) foi removida com a `55`: o veículo passou a
+   * ser desenhado pelo cartão da `43` no campo do topo, e uma segunda versão do mesmo nome em
+   * texto — no subtítulo da folha — diria duas vezes a mesma coisa, com o risco de divergirem.
+   */
   return {
     vehicleId: resolvedId ?? null,
-    vehicleLabel: label,
+    vehicle: resolved,
+    vehicles,
     odometerKm: resolved?.odometerKm ?? null,
     odometerInput: resolved?.odometerKm !== null && resolved?.odometerKm !== undefined ? String(resolved.odometerKm) : '',
     today: defaultDate(profile?.timeZone ?? 'Europe/Lisbon'),
@@ -259,24 +292,32 @@ function QuickFooter({
   );
 }
 
-/** Linha de contexto no fundo de cada formulário, a dizer onde o registo vai ficar. */
-function DestineRow({ label, children }: { label: string; children?: ReactNode }) {
-  return (
-    <p className="z-xs z-muted">
-      {label}
-      {children}
-    </p>
-  );
+/**
+ * Nota de rodapé, quando há uma.
+ *
+ * Já **não** diz onde o registo vai ficar: isso passou a ser o campo do topo (`55`), que o diz
+ * com o cartão do veículo e ainda o deixa trocar. Sobrou para as notas que não são sobre o
+ * destino — «este veículo não usa combustível líquido» e a explicação do recuo do odómetro.
+ * Devolve `null` sem conteúdo, para que os formulários sem nota não deixem um parágrafo vazio
+ * a ocupar espaço no fundo da folha.
+ */
+function DestineRow({ children }: { children?: ReactNode }) {
+  if (!children) return null;
+  return <p className="z-xs z-muted">{children}</p>;
 }
 
 /* -------------------------------------------------------------------------- */
 /* Despesa                                                                     */
 /* -------------------------------------------------------------------------- */
 
-function ExpenseForm({ onClose }: { onClose: () => void }) {
-  const defaults = useSmartDefaults();
+function ExpenseForm({ onClose, onNovoRegisto }: { onClose: () => void; onNovoRegisto: (kind: RecordKind) => void }) {
+  // Veículo escolhido dentro do formulário (`55`). `null` = ainda não escolheu, vale o contexto.
+  const [chosenVehicleId, setChosenVehicleId] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const defaults = useSmartDefaults(chosenVehicleId);
   const create = useCreateExpense();
   const toast = useToast();
+  const navigate = useNavigate();
   const form = useFormState({
     amount: '',
     category: 'maintenance',
@@ -286,8 +327,16 @@ function ExpenseForm({ onClose }: { onClose: () => void }) {
     description: '',
     notes: '',
   });
+  const vehicle = defaults.vehicle;
 
-  if (!defaults.vehicleId) return <NoVehicleNotice onClose={onClose} />;
+  if (!vehicle) return <NoVehicleNotice onClose={onClose} />;
+
+  /** Troca o veículo do registo (`55`) e reescreve a quilometragem com a do novo veículo. */
+  const onSelectVehicle = (vehicleId: string) => {
+    setChosenVehicleId(vehicleId);
+    setPickerOpen(false);
+    form.setValue('odometerKm', vehicleOdometerInput(resolveVehicle(defaults.vehicles, vehicleId)));
+  };
 
   const errors = fieldErrors(create.error);
 
@@ -309,8 +358,12 @@ function ExpenseForm({ onClose }: { onClose: () => void }) {
     if (notes) payload.notes = notes;
 
     try {
-      await create.mutateAsync({ payload, vehicleId: defaults.vehicleId ?? undefined });
-      toast.show(`Despesa de ${formatCents(amountCents ?? 0)} registada.`, { variant: 'ok' });
+        const created = await create.mutateAsync({ payload, vehicleId: defaults.vehicleId ?? undefined });
+        rememberLastKind('expense');
+      toast.show(`Despesa de ${formatCents(amountCents ?? 0)} registada.`, {
+        variant: 'ok',
+        actions: postSaveActions('expense', created.id, { navigate, novoRegisto: onNovoRegisto }),
+      });
       onClose();
     } catch {
       /* apresentado pelo `<FormError>` */
@@ -318,7 +371,14 @@ function ExpenseForm({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Sheet open onClose={onClose} title={titleFor('expense')} subtitle={`Registo em ${defaults.vehicleLabel}`} onSubmit={onSubmit} footer={<QuickFooter onClose={onClose} submitLabel="Guardar" pending={create.isPending} />}>
+    <Sheet open onClose={onClose} title={titleFor('expense')} onSubmit={onSubmit} suspendGlobalKeys={pickerOpen} footer={<QuickFooter onClose={onClose} submitLabel="Guardar" pending={create.isPending} />}>
+      <VehicleChoice
+        vehicles={defaults.vehicles}
+        vehicle={vehicle}
+        pickerOpen={pickerOpen}
+        onOpenChange={setPickerOpen}
+        onSelect={onSelectVehicle}
+      />
       <MoneyField
         label="Valor"
         required
@@ -376,7 +436,6 @@ function ExpenseForm({ onClose }: { onClose: () => void }) {
       </details>
 
       <FormError error={create.error} />
-      <DestineRow label={`Registo em ${defaults.vehicleLabel}.`} />
     </Sheet>
   );
 }
@@ -385,10 +444,13 @@ function ExpenseForm({ onClose }: { onClose: () => void }) {
 /* Abastecimento                                                               */
 /* -------------------------------------------------------------------------- */
 
-function FuelForm({ onClose }: { onClose: () => void }) {
-  const defaults = useSmartDefaults();
+function FuelForm({ onClose, onNovoRegisto }: { onClose: () => void; onNovoRegisto: (kind: RecordKind) => void }) {
+  const [chosenVehicleId, setChosenVehicleId] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const defaults = useSmartDefaults(chosenVehicleId);
   const create = useCreateFuel();
   const toast = useToast();
+  const navigate = useNavigate();
   const form = useFormState({
     litres: '',
     amount: '',
@@ -398,8 +460,16 @@ function FuelForm({ onClose }: { onClose: () => void }) {
     fullTank: 'true',
     notes: '',
   });
+  const vehicle = defaults.vehicle;
 
-  if (!defaults.vehicleId) return <NoVehicleNotice onClose={onClose} />;
+  if (!vehicle) return <NoVehicleNotice onClose={onClose} />;
+
+  /** Troca o veículo do registo (`55`) e reescreve a quilometragem com a do novo veículo. */
+  const onSelectVehicle = (vehicleId: string) => {
+    setChosenVehicleId(vehicleId);
+    setPickerOpen(false);
+    form.setValue('odometerKm', vehicleOdometerInput(resolveVehicle(defaults.vehicles, vehicleId)));
+  };
 
   const errors = fieldErrors(create.error);
   // O preço por litro é calculado aqui **só para dar retorno imediato** enquanto se
@@ -428,6 +498,7 @@ function FuelForm({ onClose }: { onClose: () => void }) {
 
     try {
       const session = await create.mutateAsync({ payload, vehicleId: defaults.vehicleId ?? undefined });
+      rememberLastKind('fuel');
       if (litres && amountCents !== undefined) {
         defaults.rememberPrice('fuel', Math.round(amountCents / litres));
       }
@@ -439,7 +510,10 @@ function FuelForm({ onClose }: { onClose: () => void }) {
         consumption !== null
           ? `Abastecimento registado · ${formatNumber(consumption, 2)} L/100 km neste depósito.`
           : 'Abastecimento registado.',
-        { variant: 'ok' },
+        {
+          variant: 'ok',
+          actions: postSaveActions('fuel', session.id, { navigate, novoRegisto: onNovoRegisto }),
+        },
       );
       onClose();
     } catch {
@@ -448,7 +522,14 @@ function FuelForm({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Sheet open onClose={onClose} title={titleFor('fuel')} subtitle={`Registo em ${defaults.vehicleLabel}`} onSubmit={onSubmit} footer={<QuickFooter onClose={onClose} submitLabel="Guardar" pending={create.isPending} />}>
+    <Sheet open onClose={onClose} title={titleFor('fuel')} onSubmit={onSubmit} suspendGlobalKeys={pickerOpen} footer={<QuickFooter onClose={onClose} submitLabel="Guardar" pending={create.isPending} />}>
+      <VehicleChoice
+        vehicles={defaults.vehicles}
+        vehicle={vehicle}
+        pickerOpen={pickerOpen}
+        onOpenChange={setPickerOpen}
+        onSelect={onSelectVehicle}
+      />
       <div className="z-grid z-grid--2">
         <NumberField
           label="Litros"
@@ -515,12 +596,10 @@ function FuelForm({ onClose }: { onClose: () => void }) {
       </details>
 
       <FormError error={create.error} />
-      <DestineRow
-        label={`Registo em ${defaults.vehicleLabel}.`}
-      >
+      <DestineRow>
         {defaults.canRefuel
           ? null
-          : ' Este veículo não usa combustível líquido — guardamos na mesma, se precisares.'}
+          : 'Este veículo não usa combustível líquido — guardamos na mesma, se precisares.'}
       </DestineRow>
     </Sheet>
   );
@@ -530,10 +609,13 @@ function FuelForm({ onClose }: { onClose: () => void }) {
 /* Carregamento                                                                */
 /* -------------------------------------------------------------------------- */
 
-function ChargingForm({ onClose }: { onClose: () => void }) {
-  const defaults = useSmartDefaults();
+function ChargingForm({ onClose, onNovoRegisto }: { onClose: () => void; onNovoRegisto: (kind: RecordKind) => void }) {
+  const [chosenVehicleId, setChosenVehicleId] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const defaults = useSmartDefaults(chosenVehicleId);
   const create = useCreateCharging();
   const toast = useToast();
+  const navigate = useNavigate();
   const form = useFormState({
     energyKwh: '',
     amount: '',
@@ -546,8 +628,16 @@ function ChargingForm({ onClose }: { onClose: () => void }) {
     isPublic: 'false',
     notes: '',
   });
+  const vehicle = defaults.vehicle;
 
-  if (!defaults.vehicleId) return <NoVehicleNotice onClose={onClose} />;
+  if (!vehicle) return <NoVehicleNotice onClose={onClose} />;
+
+  /** Troca o veículo do registo (`55`) e reescreve a quilometragem com a do novo veículo. */
+  const onSelectVehicle = (vehicleId: string) => {
+    setChosenVehicleId(vehicleId);
+    setPickerOpen(false);
+    form.setValue('odometerKm', vehicleOdometerInput(resolveVehicle(defaults.vehicles, vehicleId)));
+  };
 
   const errors = fieldErrors(create.error);
   const energy = decimalOrUndefined(form.values.energyKwh);
@@ -578,6 +668,7 @@ function ChargingForm({ onClose }: { onClose: () => void }) {
 
     try {
       const session = await create.mutateAsync({ payload, vehicleId: defaults.vehicleId ?? undefined });
+      rememberLastKind('charging');
       if (energy && amountCents !== undefined) {
         defaults.rememberPrice('charging', Math.round(amountCents / energy));
       }
@@ -586,7 +677,10 @@ function ChargingForm({ onClose }: { onClose: () => void }) {
         consumption !== null
           ? `Carregamento registado · ${formatNumber(consumption, 2)} kWh/100 km`
           : 'Carregamento registado.',
-        { variant: 'ok' },
+        {
+          variant: 'ok',
+          actions: postSaveActions('charging', session.id, { navigate, novoRegisto: onNovoRegisto }),
+        },
       );
       onClose();
     } catch {
@@ -595,7 +689,14 @@ function ChargingForm({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Sheet open onClose={onClose} title={titleFor('charging')} subtitle={`Registo em ${defaults.vehicleLabel}`} onSubmit={onSubmit} footer={<QuickFooter onClose={onClose} submitLabel="Guardar" pending={create.isPending} />}>
+    <Sheet open onClose={onClose} title={titleFor('charging')} onSubmit={onSubmit} suspendGlobalKeys={pickerOpen} footer={<QuickFooter onClose={onClose} submitLabel="Guardar" pending={create.isPending} />}>
+      <VehicleChoice
+        vehicles={defaults.vehicles}
+        vehicle={vehicle}
+        pickerOpen={pickerOpen}
+        onOpenChange={setPickerOpen}
+        onSelect={onSelectVehicle}
+      />
       <div className="z-grid z-grid--2">
         <NumberField
           label="Energia"
@@ -685,10 +786,10 @@ function ChargingForm({ onClose }: { onClose: () => void }) {
       </details>
 
       <FormError error={create.error} />
-      <DestineRow label={`Registo em ${defaults.vehicleLabel}.`}>
+      <DestineRow>
         {defaults.canCharge
           ? null
-          : ' Este veículo não carrega da rede — guardamos na mesma, se precisares.'}
+          : 'Este veículo não carrega da rede — guardamos na mesma, se precisares.'}
       </DestineRow>
     </Sheet>
   );
@@ -698,10 +799,13 @@ function ChargingForm({ onClose }: { onClose: () => void }) {
 /* Manutenção                                                                  */
 /* -------------------------------------------------------------------------- */
 
-function MaintenanceForm({ onClose }: { onClose: () => void }) {
-  const defaults = useSmartDefaults();
+function MaintenanceForm({ onClose, onNovoRegisto }: { onClose: () => void; onNovoRegisto: (kind: RecordKind) => void }) {
+  const [chosenVehicleId, setChosenVehicleId] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const defaults = useSmartDefaults(chosenVehicleId);
   const create = useCreateMaintenance();
   const toast = useToast();
+  const navigate = useNavigate();
   const form = useFormState({
     type: 'service',
     date: defaults.today,
@@ -713,8 +817,16 @@ function MaintenanceForm({ onClose }: { onClose: () => void }) {
     intervalMonths: '',
     notes: '',
   });
+  const vehicle = defaults.vehicle;
 
-  if (!defaults.vehicleId) return <NoVehicleNotice onClose={onClose} />;
+  if (!vehicle) return <NoVehicleNotice onClose={onClose} />;
+
+  /** Troca o veículo do registo (`55`) e reescreve a quilometragem com a do novo veículo. */
+  const onSelectVehicle = (vehicleId: string) => {
+    setChosenVehicleId(vehicleId);
+    setPickerOpen(false);
+    form.setValue('odometerKm', vehicleOdometerInput(resolveVehicle(defaults.vehicles, vehicleId)));
+  };
 
   const errors = fieldErrors(create.error);
   const intervalKm = integerOrUndefined(form.values.intervalKm);
@@ -737,12 +849,16 @@ function MaintenanceForm({ onClose }: { onClose: () => void }) {
     if (notes) payload.notes = notes;
 
     try {
-      await create.mutateAsync({ payload, vehicleId: defaults.vehicleId ?? undefined });
+      const created = await create.mutateAsync({ payload, vehicleId: defaults.vehicleId ?? undefined });
+      rememberLastKind('maintenance');
       toast.show(
         intervalKm !== undefined || intervalMonths !== undefined
           ? 'Manutenção registada e próximo lembrete criado.'
           : 'Manutenção registada.',
-        { variant: 'ok' },
+        {
+          variant: 'ok',
+          actions: postSaveActions('maintenance', created.id, { navigate, novoRegisto: onNovoRegisto }),
+        },
       );
       onClose();
     } catch {
@@ -751,7 +867,14 @@ function MaintenanceForm({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Sheet open onClose={onClose} title={titleFor('maintenance')} subtitle={`Registo em ${defaults.vehicleLabel}`} onSubmit={onSubmit} footer={<QuickFooter onClose={onClose} submitLabel="Guardar" pending={create.isPending} />}>
+    <Sheet open onClose={onClose} title={titleFor('maintenance')} onSubmit={onSubmit} suspendGlobalKeys={pickerOpen} footer={<QuickFooter onClose={onClose} submitLabel="Guardar" pending={create.isPending} />}>
+      <VehicleChoice
+        vehicles={defaults.vehicles}
+        vehicle={vehicle}
+        pickerOpen={pickerOpen}
+        onOpenChange={setPickerOpen}
+        onSelect={onSelectVehicle}
+      />
       <MoneyField
         label="Valor"
         autoFocus
@@ -830,7 +953,6 @@ function MaintenanceForm({ onClose }: { onClose: () => void }) {
       </details>
 
       <FormError error={create.error} />
-      <DestineRow label={`Registo em ${defaults.vehicleLabel}.`} />
     </Sheet>
   );
 }
@@ -852,16 +974,27 @@ function MaintenanceForm({ onClose }: { onClose: () => void }) {
  * aceitaria em silêncio um valor que recuou — e um odómetro que recua sem explicação
  * destrói a confiança em todos os cálculos que dependem dele.
  */
-function OdometerForm({ onClose }: { onClose: () => void }) {
-  const defaults = useSmartDefaults();
+function OdometerForm({ onClose, onNovoRegisto }: { onClose: () => void; onNovoRegisto: (kind: RecordKind) => void }) {
+  const [chosenVehicleId, setChosenVehicleId] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const defaults = useSmartDefaults(chosenVehicleId);
   const odometer = useRecordOdometer(defaults.vehicleId ?? undefined);
   const toast = useToast();
+  const navigate = useNavigate();
   const form = useFormState({
     odometerKm: defaults.odometerInput,
     recordedAt: defaults.today,
   });
+  const vehicle = defaults.vehicle;
 
-  if (!defaults.vehicleId) return <NoVehicleNotice onClose={onClose} />;
+  if (!vehicle) return <NoVehicleNotice onClose={onClose} />;
+
+  /** Troca o veículo do registo (`55`) e reescreve a quilometragem com a do novo veículo. */
+  const onSelectVehicle = (vehicleId: string) => {
+    setChosenVehicleId(vehicleId);
+    setPickerOpen(false);
+    form.setValue('odometerKm', vehicleOdometerInput(resolveVehicle(defaults.vehicles, vehicleId)));
+  };
 
   const errors = fieldErrors(odometer.error);
 
@@ -874,13 +1007,21 @@ function OdometerForm({ onClose }: { onClose: () => void }) {
       .catch(() => null);
     if (outcome?.kind === 'recorded') {
       const { result } = outcome;
+      rememberLastKind('odometer');
       // Os avisos não bloqueantes da API (um salto grande mas plausível) são informação
       // útil, não um erro: aparecem com o registo já feito.
+      //
+      // Sem «Ver registo»: uma leitura não tem ecrã de detalhe (ver `lib/recordKinds.ts`). O
+      // `null` no lugar do identificador é o que faz `postSaveActions` omitir a ação — em vez
+      // de oferecer um botão que levaria a uma rota inexistente.
       toast.show(
         result.warnings.length > 0
           ? `Quilometragem registada (${km(result.odometerKm)}). ${result.warnings.join(' ')}`
           : `Quilometragem registada: ${km(result.odometerKm)}.`,
-        { variant: 'ok' },
+        {
+          variant: 'ok',
+          actions: postSaveActions('odometer', null, { navigate, novoRegisto: onNovoRegisto }),
+        },
       );
       onClose();
     }
@@ -891,8 +1032,8 @@ function OdometerForm({ onClose }: { onClose: () => void }) {
       open
       onClose={onClose}
       title={titleFor('odometer')}
-      subtitle={`Registo em ${defaults.vehicleLabel}`}
       onSubmit={onSubmit}
+      suspendGlobalKeys={pickerOpen}
       footer={
         odometer.confirmation ? (
           <div className="z-sheet__footer">
@@ -906,7 +1047,11 @@ function OdometerForm({ onClose }: { onClose: () => void }) {
               onClick={() => {
                 void odometer.confirm()?.then((outcome) => {
                   if (outcome?.kind === 'recorded') {
-                    toast.show(`Quilometragem corrigida: ${km(outcome.result.odometerKm)}.`, { variant: 'ok' });
+                    rememberLastKind('odometer');
+                    toast.show(`Quilometragem corrigida: ${km(outcome.result.odometerKm)}.`, {
+                      variant: 'ok',
+                      actions: postSaveActions('odometer', null, { navigate, novoRegisto: onNovoRegisto }),
+                    });
                     onClose();
                   }
                 });
@@ -925,6 +1070,14 @@ function OdometerForm({ onClose }: { onClose: () => void }) {
           {odometer.confirmation.message}
         </Banner>
       ) : null}
+
+      <VehicleChoice
+        vehicles={defaults.vehicles}
+        vehicle={vehicle}
+        pickerOpen={pickerOpen}
+        onOpenChange={setPickerOpen}
+        onSelect={onSelectVehicle}
+      />
 
       <NumberField
         label="Quilometragem"
@@ -946,11 +1099,9 @@ function OdometerForm({ onClose }: { onClose: () => void }) {
         onChange={(event) => form.setValue('recordedAt', event.target.value)}
         error={errors.recordedAt}
       />
-      <DestineRow
-        label="Uma leitura mais baixa do que a anterior é aceite — acontece quando se corrige um erro de escrita."
-      >
-        {' '}
-        Nesse caso pedimos confirmação, para que um recuo real não passe despercebido.
+      <DestineRow>
+        Uma leitura mais baixa do que a anterior é aceite — acontece quando se corrige um erro de
+        escrita. Nesse caso pedimos confirmação, para que um recuo real não passe despercebido.
       </DestineRow>
       <FormError error={odometer.error} />
     </Sheet>

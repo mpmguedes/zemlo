@@ -32,9 +32,38 @@ export interface SheetProps {
   footer?: ReactNode;
   /** `form` transforma a folha num formulário — o rodapé submete-o. */
   onSubmit?: FormEventHandler<HTMLFormElement>;
+  /**
+   * Suspende os atalhos globais (Escape e ciclo de Tab) enquanto uma folha **filha** está
+   * aberta por cima desta.
+   *
+   * ## Porque é que isto é necessário, e porque é um `prop` explícito
+   *
+   * Os dois atalhos são registados em `document` (fase de captura), pelo que **duas** folhas
+   * abertas ao mesmo tempo ficam as duas a ouvir. Sem esta suspensão, o Escape dentro da folha
+   * filha fechava também a folha-mãe — e o utilizador perderia o formulário que estava a
+   * preencher por ter carregado em Escape para fechar a escolha do veículo. O ciclo de Tab
+   * tinha o mesmo problema ao contrário: prenderia o foco na folha-mãe, e a folha filha ficaria
+   * inalcançável por teclado.
+   *
+   * A alternativa era uma pilha de modais em estado de módulo (só a folha do topo responde).
+   * Preferiu-se o `prop` porque a relação é conhecida **por quem abre a folha filha** e um
+   * estado global mutável é mais difícil de provar: aqui, o pai diz explicitamente «tenho uma
+   * folha por cima» e a folha não adivinha. Uma folha sozinha — o caso de todos os ecrãs atuais
+   * — não passa esta propriedade e comporta-se exatamente como antes.
+   */
+  suspendGlobalKeys?: boolean;
 }
 
-export function Sheet({ open, onClose, title, subtitle, children, footer, onSubmit }: SheetProps) {
+export function Sheet({
+  open,
+  onClose,
+  title,
+  subtitle,
+  children,
+  footer,
+  onSubmit,
+  suspendGlobalKeys = false,
+}: SheetProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
 
@@ -63,7 +92,12 @@ export function Sheet({ open, onClose, title, subtitle, children, footer, onSubm
   }, [open]);
 
   useEffect(() => {
-    if (!open) return;
+    /*
+     * `suspendGlobalKeys` desliga **este** tratamento enquanto uma folha filha está por cima.
+     * O efeito acima (foco e bloqueio do scroll) continua ativo: a folha-mãe está aberta e o
+     * corpo da página tem de continuar sem scroll. Ver a nota da propriedade.
+     */
+    if (!open || suspendGlobalKeys) return;
 
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
@@ -100,7 +134,7 @@ export function Sheet({ open, onClose, title, subtitle, children, footer, onSubm
 
     document.addEventListener('keydown', onKeyDown, true);
     return () => document.removeEventListener('keydown', onKeyDown, true);
-  }, [open, onClose]);
+  }, [open, onClose, suspendGlobalKeys]);
 
   if (!open) return null;
 

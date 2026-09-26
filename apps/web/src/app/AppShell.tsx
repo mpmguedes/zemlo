@@ -1,7 +1,7 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { QUICK_ACTIONS, formatNumber } from '@zemlo/shared';
+import { formatNumber } from '@zemlo/shared';
 import { useUnreadCount } from '../api/hooks';
 import { useSession } from './SessionContext';
 import { Logo } from '../components/Logo';
@@ -189,7 +189,7 @@ function Sidebar({
         variant="highlight"
         block
         icon="＋"
-        onClick={() => quickLog.open('expense')}
+        onClick={() => quickLog.openMenu()}
         className="z-sidebar__action"
       >
         Registar
@@ -245,6 +245,10 @@ function TabBar({ unreadCount }: { unreadCount: number }) {
         O botão de registo rápido é destacado a âmbar — é a ação que o produto quer
         promover, e o âmbar existe precisamente para isto (§57). Não é um separador: é um
         botão, e por isso não fica ativo em nenhuma rota.
+
+        Abre o **menu de tipos** (decisão 46) e não um formulário concreto. Antes abria
+        sempre a despesa: quem queria um abastecimento tinha de abrir uma despesa, fechar e
+        procurar o ecrã certo — três passos para chegar a um formulário que já existia.
       */}
       <div className="z-tabbar" role="navigation" aria-label="Navegação principal">
         <TabLink to="/" label="Painel" icon="🏠" end />
@@ -252,7 +256,7 @@ function TabBar({ unreadCount }: { unreadCount: number }) {
         <button
           type="button"
           className="z-tabbar__link"
-          onClick={() => quickLog.open(QUICK_ACTIONS[0]?.code as 'expense')}
+          onClick={() => quickLog.openMenu()}
           style={{ border: 0, background: 'transparent', cursor: 'pointer' }}
         >
           <span

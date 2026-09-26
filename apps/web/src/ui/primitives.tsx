@@ -255,7 +255,12 @@ export function EmptyState({
   body,
   action,
 }: {
-  icon: string;
+  /**
+   * Aceita texto (o emoji histórico) ou um nó — um glifo SVG. A largura do tipo é
+   * deliberada: migrar as 30 e tal chamadas para SVG é trabalho próprio, e obrigá-las
+   * todas agora faria esta alteração tocar em ecrãs que não são desta decisão.
+   */
+  icon: ReactNode;
   title: string;
   body: string;
   action?: ReactNode;
