@@ -77,7 +77,18 @@ export function repeatLabel(kind: RecordKind): string {
   return `Repetir ${recordKindLabel(kind).toLowerCase()}`;
 }
 
-/** Tipos oferecidos por «Escolher outro tipo» (§53) — a ordem é a do contrato partilhado. */
-export function novoRegistoKinds(): Array<{ kind: RecordKind; label: string; icon: string }> {
-  return RECORD_KINDS.map((item) => ({ kind: item.code, label: item.label, icon: item.icon }));
+/**
+ * Tipos oferecidos por «Escolher outro tipo» (§53) — a ordem é a do contrato partilhado.
+ *
+ * **Sem `icon`.** O campo existia a transportar o emoji do contrato (`RECORD_KINDS[].icon`) até
+ * ao `QuickLogChooser`, que era o único consumidor. Com a família de ícones local (UX-01), a
+ * representação visual de um tipo de registo passou a ser um `IconName` e não uma cadeia de
+ * emoji: manter aqui o campo seria manter viva a via antiga, e o próximo ecrã que o lesse
+ * voltaria a desenhar emojis ao lado de SVGs. Quem desenha pede o ícone a
+ * `recordIconName(kind)` (`lib/registerMenu.ts`), que é a **única** porta de entrada.
+ *
+ * O `label` fica: é vocabulário do contrato e é texto, não desenho.
+ */
+export function novoRegistoKinds(): Array<{ kind: RecordKind; label: string }> {
+  return RECORD_KINDS.map((item) => ({ kind: item.code, label: item.label }));
 }

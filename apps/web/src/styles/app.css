@@ -112,10 +112,11 @@ ol {
 }
 
 /* Foco visível em tudo o que recebe foco por teclado. A lista de seletores é explícita
-   porque `:focus-visible` não é herdado por elementos sem estilo próprio. */
+   porque `:focus-visible` não é herdado por elementos sem estilo próprio. Os dois números
+   vêm dos tokens de foco da UX-01 (A1), para que não exista um terceiro valor de anel. */
 :focus-visible {
-  outline: 2px solid var(--z-border-focus);
-  outline-offset: 2px;
+  outline: var(--z-focus-ring-width) solid var(--z-border-focus);
+  outline-offset: var(--z-focus-ring-offset);
   border-radius: var(--z-radius-sm);
 }
 
@@ -142,7 +143,7 @@ ol {
   color: var(--z-accent-contrast);
   border-radius: var(--z-radius);
   font-weight: 600;
-  transition: top 0.15s ease;
+  transition: top var(--z-duration) var(--z-ease);
 }
 
 .z-skip-link:focus {
@@ -603,7 +604,17 @@ ol {
   line-height: 1;
   text-align: center;
   cursor: pointer;
-  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  /*
+   * UX-01: as durações e as curvas vêm de `theme.css` (A1). Antes desta frente os mesmos três
+   * `0.12s ease` viviam aqui escritos à mão, ao lado de um `140ms` e de dois `0.15s` em regras
+   * irmãs — três notações para a mesma ideia, sem um sítio onde mudar o ritmo do produto.
+   * `--z-duration` (0.16s) é a duração de interação de controlo; o valor é o que o produto já
+   * usava a esta escala, agora nomeado.
+   */
+  transition:
+    background-color var(--z-duration) var(--z-ease),
+    border-color var(--z-duration) var(--z-ease),
+    color var(--z-duration) var(--z-ease);
 }
 
 .z-btn:hover:not(:disabled) {
@@ -640,6 +651,11 @@ ol {
   background: var(--z-highlight-hover);
 }
 
+.z-btn--highlight:active:not(:disabled) {
+  background: var(--z-highlight-hover);
+  filter: brightness(0.94);
+}
+
 .z-btn--secondary {
   background: var(--z-bg-elevated);
   border-color: var(--z-border-strong);
@@ -649,6 +665,31 @@ ol {
 .z-btn--secondary:hover:not(:disabled) {
   border-color: var(--z-accent);
   color: var(--z-accent-ink);
+}
+
+/*
+ * Pressão nos botões de contorno e de texto (UX-01).
+ *
+ * O `.z-btn--primary` já tinha o seu `:active` sólido. Estes três não tinham nenhum: tocar
+ * num botão secundário ou «ghost» num telemóvel não devolvia retorno nenhum — o `:hover` não
+ * existe em ecrã tátil. É o mesmo defeito que a §43 corrigiu no cartão de veículo, aqui nos
+ * controlos, e usa o mesmo mecanismo que o produto já tem: a superfície de estado suave.
+ *
+ * O `.z-toast__action` fica de fora: sobre a superfície sólida do aviso, a regra de `:active`
+ * do `.z-btn--ghost` (especificidade (0,3,0) com o `:not(:disabled)`) pintaria `--z-accent-soft`
+ * — exatamente o verde-claro que a §52 mediu em 1,27:1. O aviso conserva só o véu neutro do
+ * hover, que é o que a medição autorizou.
+ */
+.z-btn--secondary:active:not(:disabled) {
+  background: var(--z-bg-sunken);
+}
+
+.z-btn--danger:active:not(:disabled) {
+  background: var(--z-danger-soft);
+}
+
+.z-btn--ghost:active:not(:disabled) {
+  background: var(--z-accent-soft);
 }
 
 .z-btn--ghost {
@@ -719,6 +760,13 @@ ol {
 .z-icon-btn:hover {
   background: var(--z-bg-sunken);
   color: var(--z-ink);
+}
+
+/* O `:active` pelo mesmo motivo das ações do aviso e do cartão de veículo (§43): em telemóvel
+   não há `:hover`, e um botão de ícone sem retorno de toque parece não ter respondido. Como o
+   hover, mas mais fundo — a superfície desce um degrau em vez de mudar de cor. */
+.z-icon-btn:active {
+  background: var(--z-border);
 }
 
 /* ========================================================================== */
@@ -1286,14 +1334,14 @@ a.z-list__item:hover {
   background: var(--z-bg-elevated);
   border-radius: var(--z-radius-xl) var(--z-radius-xl) 0 0;
   box-shadow: var(--z-shadow-3);
-  animation: z-sheet-in 0.18s ease-out;
+  animation: z-sheet-in var(--z-duration-slow) var(--z-ease-out);
 }
 
 @media (min-width: 700px) {
   .z-sheet__panel {
     max-width: 520px;
     border-radius: var(--z-radius-xl);
-    animation: z-sheet-in-desktop 0.18s ease-out;
+    animation: z-sheet-in-desktop var(--z-duration-slow) var(--z-ease-out);
   }
 }
 
@@ -1387,7 +1435,7 @@ a.z-list__item:hover {
 }
 
 .z-disclosure__chevron {
-  transition: transform 0.15s ease;
+  transition: transform var(--z-duration) var(--z-ease);
 }
 
 .z-disclosure__toggle[aria-expanded='true'] .z-disclosure__chevron {
@@ -1508,7 +1556,10 @@ a.z-list__item:hover {
  * (`docs/PROPOSAL-A3-UX-TOAST-TOUCH.md`).
  *
  * Só o hover muda. O `:focus-visible` continua a ser o contorno de acento da casa (§32), que já
- * tem 2 px e contraste próprio; o `:active` continua a ser a escala do `.z-btn`.
+ * tem 2 px e contraste próprio. O `:active` do `.z-btn` é deliberadamente neutralizado **nesta
+ * superfície**: a regra acima (`.z-btn--ghost:active:not(:disabled)`) tem a mesma
+ * especificidade (0,3,0) e repinta o fundo com o véu neutro, que é a única superfície que a
+ * medição autorizou sobre o aviso.
  *
  * O seletor repete `:not(:disabled)` de propósito: o `:hover` do `.z-btn--ghost` é
  * `.z-btn--ghost:hover:not(:disabled)` — especificidade (0,3,0), porque o `:not()` conta o
@@ -1516,12 +1567,14 @@ a.z-list__item:hover {
  * especificidade, a regra que vem depois ganha. Medido: sem isto, o fundo continuava a ser o
  * `--z-accent-soft` e o contraste ficava em 2,57:1.
  */
-.z-toast__action:hover:not(:disabled) {
+.z-toast__action:hover:not(:disabled),
+.z-toast__action:active:not(:disabled) {
   background: rgba(255, 255, 255, 0.08);
 }
 
 @media (prefers-color-scheme: dark) {
-  .z-toast__action:hover:not(:disabled) {
+  .z-toast__action:hover:not(:disabled),
+  .z-toast__action:active:not(:disabled) {
     background: rgba(0, 0, 0, 0.1);
   }
 }
@@ -1656,7 +1709,7 @@ a.z-list__item:hover {
   width: 100%;
   border-radius: var(--z-radius-sm) var(--z-radius-sm) 0 0;
   background: var(--z-chart-1);
-  transition: height 0.2s ease;
+  transition: height var(--z-duration-slow) var(--z-ease);
 }
 
 /* A parcela de energia sobrepõe-se à base da barra em âmbar: é a informação que o
@@ -2059,7 +2112,9 @@ a.z-timeline__item:hover {
   box-shadow: var(--z-shadow-2);
   overflow: hidden;
   text-decoration: none;
-  transition: box-shadow 140ms ease, transform 140ms ease;
+  transition:
+    box-shadow var(--z-duration-fast) var(--z-ease),
+    transform var(--z-duration-fast) var(--z-ease);
 }
 
 /* O círculo decorativo do protótipo A1_3. É ornamento puro: não transporta informação,
@@ -2096,8 +2151,8 @@ a.z-vehicle-card:active {
 }
 
 .z-vehicle-card:focus-visible {
-  outline: 3px solid var(--z-border-focus);
-  outline-offset: 3px;
+  outline: var(--z-focus-ring-width) solid var(--z-border-focus);
+  outline-offset: var(--z-focus-ring-offset);
 }
 
 .z-vehicle-card__head {
@@ -2334,8 +2389,8 @@ button.z-vehicle-card:active {
  * produto já usa em todo o lado (`--z-border-focus`).
  */
 .z-vehicle-choice__option--selected {
-  outline: 3px solid var(--z-border-focus);
-  outline-offset: 2px;
+  outline: var(--z-focus-ring-width) solid var(--z-border-focus);
+  outline-offset: var(--z-focus-ring-offset);
 }
 
 /* O glifo dentro do estado vazio, para que a página não misture emoji com traço SVG. */
@@ -3187,7 +3242,9 @@ button.z-vehicle-card:active {
 
 @media (prefers-reduced-motion: no-preference) {
   .z-register-card {
-    transition: transform 0.12s ease, border-color 0.12s ease;
+    transition:
+      transform var(--z-duration) var(--z-ease),
+      border-color var(--z-duration) var(--z-ease);
   }
 
   .z-register-card:active {

@@ -324,6 +324,158 @@ describe('a correção está nos tokens, não em cores escritas nos componentes'
 });
 
 /*
+ * Consolidação do movimento e do foco (UX-01).
+ *
+ * ## Porque é que isto é um teste, e não uma nota no `theme.css`
+ *
+ * A A1 criou os tokens (`--z-duration-*`, `--z-ease*`, `--z-focus-ring-*`) mas **nada em
+ * `app.css` os consumia**: medido, `grep -c "z-duration" app.css` dava 0. Um token que ninguém
+ * lê é decoração — e a frente UX-01 existe para que o ritmo do produto se possa mudar num sítio
+ * só. O que se fixa aqui é a **ligação**, não o valor: os literais `0.12s`/`140ms`/`0.15s`/`0.2s`
+ * que estavam espalhados voltaram a um token, e o foco deixou de ter um `2px`/`3px` solto.
+ *
+ * A mutação que prova que isto morde: repor `outline: 2px` na regra global de `:focus-visible`
+ * não fazia cair teste NENHUM antes desta frente (medido: 411 passados com a mutação aplicada).
+ * Com as asserções abaixo, cai.
+ */
+describe('o movimento e o foco usam os tokens da UX-01 (A1)', () => {
+  const css = (): string => readFileSync(APP, 'utf8');
+
+  it('os tokens de movimento e foco existem no tema', () => {
+    const tema = readFileSync(TEMA, 'utf8');
+    for (const token of [
+      '--z-duration-fast',
+      '--z-duration',
+      '--z-duration-slow',
+      '--z-ease',
+      '--z-ease-out',
+      '--z-focus-ring-width',
+      '--z-focus-ring-offset',
+    ]) {
+      expect(tema, token).toContain(`${token}:`);
+    }
+  });
+
+  it('nenhuma duração de transição vive como literal em `app.css`', () => {
+    /*
+     * As três notações que existiam (`0.12s`, `140ms`, `0.15s`) e as duas que restavam (`0.2s`,
+     * o `0.18s` da folha) foram para token. Se alguém voltar a escrever uma duração de interação
+     * à mão numa `transition`/`animation`, isto cai.
+     *
+     * ## O que fica de fora, e porquê — deliberadamente
+     *
+     *  - `prefers-reduced-motion` (`0.001ms !important`): é a regra que DESLIGA o movimento; um
+     *    token de duração não a pode substituir. Fixada no teste seguinte.
+     *  - Animações de **ciclo infinito** (`z-spin` 0.7s, `z-shimmer` 1.4s): são ambientes, não
+     *    transições. As durações de A1 (`0.14`/`0.16`/`0.18s`) são o ritmo de uma interação; um
+     *    indicador de carregamento a 0.16s por volta é um risco de convulsões, não uma
+     *    consolidação. O jogo de tokens de A1 **não tem** um token ambiente, e inventar um aqui
+     *    seria criar um segundo vocabulário de movimento — exatamente o que a UX-01 evita. Fica
+     *    registado: se o produto quiser um ritmo ambiente, é um token novo a decidir pela A1.
+     */
+    const ofensas = css()
+      .split('\n')
+      .map((linha, i) => ({ texto: linha.trim(), n: i + 1 }))
+      .filter(({ texto }) => !texto.startsWith('*') && !texto.startsWith('/*'))
+      .filter(({ texto }) => /^(transition|animation)(-duration)?[ \t]*:/.test(texto))
+      // Um ciclo infinito é ambiente: fora do âmbito das durações de interação.
+      .filter(({ texto }) => !/\binfinite\b/.test(texto))
+      .filter(({ texto }) => /[0-9.]+m?s\b/.test(texto.replace(/0\.001ms/g, '').replace(/\b0s\b/g, '')))
+      .map(({ texto, n }) => `app.css:${n} ${texto}`);
+    expect(ofensas, `durações escritas à mão: ${ofensas.join(' | ')}`).toEqual([]);
+
+    /*
+     * Anti-vacuidade do filtro: se um dia as únicas animações infinitas desaparecerem, este
+     * teste continua a valer — mas se a regex deixar de casar as transições, falha aqui em vez
+     * de passar sobre uma lista vazia. Os dois loops ambiente conhecidos são fixados por nome.
+     */
+    expect(css()).toMatch(/animation: z-spin [0-9.]+s linear infinite/);
+    expect(css()).toMatch(/animation: z-shimmer [0-9.]+s ease infinite/);
+    expect(css()).toContain('var(--z-duration)');
+  });
+
+  it('as regras de transição consomem os tokens de duração e curva', () => {
+    // Anti-vacuidade: se a consolidação não tivesse acontecido, isto falhava no primeiro par.
+    expect(css()).toContain('var(--z-duration)');
+    expect(css()).toContain('var(--z-duration-fast)');
+    expect(css()).toContain('var(--z-duration-slow)');
+    expect(css()).toContain('var(--z-ease)');
+    expect(css()).toContain('var(--z-ease-out)');
+  });
+
+  it('o anel de foco não tem números soltos — nem na regra global, nem nos cartões', () => {
+    /*
+     * O `:focus-visible` global usava `2px`/`2px` e o cartão de veículo `3px`/`3px` — o mesmo
+     * anel em duas espessuras. Ambos passam pelos tokens. `outline: none` no `.z-input:focus` é
+     * legítimo e não é tocado: é a supressão deliberada do contorno nativo, com o anel próprio
+     * desenhado por `box-shadow`.
+     */
+    const ofensas = css()
+      .split('\n')
+      .map((linha, i) => ({ texto: linha.trim(), n: i + 1 }))
+      .filter(({ texto }) => !texto.startsWith('*') && !texto.startsWith('/*'))
+      .filter(({ texto }) => /^outline(-offset)?[ \t]*:[ \t]*[0-9]/.test(texto))
+      .map(({ texto, n }) => `app.css:${n} ${texto}`);
+    expect(ofensas, `espessuras de foco escritas à mão: ${ofensas.join(' | ')}`).toEqual([]);
+
+    // A regra global e os dois casos especiais leem o token.
+    const regraGlobal = /:focus-visible \{[\s\S]{0,200}?\}/.exec(css())?.[0] ?? '';
+    expect(regraGlobal).toContain('var(--z-focus-ring-width)');
+    expect(regraGlobal).toContain('var(--z-focus-ring-offset)');
+    expect(css()).toContain(
+      '.z-vehicle-card:focus-visible {\n  outline: var(--z-focus-ring-width) solid var(--z-border-focus);',
+    );
+  });
+
+  it('`prefers-reduced-motion` continua a desligar movimento, e por isso não passa pelo token', () => {
+    /*
+     * A regra global mata a transição com `0.001ms !important`. É deliberadamente literal: um
+     * token de duração não pode substituí-la, ou o produto perderia a única garantia de que a
+     * preferência é respeitada em todo o lado. O teste fixa-a para que uma consolidação futura
+     * não a «arrume» para dentro do sistema de tokens.
+     */
+    expect(css()).toMatch(
+      /@media \(prefers-reduced-motion: reduce\) \{[\s\S]{0,400}?transition-duration: 0\.001ms !important/,
+    );
+    expect(css()).toMatch(/animation-duration: 0\.001ms !important/);
+  });
+
+  /*
+   * Retorno de pressão nos controlos (UX-01).
+   *
+   * Medido antes desta guarda: apagar a regra `.z-btn--ghost:active:not(:disabled)` de
+   * `app.css` deixava a suite inteira verde (416 passados). Sem cobertura, o `:active` que
+   * esta frente acrescentou aos botões de contorno/texto era uma alteração que nada protegia —
+   * e o defeito que ele corrige é real: em ecrã tátil não há `:hover`, pelo que um botão sem
+   * `:active` não devolve retorno nenhum ao toque (o mesmo achado da §43 no cartão de veículo).
+   */
+  it('os botões de contorno, texto e perigo devolvem retorno de pressão', () => {
+    const c = css();
+    for (const seletor of [
+      '.z-btn--secondary:active:not(:disabled)',
+      '.z-btn--ghost:active:not(:disabled)',
+      '.z-btn--danger:active:not(:disabled)',
+      '.z-btn--highlight:active:not(:disabled)',
+    ]) {
+      expect(c, seletor).toContain(seletor);
+    }
+    // O `:not(:disabled)` empata a especificidade com o `:hover` da casa; sem ele, a regra de
+    // pressão perderia a cascata para o `:hover` e o retorno de toque não apareceria.
+    expect(c).toMatch(
+      /\.z-btn--ghost:active:not\(:disabled\) \{[\s\S]{0,120}?background: var\(--z-accent-soft\)/,
+    );
+    expect(c).toMatch(
+      /\.z-btn--secondary:active:not\(:disabled\) \{[\s\S]{0,120}?background: var\(--z-bg-sunken\)/,
+    );
+  });
+
+  it('o botão de ícone também responde ao toque', () => {
+    // `z-icon-btn` não tem `:disabled` em uso nenhum; o que lhe faltava era o `:active`.
+    expect(css()).toMatch(/\.z-icon-btn:active \{[\s\S]{0,120}?background: var\(--z-border\)/);
+  });
+});
+
+/*
  * Invariante de família: toda a regra que PINTA uma superfície de marca/estado e escreve
  * texto por cima é medida, nos dois temas. É exactamente o sítio onde viviam os `#fff`
  * escritos à mão — e a razão pela qual o teste não se limita a uma lista de regras

@@ -6,6 +6,7 @@ import {
   SECAO_MAIS_USADOS,
   SECAO_OUTROS,
   readLastKind,
+  recordIconName,
   registerMenuItem,
   registerMenuSections,
   rememberLastKind,
@@ -163,6 +164,39 @@ describe('menu de registo · ícones (decisão 47)', () => {
   it('`registerMenuItem` devolve o item do tipo pedido e `null` para o que não existe', () => {
     expect(registerMenuItem('fuel')?.label).toBe('Abastecimento');
     expect(registerMenuItem('insurance')).toBeNull();
+  });
+
+  /*
+   * UX-01 — `recordIconName` é a **única** porta de entrada para o ícone de um tipo.
+   *
+   * Existe para o `Record<string, IconName>` (que o contrato obriga a deixar parcial, porque
+   * `RecordKind` é `string` e não há união fechada) não levar três consumidores — `RegisterMenu`,
+   * `QuickLogChooser`, `VehicleDetailPage` — a inventar três fallbacks diferentes. Três fallbacks
+   * para o mesmo caso é a forma mais silenciosa de criar vocabulários paralelos: hoje coincidem,
+   * amanhã um deles muda e o mesmo tipo aparece com duas caras na mesma aplicação.
+   */
+  it('`recordIconName` devolve o ícone do mapa para cada tipo do contrato', () => {
+    for (const codigo of CODIGOS_DO_CONTRATO) {
+      expect(recordIconName(codigo), codigo).toBe(RECORD_ICON[codigo]);
+    }
+  });
+
+  it('`recordIconName` tem uma única rede para um tipo desconhecido, não três', () => {
+    // Um tipo do contrato que a web ainda não saiba desenhar não pode desaparecer do ecrã: cai
+    // num ícone da mesma família (mesma grelha, mesmo peso) em vez de uma caixa vazia. O valor
+    // é fixado **aqui** para que os três consumidores não possam divergir em silêncio.
+    expect(recordIconName('tipo-que-ainda-nao-existe')).toBe('receipt');
+  });
+
+  it('o fallback não é um caminho normal: os cinco tipos do contrato têm ícone próprio', () => {
+    // Guarda contra o fallback a mascarar uma entrada em falta no mapa: se `RECORD_ICON`
+    // perdesse um tipo, `recordIconName` continuaria a devolver `'receipt'` e o ecrã pareceria
+    // bem. O que a asserção fixa é que nenhum dos cinco depende do fallback.
+    for (const codigo of CODIGOS_DO_CONTRATO) {
+      expect(recordIconName(codigo), codigo).not.toBeUndefined();
+      expect(RECORD_ICON[codigo], codigo).toBeTruthy();
+    }
+    expect(Object.keys(RECORD_ICON)).toHaveLength(CODIGOS_DO_CONTRATO.length);
   });
 });
 

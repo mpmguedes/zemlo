@@ -134,7 +134,12 @@ describe('§53 · seletor de novo registo', () => {
     ]);
     for (const item of kinds) {
       expect(item.label.length, item.kind).toBeGreaterThan(0);
-      expect(item.icon.length, item.kind).toBeGreaterThan(0);
+      /*
+       * O ícone já **não** viaja com o item: passou a ser resolvido por `recordIconName`. A
+       * asserção mudou de sítio para não medir um campo que deixou de existir — mas continua a
+       * medir o que interessa, que é «todos os tipos têm ícone da família local».
+       */
+      expect(item, item.kind).not.toHaveProperty('icon');
     }
   });
 
@@ -158,6 +163,24 @@ describe('§53 · seletor de novo registo', () => {
     for (const item of novoRegistoKinds()) {
       expect(html, item.label).toContain(`>${item.label}</button>`);
     }
+    /*
+     * UX-01: o seletor desenha a família SVG local, não emojis. A asserção é sobre `<svg>` com
+     * geometria a sério — contar `<svg>` sozinho não prova que desenha: um nome de ícone
+     * inválido rende um `<svg>` **vazio** sem erro nenhum.
+     *
+     * A verificação de ausência de emoji é feita contra os **cinco emojis do contrato**
+     * (`novoRegistoKinds().icon`, o vocabulário que o §53 usava), e não contra uma gama de
+     * code points: o `✕` (U+2715) do `ui/Sheet.tsx` partilhado cai em `[\u{2600}-\u{27BF}]` e é
+     * um glifo legítimo que o UX-01 não toca. Uma gama larga acusa o ficheiro errado.
+     */
+    const EMOJIS_DO_CONTRATO = ['💶', '⛽', '🔌', '🔧', '📍'];
+    expect(html, 'ícones do seletor').toContain('<svg');
+    expect(html, 'geometria real').toMatch(/<path d="[Mm]/);
+    for (const emoji of EMOJIS_DO_CONTRATO) {
+      expect(html, `sem o emoji ${emoji} do contrato`).not.toContain(emoji);
+    }
+    // E nenhum pictograma suplementar (bloco dos emojis) na superfície do seletor.
+    expect(html, 'sem pictograma').not.toMatch(/[\u{1F300}-\u{1FAFF}]/u);
   });
 });
 
@@ -255,7 +278,14 @@ describe('hover das ações do aviso (o achado medido de 1,27:1)', () => {
    */
   it('o hover da ação é um véu neutro, não a superfície de acento da casa', () => {
     const css = readFileSync(APP_CSS, 'utf8');
-    const regra = css.match(/\.z-toast__action:hover:not\(:disabled\) \{[\s\S]{0,200}?\}/)?.[0] ?? '';
+    /*
+     * O seletor é uma lista (UX-01 acrescentou o `:active` para que tocar no aviso também não
+     * repinte o fundo com o `--z-accent-soft` do `.z-btn--ghost`), pelo que a âncora tem de
+     * aceitar os dois estados — ancorar só no `:hover` deixaria de casar e o teste passaria por
+     * vacuidade sobre a cadeia vazia.
+     */
+    const regra =
+      css.match(/\.z-toast__action:(?:hover|active):not\(:disabled\)[^{]*\{[\s\S]{0,200}?\}/)?.[0] ?? '';
 
     // A regra existe e não passa por vacuidade: sem ela, o `:hover` do `.z-btn--ghost` volta a mandar.
     expect(regra).toContain('background:');
@@ -273,20 +303,21 @@ describe('hover das ações do aviso (o achado medido de 1,27:1)', () => {
      * O `:hover` da casa é `.z-btn--ghost:hover:not(:disabled)` — (0,3,0). Um
      * `.z-toast__action:hover` simples é (0,2,0) e PERDE a cascata, mesmo vindo depois: o fundo
      * voltava a ser o `--z-accent-soft` e o contraste media 2,57:1. O `:not(:disabled)` é o que
-     * traz a regra do aviso para o mesmo peso.
+     * traz a regra do aviso para o mesmo peso — tem de estar no `:hover` **e** no `:active`.
      *
      * Mutação: tirar o `:not(:disabled)` faz este teste cair — e o `hover` do `.z-btn--ghost`
      * volta a ganhar.
      */
     const css = readFileSync(APP_CSS, 'utf8');
     expect(css).toContain('.z-toast__action:hover:not(:disabled)');
+    expect(css).toContain('.z-toast__action:active:not(:disabled)');
   });
 
   it('o tema escuro usa o véu escuro (o `ok` fica claro e a tinta é escura)', () => {
     const css = readFileSync(APP_CSS, 'utf8');
     // O véu escuro vive dentro do bloco do tema escuro, ancorado ao seletor da ação.
     expect(css).toMatch(
-      /@media \(prefers-color-scheme: dark\) \{[\s\S]{0,400}?\.z-toast__action:hover:not\(:disabled\) \{[\s\S]{0,200}?rgba\(0, 0, 0, 0\.1\)/,
+      /@media \(prefers-color-scheme: dark\) \{[\s\S]{0,400}?\.z-toast__action:(?:hover|active):not\(:disabled\)[^{]*\{[\s\S]{0,200}?rgba\(0, 0, 0, 0\.1\)/,
     );
   });
 });

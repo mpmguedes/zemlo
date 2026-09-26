@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import type { RecordKind } from '@zemlo/shared';
 import { Sheet } from '../ui/Sheet';
+import { Icon } from '../ui/Icon';
 import { Button } from '../ui/primitives';
+import { recordIconName } from '../lib/registerMenu';
 import { ESCOLHER_OUTRO_TIPO, NOVO_REGISTO, novoRegistoKinds, repeatLabel } from '../lib/postSave';
 
 /**
@@ -40,10 +42,16 @@ export function QuickLogChooser({ previousKind, onSelect, onClose }: QuickLogCho
     <Sheet open onClose={onClose} title={NOVO_REGISTO}>
       {mostrarTipos ? (
         <div className="z-quick-actions">
-          {novoRegistoKinds().map(({ kind, label, icon }) => (
+          {novoRegistoKinds().map(({ kind, label }) => (
             <button key={kind} type="button" className="z-quick-action" onClick={() => onSelect(kind)}>
+              {/*
+                Ícone local, o mesmo que o menu «Registar» usa (`recordIconName`) — a §53 e a §46
+                perguntam a mesma coisa («que registo?») e têm de ter a mesma cara. Antes vinha
+                aqui o emoji do contrato: era o mesmo tipo com dois desenhos diferentes no mesmo
+                produto, e o emoji ignorava o tema e o `stroke-width` da família.
+              */}
               <span className="z-quick-action__icon" aria-hidden="true">
-                {icon}
+                <Icon name={recordIconName(kind)} />
               </span>
               {label}
             </button>

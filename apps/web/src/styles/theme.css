@@ -94,6 +94,17 @@
   --z-warn-on-inverse: var(--z-amber-300);
   --z-danger-on-inverse: #ef8a63;
 
+  /* Superfícies auxiliares sobre uma superfície INVERSA (hoje, o cartão de veículo em
+     petróleo). São FUNDOS sobre um fundo escuro, não tinta: o glifo e a pílula de estado
+     assentam num véu branco translúcido por cima do gradiente. Estavam escritos à mão em
+     `app.css` como três opacidades de branco próximas (0.14, 0.10, 0.12); aqui ganham nome
+     e passam a ser o que são — duas camadas da mesma família, uma para conteúdo e outra
+     para a pílula. Uma só definição, porque o cartão é petróleo escuro nos DOIS temas. */
+  --z-inverse-fill: rgba(255, 255, 255, 0.14);
+  --z-inverse-fill-soft: rgba(255, 255, 255, 0.1);
+  --z-inverse-border: rgba(255, 255, 255, 0.2);
+  --z-inverse-rule: rgba(255, 255, 255, 0.16);
+
   /* ======================================================================= */
   /* Papéis — tema claro (omissão)                                          */
   /* ======================================================================= */
@@ -218,6 +229,35 @@
      uma escolha de densidade (§35, §53). */
   --z-touch: 44px;
   --z-control-height: 44px;
+
+  /* ---- Movimento (UX-01) -------------------------------------------------- */
+  /*
+   * Duas durações e uma curva, centralizadas. Antes desta frente os valores viviam
+   * escritos em `app.css` em três notações diferentes (`0.12s`, `140ms`, `0.15s`) para a
+   * mesma ideia de «transição curta de interação», o que tornava impossível mudar o ritmo
+   * do produto num sítio só. Os valores são EXATAMENTE os que já estavam em uso: os que
+   * estavam em `140ms` passam a ser o `--z-duration-fast` (0.14s, o mesmo instante) e os
+   * `0.12s`. O `--z-duration-slow` (0.18s) é a entrada da folha modal.
+   *
+   * A política de movimento do produto (UX-01) é: transições curtas, sem bounce e sem
+   * parallax; `prefers-reduced-motion` continua a ser tratado pela regra global em
+   * `app.css`, que não é substituída por estes tokens.
+   */
+  --z-duration-fast: 0.14s;
+  --z-duration: 0.16s;
+  --z-duration-slow: 0.18s;
+  --z-ease: ease;
+  --z-ease-out: ease-out;
+
+  /* ---- Foco (UX-01) ------------------------------------------------------- */
+  /*
+   * O anel de foco do produto: 2 px de acento com 2 px de afastamento, a regra global de
+   * `:focus-visible` em `app.css`. Estava escrito em dois sítios com números soltos (a
+   * regra global e o cartão de veículo, que usava 3 px/3 px); o token fixa o valor que o
+   * produto já usa por omissão para que uma anotação futura não invente um terceiro.
+   */
+  --z-focus-ring-width: 2px;
+  --z-focus-ring-offset: 2px;
 
   /* Camadas: a ordem importa. Cabeçalho < barra de separadores < folha modal < aviso. */
   --z-z-sticky: 10;

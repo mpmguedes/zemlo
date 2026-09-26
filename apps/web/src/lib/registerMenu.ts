@@ -66,6 +66,29 @@ export const RECORD_ICON: Record<string, IconName> = {
 };
 
 /**
+ * Nome do ícone local de um tipo de registo — a **única** porta de entrada.
+ *
+ * ## Porque é que isto existe (e não é o `RECORD_ICON` a ser usado diretamente)
+ *
+ * O `RECORD_ICON` é um `Record<string, …>` — deliberadamente, pela nota de tipo acima — pelo
+ * que o indexar devolve `IconName | undefined`. Quem desenha um ícone a partir de um
+ * `RecordKind` precisa de tratar a ausência, e há **três** consumidores a fazê-lo hoje
+ * (`RegisterMenu`, `QuickLogChooser`, `VehicleDetailPage`). Sem esta função, cada um
+ * inventaria o seu fallback, e três fallbacks diferentes para o mesmo caso é a forma mais
+ * silenciosa de criar vocabulários paralelos — o que a consolidação da família de ícones
+ * existe precisamente para evitar.
+ *
+ * O fallback é `'receipt'` e não um ícone novo: um tipo do contrato que ainda não tenha
+ * entrada aqui continua a **poder registar-se**, e o desenho mantém-se na mesma família
+ * (mesma grelha, mesmo peso, mesma cor por `currentColor`) em vez de aparecer como uma caixa
+ * vazia. O teste que fixa a exaustividade do mapa é que assinala a entrada em falta — o
+ * fallback é a rede, não a desculpa.
+ */
+export function recordIconName(kind: RecordKind): IconName {
+  return RECORD_ICON[kind] ?? 'receipt';
+}
+
+/**
  * Códigos das ações principais — os mesmos quatro do painel.
  *
  * Derivado de `QUICK_ACTIONS` (a ordem do contrato) e não escrito à mão: assim a secção não

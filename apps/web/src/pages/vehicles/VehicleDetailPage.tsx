@@ -60,6 +60,9 @@ import { COVERAGE_OPTIONS } from '../../components/formParts';
 import { RecordsEmptyState, TimelineRow, groupByMonth } from '../../components/records';
 import { useQuickLog } from '../../components/QuickLogContext';
 import { useTimeline } from '../../hooks/useTimeline';
+import { Icon } from '../../ui/Icon';
+import { recordIconName } from '../../lib/registerMenu';
+import { recordKindLabel } from '../../lib/recordKinds';
 import { dateLong, km, money, relativeDate, today } from '../../lib/format';
 import { nextTabIndex } from '../../lib/tabs';
 import { amountOrUndefined, integerOrUndefined, textOrUndefined } from '../../lib/formPayload';
@@ -361,12 +364,24 @@ function OverviewTab({ vehicle }: { vehicle: VehicleDetail }) {
 
       <section aria-label="Registo rápido">
         <div className="z-quick-actions">
+          {/*
+            Os quatro tipos do dia a dia, com a **mesma** fonte de ícone e de rótulo que o menu
+            «Registar» (§46) e o seletor «Escolher outro tipo» (§53): `recordIconName` para o
+            desenho, `recordKindLabel` para o substantivo. Antes, esta lista era um quarto
+            vocabulário próprio — um ternário de emojis (`💶⛽🔌🔧`) e outro de rótulos escritos
+            à mão — pelo que o mesmo tipo aparecia desenhado de duas maneiras dentro do produto,
+            e renomear um tipo no contrato deixava esta cópia a divergir em silêncio.
+
+            O `as const` fica: a ordem e o conjunto são uma decisão desta secção (os quatro do
+            painel, sem a quilometragem, que tem o seu próprio caminho), e o tipo restrito é o
+            que garante que `quickLog.open` recebe um tipo de registo válido.
+          */}
           {(['expense', 'fuel', 'charging', 'maintenance'] as const).map((kind) => (
             <button key={kind} type="button" className="z-quick-action" onClick={() => quickLog.open(kind)}>
               <span className="z-quick-action__icon" aria-hidden="true">
-                {kind === 'expense' ? '💶' : kind === 'fuel' ? '⛽' : kind === 'charging' ? '🔌' : '🔧'}
+                <Icon name={recordIconName(kind)} />
               </span>
-              {kind === 'expense' ? 'Despesa' : kind === 'fuel' ? 'Abastecimento' : kind === 'charging' ? 'Carregamento' : 'Manutenção'}
+              {recordKindLabel(kind)}
             </button>
           ))}
         </div>
